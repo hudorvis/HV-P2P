@@ -1,28 +1,83 @@
-name: HV P2P SRVR - Qt Quick macOS Intel Test Build
+name: HV P2P Complete Build v26.08.31.06
 
 on:
   workflow_dispatch:
   push:
     branches: [main, master]
-    paths:
-      - 'main.py'
-      - 'backend.py'
-      - 'qml/**'
-      - 'resources.qrc'
-      - 'HV_P2P_SRVR.pyproject'
-      - 'requirements.txt'
-      - 'tools/**'
-      - '.github/workflows/build-macos-intel.yml'
 
 permissions:
   contents: read
 
 jobs:
-  build-macos-intel:
+  build-firmware:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+        with:
+          version: '1.5.1'
+
+      - name: Install ESP32 Arduino core 3.3.8
+        run: |
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@3.3.8
+          arduino-cli core list
+          arduino-cli board listall | grep -E 'Edgebox-ESP-100|ESP32S3 Dev Module'
+
+      - name: Install pinned CTRL-TS libraries
+        run: |
+          arduino-cli lib update-index
+          arduino-cli lib install 'lvgl@8.3.11'
+          arduino-cli lib install 'ESP32_Display_Panel@0.1.6'
+          arduino-cli lib install 'ESP32_IO_Expander@0.0.3'
+          arduino-cli lib install 'JPEGDEC@1.8.4'
+          mkdir -p "$HOME/Arduino/libraries"
+          git clone --depth 1 https://github.com/iamfaraz/Waveshare_ST7262_LVGL.git "$HOME/Arduino/libraries/Waveshare_ST7262_LVGL"
+          python3 tools/prepare_waveshare_library.py --libraries-dir "$HOME/Arduino/libraries"
+          grep -R -F 'ESP_IO_EXPANDER_I2C_CH422G_ADDRESS_000' "$HOME/Arduino/libraries/Waveshare_ST7262_LVGL/src/Waveshare_ST7262_LVGL.cpp"
+          python3 tools/prepare_lvgl_config.py --libraries-dir "$HOME/Arduino/libraries"
+          test -f "$HOME/Arduino/libraries/lv_conf.h"
+          grep -F '#define LV_TICK_CUSTOM 1' "$HOME/Arduino/libraries/lv_conf.h"
+          grep -F '#define LV_FONT_MONTSERRAT_24 1' "$HOME/Arduino/libraries/lv_conf.h"
+          arduino-cli lib list
+
+      - name: Source/protocol regression suite
+        run: python3 tools/run_all_source_checks.py
+
+      - name: Native build CTRL-TS -> embed -> CTRL -> W1P
+        run: python3 tools/native_build_firmware.py --output "$GITHUB_WORKSPACE/NATIVE_BUILD_ARTIFACTS"
+
+      - name: Check that source CTRL still contains build guard
+        run: |
+          grep -F '#error "CTRL-TS firmware image has not been staged.' HV_P2P_CTRL_EDGEBOX_v26.08.31.06/HV_P2P_CTRL_TS_Firmware_Image.h
+
+      - name: Upload functional-test firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HV-P2P-v26.08.31.06-Native-Firmware
+          path: NATIVE_BUILD_ARTIFACTS/
+          if-no-files-found: error
+          retention-days: 30
+
+  build-srvr:
     runs-on: macos-15-intel
     timeout-minutes: 50
+    defaults:
+      run:
+        working-directory: SRVR_GitHub_v26.08.31.06
     env:
-      APP_VERSION: '26.08.31.05'
+      APP_VERSION: '26.08.31.06'
       QT_QUICK_CONTROLS_STYLE: Basic
       PYTHONUNBUFFERED: '1'
 
@@ -42,6 +97,7 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
+          cache-dependency-path: SRVR_GitHub_v26.08.31.06/requirements.txt
 
       - name: Static project preflight
         shell: bash
@@ -71,11 +127,11 @@ jobs:
           set -euxo pipefail
           # Explicitly prove CI can import the application backend before running
           # the larger regression suite. This catches path mistakes immediately.
-          PYTHONPATH="$GITHUB_WORKSPACE${PYTHONPATH:+:$PYTHONPATH}" python - <<'PY'
+          PYTHONPATH="$GITHUB_WORKSPACE/SRVR_GitHub_v26.08.31.06${PYTHONPATH:+:$PYTHONPATH}" python - <<'PY'
           import backend
           print("backend import PASS:", backend.__file__)
           PY
-          PYTHONPATH="$GITHUB_WORKSPACE${PYTHONPATH:+:$PYTHONPATH}" python -m tools.test_backend_logic
+          PYTHONPATH="$GITHUB_WORKSPACE/SRVR_GitHub_v26.08.31.06${PYTHONPATH:+:$PYTHONPATH}" python -m tools.test_backend_logic
 
       - name: Create isolated deployment source tree
         shell: bash
@@ -333,8 +389,69 @@ jobs:
       - name: Upload GitHub Actions artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HV-P2P-SRVR-v26.08.31.05-macOS-Intel
-          path: HV P2P SRVR v26.08.31.05 macOS Intel.zip
+          name: HV-P2P-SRVR-v26.08.31.06-macOS-Intel
+          path: HV P2P SRVR v26.08.31.06 macOS Intel.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
+
+
+  package-complete-release:
+    needs: [build-firmware, build-srvr]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download native firmware artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: HV-P2P-v26.08.31.06-Native-Firmware
+          path: COMPLETE_RELEASE/FIRMWARE
+
+      - name: Download macOS SRVR artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: HV-P2P-SRVR-v26.08.31.06-macOS-Intel
+          path: COMPLETE_RELEASE/SRVR
+
+      - name: Create combined HV P2P release ZIP
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat > COMPLETE_RELEASE/README_FIRST.txt <<'EOF'
+          HV P2P v26.08.31.06 - COMPLETE GITHUB BUILD OUTPUT
+
+          FIRMWARE/ contains the native CTRL-TS, CTRL EdgeBox and W1P EdgeBox build
+          products plus STAGED_SOURCE. For Arduino IDE programming, use the three
+          sketch folders under FIRMWARE/STAGED_SOURCE; the staged CTRL source contains
+          the exact compiled CTRL-TS carrier image and SHA-256 from this same build.
+
+          SRVR/ contains HV P2P SRVR v26.08.31.06 macOS Intel.zip, which contains
+          the matching HV P2P SRVR.app for Intel Macs.
+
+          Both firmware and SRVR jobs must pass before this complete artifact is created.
+          EOF
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+          root=Path('COMPLETE_RELEASE')
+          out=Path('HV P2P v26.08.31.06 Complete Release.zip')
+          with zipfile.ZipFile(out,'w',compression=zipfile.ZIP_DEFLATED) as z:
+              for p in sorted(root.rglob('*')):
+                  if p.is_file():
+                      z.write(p, p.relative_to(root.parent))
+          with zipfile.ZipFile(out) as z:
+              assert z.testzip() is None
+              names=z.namelist()
+              assert any('FIRMWARE/STAGED_SOURCE/' in n for n in names)
+              assert any(n.endswith('HV P2P SRVR v26.08.31.06 macOS Intel.zip') for n in names)
+          print(out)
+          PY
+
+      - name: Upload complete matched release
+        uses: actions/upload-artifact@v4
+        with:
+          name: HV-P2P-v26.08.31.06-Complete-Release
+          path: HV P2P v26.08.31.06 Complete Release.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30

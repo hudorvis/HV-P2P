@@ -1,4 +1,4 @@
-# HV P2P v26.08.31.05 — Deep Code Audit
+# HV P2P v26.08.31.06 — Deep Code Audit
 
 ## Result
 
@@ -137,11 +137,11 @@ The second native Arduino compile reached the actual CTRL-TS source and exposed 
 Warnings from the third-party Waveshare/LVGL libraries and currently unused local helper functions are non-fatal and are not the cause of the failed build.
 
 
-## Revision v26.08.31.05 — CTRL-TS OTA const-safe block writer — 2026-08-31
+## Revision v26.08.31.06 — CTRL-TS OTA const-safe block writer — 2026-08-31
 
 The next native CTRL-TS compile reached the firmware dispatcher and found one remaining C++ const-correctness mismatch: `process_rs485_frame(const Frame&)` could not bind its const frame to a mutable `fw_handle_block(Frame&)`. The receiver now preserves the parser frame as const and copies only the received OTA data bytes into a dedicated bounded scratch buffer before calling ESP32 Arduino Core 3.3.8 `Update.write(uint8_t*, size_t)`. This avoids `const_cast`, keeps the dispatch API const-correct, and explicitly rejects any block larger than the scratch-buffer capacity. No RS485 wire-format, updater sequencing, UI or motion behavior changed.
 
-## v26.08.31.05 native compiler finding
+## v26.08.31.06 native compiler finding
 
 GitHub Actions reached the third-party `Waveshare_ST7262_LVGL.cpp` and failed because the
 upstream Waveshare wrapper references `ESP_IO_EXPANDER_I2C_CH422G_ADDRESS`, while the

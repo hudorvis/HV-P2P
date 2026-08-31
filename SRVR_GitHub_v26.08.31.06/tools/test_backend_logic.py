@@ -32,7 +32,7 @@ from backend import (
 )
 
 app = QCoreApplication.instance() or QCoreApplication([])
-b = HVP2PBackend(version="26.08.31.05", smoke_test=True)
+b = HVP2PBackend(version="26.08.31.06", smoke_test=True)
 
 try:
     # CTRL packet compatibility (A6 and extended A7).

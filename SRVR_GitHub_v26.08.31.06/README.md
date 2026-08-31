@@ -1,8 +1,8 @@
-# HV P2P SRVR v26.08.31.05 — Qt Quick macOS Intel test build
+# HV P2P SRVR v26.08.31.06 — Qt Quick macOS Intel test build
 
 This is the controller/interface integration revision from the approved **v26.08.17.15** Qt Quick build. The locked Run, Setup, Free-D and Log layouts, shared shell and colour/style system remain the visual baseline. Visible integration changes are limited to the requested Free-D Side View geometry-marker correction and the CTRL-TS five-AUX top row; the remaining changes restore or strengthen proven CTRL/W1P protocol, configuration, motion and safety paths that were present in the stable pre-Qt system but had not been fully carried into the Qt migration.
 
-## v26.08.31.05 changes
+## v26.08.31.06 changes
 
 - **Five CTRL AUX actions end-to-end.** The existing A7 packet keeps its 16-bit flag field and adds AUX5 as bit `0x0400`. SRVR now accepts five CTRL AUX assignments, CTRL forwards touchscreen `AUX5`, and CTRL-TS renders five equal AUX tiles across the top row. Existing stored CTRL `main4` layouts are migrated to `main5` without losing their saved labels.
 - **State-aware CTRL-TS AUX labels restored.** SRVR again publishes operator-facing labels such as `Accel Mode | Speed`, `Drive Mode | <custom name>` and `Battery Change | On/Off`, plus calibration/preset action labels.
@@ -10,7 +10,7 @@ This is the controller/interface integration revision from the approved **v26.08
 - **Calibrated state is persistent.** `not_calibrated_mode` is now saved/restored so an already calibrated system does not return to service/un-calibrated mode after every SRVR restart.
 - **v26.06.26.25 config migration.** Legacy IP, joystick calibration, Mode A/B names and motion parameters, Accel Mode, AUX assignments, units-per-metre, limits/ramping, presets and relevant Free-D fields are migrated into schema version 2.
 - **Goto anti-hunt behaviour restored.** The proven approach-direction latch, stop-before-reverse rule, early deceleration and low-speed creep logic are restored so a small target crossing does not immediately create full-direction reversal/hunting.
-- **W1P diagnostics extended for software Servo Enable and the EL7 output map.** The integration SRVR parses `SW_SRVON*` plus DO2 Ready/SRDY, DO3 Enabled/SRV-ST, DO4 Brake/BRK-OFF and DO5 Fault/ALARM assignment/state fields from the matching v26.08.31.05 W1P firmware.
+- **W1P diagnostics extended for software Servo Enable and the EL7 output map.** The integration SRVR parses `SW_SRVON*` plus DO2 Ready/SRDY, DO3 Enabled/SRV-ST, DO4 Brake/BRK-OFF and DO5 Fault/ALARM assignment/state fields from the matching v26.08.31.06 W1P firmware.
 - **EL7 output/brake assignment safety check.** Matching W1P firmware verifies/configures DO2=SRDY, DO3=SRV-ST, DO4=BRK-OFF and DO5=ALARM while motion is locked. If software SRV-ON is already active it is first dropped during migration, and is restored only after the full map is verified. The physical EL7 DO4 still has to be wired to the external 24 V brake relay/circuit.
 - **Free-D Side View P1-P5 markers remain locked to the calculated cable path.** Each marker keeps its entered X coordinate while its displayed Y coordinate is sampled from the same sagged profile used to draw the cable.
 
@@ -59,13 +59,21 @@ The local Linux audit cannot run the native macOS PySide6/Cocoa runtime. Qt's au
 
 The workflow builds macOS Intel (`x86_64`) only. Development builds remain unsigned by Apple Developer ID and are not notarised; the finished test bundle receives the existing ad-hoc development signature.
 
-After a successful GitHub Actions run, download:
+This SRVR source is now built by the repository-root workflow:
 
-`HV-P2P-SRVR-v26.08.31.05-macOS-Intel`
+`.github/workflows/complete-build.yml`
 
-The artifact contains:
+After a successful GitHub Actions run, download either the dedicated SRVR artifact:
 
-`HV P2P SRVR v26.08.31.05 macOS Intel.zip`
+`HV-P2P-SRVR-v26.08.31.06-macOS-Intel`
+
+or the complete matched project artifact:
+
+`HV-P2P-v26.08.31.06-Complete-Release`
+
+The dedicated SRVR artifact contains:
+
+`HV P2P SRVR v26.08.31.06 macOS Intel.zip`
 
 That ZIP contains the single `HV P2P SRVR.app` bundle with the existing P2P SRVR icon and bundle/display metadata.
 

@@ -2,14 +2,14 @@
 from pathlib import Path
 import re
 ROOT=Path(__file__).resolve().parents[1]
-wf=(ROOT/'.github/workflows/firmware-build.yml').read_text()
+wf=(ROOT/'.github/workflows/complete-build.yml').read_text()
 builder=(ROOT/'tools/native_build_firmware.py').read_text()
 lvglprep=(ROOT/'tools/prepare_lvgl_config.py').read_text()
 waveshareprep=(ROOT/'tools/prepare_waveshare_library.py').read_text()
-hmi=(ROOT/'HV_P2P_CTRL_TS_v26.08.31.05/HV_P2P_CTRL_TS_v26.08.31.05.ino').read_text()
+hmi=(ROOT/'HV_P2P_CTRL_TS_v26.08.31.06/HV_P2P_CTRL_TS_v26.08.31.06.ino').read_text()
 embed=(ROOT/'tools/embed_ctrl_ts_firmware.py').read_text()
-guard=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.08.31.05/HV_P2P_CTRL_TS_Firmware_Image.h').read_text()
-w1pp=(ROOT/'HV_P2P_W1P_EDGEBOX_v26.08.31.05/partitions.csv').read_text()
+guard=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.08.31.06/HV_P2P_CTRL_TS_Firmware_Image.h').read_text()
+w1pp=(ROOT/'HV_P2P_W1P_EDGEBOX_v26.08.31.06/partitions.csv').read_text()
 checks={
  'workflow core 3.3.8': 'esp32:esp32@3.3.8' in wf,
  'workflow Arduino CLI pinned': "version: '1.5.1'" in wf,
@@ -35,7 +35,9 @@ checks={
  'embed verifies ESP magic': 'ESP_IMAGE_MAGIC = 0xE9' in embed,
  'embed writes HW/proto/version/hash': all(x in embed for x in ('HV_CTRL_TS_REQUIRED_HW','HV_CTRL_TS_REQUIRED_PROTOCOL','HV_CTRL_TS_REQUIRED_VERSION','HV_CTRL_TS_REQUIRED_SHA256')),
  'W1P dual OTA added': all(x in w1pp for x in ('ota_0','ota_1','0x600000')),
- 'artifact upload present': 'HV-P2P-v26.08.31.05-Native-Firmware' in wf,
+ 'firmware artifact upload present': 'HV-P2P-v26.08.31.06-Native-Firmware' in wf,
+ 'SRVR macOS job present': 'runs-on: macos-15-intel' in wf and 'HV-P2P-SRVR-v26.08.31.06-macOS-Intel' in wf,
+ 'complete matched artifact present': 'HV-P2P-v26.08.31.06-Complete-Release' in wf and 'needs: [build-firmware, build-srvr]' in wf,
 }
 failed=[k for k,v in checks.items() if not v]
 for k,v in checks.items(): print(('OK  ' if v else 'FAIL')+k)

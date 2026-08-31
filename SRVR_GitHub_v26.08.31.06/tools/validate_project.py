@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "26.08.31.05"
+VERSION = "26.08.31.06"
 ERRORS: list[str] = []
 
 
@@ -34,7 +34,9 @@ backend = read("backend.py")
 qml_main = read("qml/Main.qml")
 qml_setup = read("qml/pages/SetupPage.qml")
 qml_log = read("qml/pages/LogPage.qml")
-workflow = read(".github/workflows/build-macos-intel.yml")
+workflow_path = ROOT.parent / ".github" / "workflows" / "complete-build.yml"
+require(workflow_path.is_file(), "missing root complete-build workflow")
+workflow = workflow_path.read_text(encoding="utf-8") if workflow_path.is_file() else ""
 project_text = read("HV_P2P_SRVR.pyproject")
 qrc_text = read("resources.qrc")
 requirements = read("requirements.txt")
@@ -481,7 +483,7 @@ require('profileValue(Number(gp.x), key)' in span_qml and
         'var gv=root.sideView ? Number(gp.y)' not in span_qml,
         "Free-D geometry markers are not pinned to the exact calculated cable profile")
 
-# v26.08.31.05 integration contract: fifth CTRL-TS AUX travels in the spare A7
+# v26.08.31.06 integration contract: fifth CTRL-TS AUX travels in the spare A7
 # 16-bit flag, and display packets expose all five state-aware labels.
 require("FLAG_AUX5 = 0x0400" in backend, "AUX5 controller flag missing")
 require('f"aux5={labels[4]}"' in backend, "DSP1 AUX5 field missing")

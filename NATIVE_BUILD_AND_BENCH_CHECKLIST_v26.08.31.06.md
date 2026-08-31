@@ -1,4 +1,4 @@
-# HV P2P v26.08.31.05 — Native Build & Functional Bench Checklist
+# HV P2P v26.08.31.06 — Native Build & Functional Bench Checklist
 
 ## A. Native build gate
 
@@ -10,18 +10,18 @@
 - [ ] Confirm CTRL-TS native app is >32 KiB and <= `0x380000` bytes.
 - [ ] Confirm carrier verification prints `STAGED_HMI_HEADER_PASS`.
 - [ ] Confirm generated carrier hardware is `WS-ESP32S3-7`, protocol `1`, version
-      `v26.08.31.05`, and its SHA matches the native CTRL-TS `.ino.bin`.
+      `v26.08.31.06`, and its SHA matches the native CTRL-TS `.ino.bin`.
 - [ ] Confirm complete CTRL app including embedded CTRL-TS image is <= `0x600000`.
 - [ ] Confirm W1P app is <= `0x600000`.
-- [ ] Download `HV-P2P-v26.08.31.05-Native-Firmware` artifact and retain
+- [ ] Download `HV-P2P-v26.08.31.06-Native-Firmware` artifact and retain
       `NATIVE_BUILD_MANIFEST.json` + `SHA256SUMS.txt`.
 
 ## B. Initial flashing
 
 - [ ] Verify EdgeBox serial-number/hardware revision before using its external USB port for
       programming; older EdgeBox revisions use the internal UART programming header.
-- [ ] One-time USB flash CTRL-TS v26.08.31.05 first.
-- [ ] Flash W1P EdgeBox with its matching v26.08.31.05 native build.
+- [ ] One-time USB flash CTRL-TS v26.08.31.06 first.
+- [ ] Flash W1P EdgeBox with its matching v26.08.31.06 native build.
 - [ ] Flash CTRL EdgeBox with the **staged/native CTRL build** that contains the real HMI image.
 - [ ] Never attempt to compile the clean CTRL source by deleting/bypassing the carrier `#error`.
 
@@ -97,5 +97,5 @@ Only after independent E-stop/STO/brake/power-isolation circuits are proven.
 
 ## Release label
 
-Do not label v26.08.31.05 “hardware-tested” until every applicable physical gate above is recorded.
+Do not label v26.08.31.06 “hardware-tested” until every applicable physical gate above is recorded.
 A successful GitHub native build means **compile-ready/test-firmware produced**, not powered-motion proof.

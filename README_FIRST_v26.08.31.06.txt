@@ -6,10 +6,12 @@ Revision mapping for 2026-08-31:
   v26.08.31.01 = initial commissioning/native-build baseline
   v26.08.31.02 = LVGL native-build configuration/font correction
   v26.08.31.03 = ESP32 3.3.8 / LVGL compile compatibility correction
-  v26.08.31.05 = CTRL-TS OTA const-reference / Update.write compatibility correction
-The next changed build will be v26.08.31.05.
+  v26.08.31.04 = CTRL-TS OTA const-reference / Update.write compatibility correction
+  v26.08.31.05 = Waveshare CH422G / ESP32_IO_Expander compatibility correction; first complete native firmware build
+  v26.08.31.06 = unified GitHub build: native firmware + matching macOS Intel SRVR + combined release artifact
+The next changed build will be v26.08.31.07.
 
-HV P2P v26.08.31.05 — COMMISSIONING SOURCE BASELINE
+HV P2P v26.08.31.06 — COMMISSIONING SOURCE BASELINE
 ====================================================
 
 STATUS
@@ -99,7 +101,7 @@ secure boot; adding signed firmware would be a separate security enhancement.
 BUILD THE ACTUAL TEST FIRMWARE
 ------------------------------
 Preferred path: upload this complete source tree to GitHub and run:
-  .github/workflows/firmware-build.yml
+  .github/workflows/complete-build.yml
 
 That workflow pins:
   Arduino CLI 1.5.1
@@ -114,7 +116,11 @@ That workflow pins:
   symbol, mapping it to ESP32_IO_EXPANDER_I2C_CH422G_ADDRESS_000 used by
   ESP32_IO_Expander 0.0.3
 
-It then:
+The single complete workflow runs two matched jobs in parallel:
+  - firmware on Ubuntu;
+  - SRVR macOS Intel application build on macos-15-intel.
+
+The firmware job:
   A. runs all source/protocol regression tests;
   B. native-compiles CTRL-TS first;
   C. verifies its ESP image and <=0x380000 size;
@@ -125,13 +131,28 @@ It then:
   H. enforces app-slot sizes and creates SHA-256 manifests;
   I. uploads one Native-Firmware artifact containing all binaries and the exact staged source.
 
+The SRVR job runs the existing Qt/PySide6/Nuitka validation and deployment gates and uploads:
+  HV-P2P-SRVR-v26.08.31.06-macOS-Intel
+containing:
+  HV P2P SRVR v26.08.31.06 macOS Intel.zip
+
+Only after BOTH jobs pass, a third packaging job uploads:
+  HV-P2P-v26.08.31.06-Complete-Release
+which contains the firmware output and the matching SRVR application ZIP together.
+
 The checked-in CTRL source stays guarded/unmodified, so an incomplete CTRL cannot be
 mistaken for a usable binary.
+
+INCLUDED OPERATOR GUIDE
+-----------------------
+HV P2P v26.08.31.06 - GitHub Build Arduino IDE and Wiring Guide.pdf
+contains the combined GitHub artifact workflow, Arduino IDE settings, low-voltage
+CTRL/W1P/CTRL-TS wiring summary and first commissioning order.
 
 INITIAL FUNCTIONAL TEST ORDER
 -----------------------------
 1. Obtain a successful Native-Firmware artifact from the workflow.
-2. USB-flash CTRL-TS once with the matching v26.08.31.05 image.
+2. USB-flash CTRL-TS once with the matching v26.08.31.06 image.
 3. Flash W1P EdgeBox and CTRL EdgeBox using the native build products/source settings.
 4. Power CTRL + CTRL-TS only; verify bidirectional RS485 HELLO/update/UI before any winch motion.
 5. Verify CTRL E-stop and 0-5 V joystick raw/calibrated range.
@@ -139,7 +160,7 @@ INITIAL FUNCTIONAL TEST ORDER
 7. Verify SRVR peer loss, E-stop source display, limits, brake and stop behavior.
 8. Only then progress to controlled powered-motion testing.
 
-See NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.08.31.05.md for the acceptance gates.
+See NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.08.31.06.md for the acceptance gates.
 
 UI BASELINE
 -----------

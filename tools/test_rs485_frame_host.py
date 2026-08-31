@@ -2,7 +2,7 @@
 from pathlib import Path
 import subprocess, tempfile, textwrap, zlib, struct
 ROOT=Path(__file__).resolve().parents[1]
-HDR=ROOT/'HV_P2P_CTRL_EDGEBOX_v26.08.31.05'/'HV_P2P_RS485_Frame.h'
+HDR=ROOT/'HV_P2P_CTRL_EDGEBOX_v26.08.31.06'/'HV_P2P_RS485_Frame.h'
 assert HDR.is_file()
 with tempfile.TemporaryDirectory() as td:
     td=Path(td)
