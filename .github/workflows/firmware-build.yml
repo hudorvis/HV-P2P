@@ -1,12 +1,12 @@
-name: HV P2P Firmware Build v26.08.31.03
+name: HV P2P Firmware Build v26.08.31.04
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - 'HV_P2P_CTRL_EDGEBOX_v26.08.31.03/**'
-      - 'HV_P2P_CTRL_TS_v26.08.31.03/**'
-      - 'HV_P2P_W1P_EDGEBOX_v26.08.31.03/**'
+      - 'HV_P2P_CTRL_EDGEBOX_v26.08.31.04/**'
+      - 'HV_P2P_CTRL_TS_v26.08.31.04/**'
+      - 'HV_P2P_W1P_EDGEBOX_v26.08.31.04/**'
       - 'tools/**'
       - '.github/workflows/firmware-build.yml'
 
@@ -60,12 +60,12 @@ jobs:
 
       - name: Check that source CTRL still contains build guard
         run: |
-          grep -F '#error "CTRL-TS firmware image has not been staged.' HV_P2P_CTRL_EDGEBOX_v26.08.31.03/HV_P2P_CTRL_TS_Firmware_Image.h
+          grep -F '#error "CTRL-TS firmware image has not been staged.' HV_P2P_CTRL_EDGEBOX_v26.08.31.04/HV_P2P_CTRL_TS_Firmware_Image.h
 
       - name: Upload functional-test firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HV-P2P-v26.08.31.03-Native-Firmware
+          name: HV-P2P-v26.08.31.04-Native-Firmware
           path: NATIVE_BUILD_ARTIFACTS/
           if-no-files-found: error
           retention-days: 30

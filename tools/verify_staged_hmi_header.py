@@ -6,7 +6,7 @@ import hashlib, re, sys
 
 MAX_IMAGE = 0x380000
 EXPECTED_HW = "WS-ESP32S3-7"
-EXPECTED_VERSION = "v26.08.31.03"
+EXPECTED_VERSION = "v26.08.31.04"
 
 
 def fail(msg: str) -> None:

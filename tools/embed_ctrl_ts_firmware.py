@@ -3,8 +3,8 @@
 
 Usage:
   python3 tools/embed_ctrl_ts_firmware.py \
-      HV_P2P_CTRL_TS_v26.08.31.03.ino.bin v26.08.31.03 \
-      HV_P2P_CTRL_EDGEBOX_v26.08.31.03/HV_P2P_CTRL_TS_Firmware_Image.h
+      HV_P2P_CTRL_TS_v26.08.31.04.ino.bin v26.08.31.04 \
+      HV_P2P_CTRL_EDGEBOX_v26.08.31.04/HV_P2P_CTRL_TS_Firmware_Image.h
 
 The source tree intentionally contains a #error build guard instead of a zero-byte
 placeholder.  This helper replaces that guard only after a genuine ESP32 app image

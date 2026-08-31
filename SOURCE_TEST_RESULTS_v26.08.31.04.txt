@@ -1,0 +1,336 @@
+
+==> python3 /mnt/data/hvp2p_rev04/tools/validate_edgebox_integration.py
+HV P2P EdgeBox v26.08.31.04 source-level integration validation PASS
+Checks passed: 253
+  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.08.31.04/HV_P2P_CTRL_EDGEBOX_v26.08.31.04.ino
+  OK: exists: HV_P2P_W1P_EDGEBOX_v26.08.31.04/HV_P2P_W1P_EDGEBOX_v26.08.31.04.ino
+  OK: exists: HV_P2P_CTRL_TS_v26.08.31.04/HV_P2P_CTRL_TS_v26.08.31.04.ino
+  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.08.31.04/HV_P2P_RS485_Frame.h
+  OK: exists: HV_P2P_CTRL_TS_v26.08.31.04/HV_P2P_RS485_Frame.h
+  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.08.31.04/HV_P2P_CTRL_TS_Firmware_Image.h
+  OK: exists: SRVR_GitHub_v26.08.31.04/backend.py
+  OK: exists: SRVR_GitHub_v26.08.31.04/main.py
+  OK: exists: SRVR_GitHub_v26.08.31.04/qml/pages/SetupPage.qml
+  OK: exists: SRVR_GitHub_v26.08.31.04/qml/components/SpanDiagram.qml
+  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.08.31.04/partitions.csv
+  OK: exists: HV_P2P_CTRL_TS_v26.08.31.04/partitions.csv
+  OK: exists: HV_P2P_W1P_EDGEBOX_v26.08.31.04/partitions.csv
+  OK: Arduino same-name sketch folder: HV_P2P_CTRL_EDGEBOX_v26.08.31.04
+  OK: Arduino same-name sketch folder: HV_P2P_W1P_EDGEBOX_v26.08.31.04
+  OK: Arduino same-name sketch folder: HV_P2P_CTRL_TS_v26.08.31.04
+  OK: CTRL: all (), [], {} balanced
+  OK: CTRL: release version v26.08.31.04
+  OK: W1P: all (), [], {} balanced
+  OK: W1P: release version v26.08.31.04
+  OK: CTRL-TS: all (), [], {} balanced
+  OK: CTRL-TS: release version v26.08.31.04
+  OK: CTRL and CTRL-TS use byte-identical RS485 framing header
+  OK: W1P-TS remains excluded
+  OK: CTRL EdgeBox Ethernet pin: EDGEBOX_ETH_CS   10
+  OK: CTRL EdgeBox Ethernet pin: EDGEBOX_ETH_MISO 11
+  OK: CTRL EdgeBox Ethernet pin: EDGEBOX_ETH_MOSI 12
+  OK: CTRL EdgeBox Ethernet pin: EDGEBOX_ETH_SCLK 13
+  OK: CTRL EdgeBox Ethernet pin: EDGEBOX_ETH_INT  14
+  OK: CTRL EdgeBox Ethernet pin: EDGEBOX_ETH_RST  15
+  OK: W1P EdgeBox Ethernet EDGEBOX_ETH_CS=10
+  OK: W1P EdgeBox Ethernet EDGEBOX_ETH_MISO=11
+  OK: W1P EdgeBox Ethernet EDGEBOX_ETH_MOSI=12
+  OK: W1P EdgeBox Ethernet EDGEBOX_ETH_SCLK=13
+  OK: W1P EdgeBox Ethernet EDGEBOX_ETH_INT=14
+  OK: W1P EdgeBox Ethernet EDGEBOX_ETH_RST=15
+  OK: CTRL: W5500 SPI Ethernet init
+  OK: CTRL: static IPv4 configuration retained
+  OK: W1P: W5500 SPI Ethernet init
+  OK: W1P: static IPv4 configuration retained
+  OK: CTRL remains 172.20.1.101
+  OK: CTRL SRVR target remains 172.20.1.100
+  OK: W1P remains 172.20.1.102 -> SRVR .100
+  OK: UDP port 5000 retained
+  OK: CTRL E-stop uses EdgeBox DI0/GPIO4
+  OK: CTRL DI0 HIGH=healthy / LOW-open=unsafe
+  OK: W1P E-stop uses DI0 HIGH=healthy
+  OK: W1P open/pressed DI0 resolves unsafe
+  OK: CTRL SGM58031 contract: SDA_PIN 20
+  OK: CTRL SGM58031 contract: SCL_PIN 19
+  OK: CTRL SGM58031 contract: ADS_ADDR = 0x48
+  OK: CTRL SGM58031 contract: SGM_REG_CONVERSION = 0x00
+  OK: CTRL SGM58031 contract: SGM_REG_CONFIG     = 0x01
+  OK: CTRL SGM58031 contract: SGM_REG_CONFIG1    = 0x04
+  OK: CTRL SGM58031 contract: SGM_CONFIG_AI0_CONT_800SPS_6V144 = 0x40E3
+  OK: CTRL no longer depends on external ADS1115 library/hardware
+  OK: CTRL 0-5V field endpoint accounts for EdgeBox ~2:1 divider
+  OK: ADC scaling math: 5V field -> ~13333.3 counts
+  OK: SRVR remains joystick Left/Centre/Right calibration authority
+  OK: EdgeBox analogue/I2C fault reuses wire-compatible CTRL analogue fault flag
+  OK: CTRL has no physical AUX inputs
+  OK: CTRL AUX5 remains 0x0400
+  OK: CTRL A7 16-bit flags wire format unchanged
+  OK: CTRL joystick float remains big-endian on UDP wire
+  OK: CTRL handles CTRL-TS AUX1 event
+  OK: CTRL handles CTRL-TS AUX2 event
+  OK: CTRL handles CTRL-TS AUX3 event
+  OK: CTRL handles CTRL-TS AUX4 event
+  OK: CTRL handles CTRL-TS AUX5 event
+  OK: CTRL: EdgeBox RS485 pin mapping present
+  OK: W1P: EdgeBox RS485 pin mapping present
+  OK: CTRL uses ESP32 hardware RTS half-duplex RS485
+  OK: W1P uses ESP32 hardware RTS half-duplex RS485
+  OK: CTRL HMI compatibility/link timeout gate
+  OK: Missing/incompatible CTRL-TS asserts existing CTRL E-stop flag
+  OK: RS485 framing documents deterministic master/slave rule
+  OK: RS485 framing has bounded payload and inter-byte timeout
+  OK: RS485 frame type defined: HELLO_REQ
+  OK: RS485 frame type defined: HELLO_RESP
+  OK: RS485 frame type defined: COMPATIBLE
+  OK: RS485 frame type defined: TEXT
+  OK: RS485 frame type defined: POLL
+  OK: RS485 frame type defined: EVENT
+  OK: RS485 frame type defined: FW_BEGIN
+  OK: RS485 frame type defined: FW_BLOCK
+  OK: RS485 frame type defined: FW_END
+  OK: RS485 frame type defined: FW_RESULT
+  OK: RS485 frame type defined: REBOOT
+  OK: CTRL-TS SKU27078 official Arduino demo uses RX GPIO15 / TX GPIO16
+  OK: CTRL-TS uses actual SKU27078 800x480 display geometry
+  OK: CTRL-TS only transmits in master response slots
+  OK: CTRL-TS has explicit master-release turnaround guard
+  OK: Existing splash.jpg boot sequence retained
+  OK: unstaged CTRL uses a hard compile-time guard, not a false/zero-byte carrier placeholder
+  OK: CTRL carrier build guard explains the mandatory native HMI staging step
+  OK: CTRL automatic HMI updater sender present: HMI_FW_WAIT_READY
+  OK: CTRL automatic HMI updater sender present: HMI_FW_WAIT_BLOCK_ACK
+  OK: CTRL automatic HMI updater sender present: HMI_FW_WAIT_RESULT
+  OK: CTRL automatic HMI updater sender present: HMI_FW_WAIT_REBOOT_ACK
+  OK: CTRL automatic HMI updater sender present: hmiFwStart
+  OK: CTRL automatic HMI updater sender present: hmiFwSendBlock
+  OK: CTRL automatic HMI updater sender present: FW_BEGIN
+  OK: CTRL automatic HMI updater sender present: FW_BLOCK
+  OK: CTRL automatic HMI updater sender present: FW_END
+  OK: CTRL automatic HMI updater sender present: FW_RESULT
+  OK: CTRL automatic HMI updater sender present: REBOOT
+  OK: CTRL-TS automatic HMI updater receiver present: #include <Update.h>
+  OK: CTRL-TS automatic HMI updater receiver present: #include <Preferences.h>
+  OK: CTRL-TS automatic HMI updater receiver present: #include <mbedtls/sha256.h>
+  OK: CTRL-TS automatic HMI updater receiver present: Update.begin(imageSize, U_FLASH)
+  OK: CTRL-TS automatic HMI updater receiver present: Update.write
+  OK: CTRL-TS automatic HMI updater receiver present: mbedtls_sha256_update
+  OK: CTRL-TS automatic HMI updater receiver present: mbedtls_sha256_finish
+  OK: CTRL-TS automatic HMI updater receiver present: sha_mismatch
+  OK: CTRL-TS automatic HMI updater receiver present: Update.end(true)
+  OK: CTRL-TS automatic HMI updater receiver present: save_fw_identity
+  OK: CTRL-TS automatic HMI updater receiver present: FW_BEGIN
+  OK: CTRL-TS automatic HMI updater receiver present: FW_BLOCK
+  OK: CTRL-TS automatic HMI updater receiver present: FW_END
+  OK: CTRL-TS automatic HMI updater receiver present: FW_RESULT
+  OK: CTRL-TS automatic HMI updater receiver present: REBOOT
+  OK: CTRL-TS firmware transfer enters fail-safe incompatible state
+  OK: CTRL gates automatic HMI flashing on exact hardware id and carrier protocol
+  OK: CTRL refuses automatic flashing of an unexpected RS485 peer
+  OK: CTRL FW_BEGIN carries explicit target hardware/protocol metadata
+  OK: CTRL-TS independently rejects FW_BEGIN for wrong hardware/protocol
+  OK: CTRL updater refuses any missing/unmeasured carrier identity
+  OK: CTRL updater correlates every response to the outstanding RS485 sequence
+  OK: CTRL updater accepts only the exact next firmware block offset
+  OK: CTRL requires exact final size and SHA-256 from CTRL-TS
+  OK: CTRL requires explicit FW_READY acceptance before transfer
+  OK: CTRL-TS repeats successful FW_RESULT after a lost final response
+  OK: CTRL-TS refuses updater reboot before a verified finalized image exists
+  OK: CTRL-TS restores current boot partition if firmware identity metadata cannot persist
+  OK: CTRL-TS firmware identity metadata is committed per OTA partition
+  OK: CTRL-TS receiver enforces the conservative 0x380000 OTA slot
+  OK: CTRL-TS reported/stored version derives from one release semantic-version token
+  OK: CTRL-TS does not claim the staged image hash before reboot
+  OK: exists: tools/embed_ctrl_ts_firmware.py
+  OK: CTRL-TS embed helper enforces the conservative 0x380000 target OTA slot
+  OK: W1P proven v26.08.19.01 logic preserved: modbusCRC16
+  OK: W1P proven v26.08.19.01 logic preserved: modbusWaitForSilentGap
+  OK: W1P proven v26.08.19.01 logic preserved: modbusWriteSingleRegister
+  OK: W1P proven v26.08.19.01 logic preserved: modbusWriteMultipleRegisters
+  OK: W1P proven v26.08.19.01 logic preserved: modbusReadHoldingRegisters
+  OK: W1P proven v26.08.19.01 logic preserved: driveConfigureMotionProfile
+  OK: W1P proven v26.08.19.01 logic preserved: driveWriteVelocityCommandMps
+  OK: W1P proven v26.08.19.01 logic preserved: driveSendEmergencyStop
+  OK: W1P proven v26.08.19.01 logic preserved: serviceMotionProfile
+  OK: W1P proven v26.08.19.01 logic preserved: limitVelocityForSoftLimits
+  OK: W1P proven v26.08.19.01 logic preserved: driveStopNow
+  OK: W1P proven v26.08.19.01 logic preserved: driveAutoEnableReady
+  OK: W1P proven v26.08.19.01 logic preserved: servicePeerTimeout
+  OK: W1P proven v26.08.19.01 logic preserved: handleCommand
+  OK: W1P proven v26.08.19.01 logic preserved: sendStatusLine
+  OK: W1P proven v26.08.19.01 logic preserved: preserveDisplayedPositionForMotorDirectionChange
+  OK: W1P Leadshine/safety contract: RS485_BAUD = 115200
+  OK: W1P Leadshine/safety contract: DRIVE_MODBUS_ID = 1
+  OK: W1P Leadshine/safety contract: SERIAL_8N1
+  OK: W1P Leadshine/safety contract: MODBUS_REPLY_TIMEOUT_MS = 50
+  OK: W1P Leadshine/safety contract: MODBUS_READ_RETRIES = 3
+  OK: W1P Leadshine/safety contract: MODBUS_INTERFRAME_GAP_US = 1500
+  OK: W1P Leadshine/safety contract: W1P_PEER_TIMEOUT_MS = 750
+  OK: EL7 RS485 config contract: REG_RS485_MODE = 0x053B
+  OK: EL7 RS485 config contract: REG_RS485_BAUD = 0x053D
+  OK: EL7 RS485 config contract: REG_RS485_ADDRESS = 0x053F
+  OK: EL7 RS485 config contract: EXPECTED_RS485_MODE = 4
+  OK: EL7 RS485 config contract: EXPECTED_RS485_BAUD_CODE = 6
+  OK: EL7 RS485 config contract: EXPECTED_RS485_ADDRESS = 1
+  OK: EL7 DO map retained: REG_DO2_ASSIGN = 0x0417
+  OK: EL7 DO map retained: REG_DO3_ASSIGN = 0x0419
+  OK: EL7 DO map retained: REG_DO4_ASSIGN = 0x041B
+  OK: EL7 DO map retained: REG_DO5_ASSIGN = 0x041D
+  OK: EL7 DO map retained: EXPECTED_DO2_READY_ASSIGN = 2
+  OK: EL7 DO map retained: EXPECTED_DO3_ENABLED_ASSIGN = 0x12
+  OK: EL7 DO map retained: EXPECTED_DO4_BRAKE_ASSIGN = 3
+  OK: EL7 DO map retained: EXPECTED_DO5_FAULT_ASSIGN = 1
+  OK: Modbus TX waits for queued UART bytes before reply collection
+  OK: ESP32 UART driver owns DE/RTS release after final transmitted bit
+  OK: W1P 750ms peer fail-safe stops and drops software Servo Enable
+  OK: W1P peer-timeout code directly stops drive
+  OK: W1P STOP and SW_SRVON command contract retained
+  OK: SW Servo Enable waits for verified BRK-OFF/output map
+  OK: CTRL-TS retains five AUX touch tiles
+  OK: CTRL-TS shared SRVR-family palette token present: 0x0f1316
+  OK: CTRL-TS shared SRVR-family palette token present: 0x171c20
+  OK: CTRL-TS shared SRVR-family palette token present: 0x4a4f52
+  OK: CTRL-TS shared SRVR-family palette token present: 0x26d5ff
+  OK: CTRL-TS shared SRVR-family palette token present: 0x72ed21
+  OK: CTRL-TS shared SRVR-family palette token present: 0xef5757
+  OK: CTRL-TS approved operator layout token present: CTRL
+  OK: CTRL-TS approved operator layout token present: W1P
+  OK: CTRL-TS approved operator layout token present: SRVR TIME
+  OK: CTRL-TS approved operator layout token present: UPTIME
+  OK: CTRL-TS approved operator layout token present: DRIVE
+  OK: CTRL-TS approved operator layout token present: SPEED
+  OK: CTRL-TS approved operator layout token present: POSITION
+  OK: CTRL-TS approved operator layout token present: E-STOP
+  OK: SRVR -> CTRL-TS display field shared: drive_mode
+  OK: SRVR -> CTRL-TS display field shared: accel_mode
+  OK: SRVR -> CTRL-TS display field shared: battery_change
+  OK: SRVR -> CTRL-TS display field shared: srvr_time
+  OK: SRVR -> CTRL-TS display field shared: uptime
+  OK: SRVR -> CTRL-TS display field shared: ctrl_ip
+  OK: SRVR -> CTRL-TS display field shared: w1p_ip
+  OK: SRVR/W1P shared command: SET_UNITS_PER_M
+  OK: SRVR/W1P shared command: SET_MOTOR_REVERSE
+  OK: SRVR/W1P shared command: SET_ACCEL
+  OK: SRVR/W1P shared command: SET_DECEL
+  OK: SRVR/W1P shared command: SET_CROSSOVER
+  OK: SRVR/W1P shared command: SET_STOP_DECEL
+  OK: SRVR/W1P shared command: SET_ACCEL_MODE
+  OK: SRVR/W1P shared command: SET_SPAN
+  OK: SRVR/W1P shared command: SET_LIMIT_NEAR
+  OK: SRVR/W1P shared command: SET_LIMIT_FAR
+  OK: SRVR/W1P shared command: SERVICE_MODE
+  OK: SRVR/W1P shared command: VEL
+  OK: SRVR/W1P shared command: SYNC_POS
+  OK: SRVR/W1P shared command: STOP
+  OK: SRVR/W1P shared command: SW_SRVON
+  OK: SRVR AUX5 flag matches CTRL 0x0400
+  OK: SRVR still parses A7 big-endian joystick float
+  OK: SRVR app close remains wired to shutdown safety
+  OK: SRVR dynamic HMI label preserved: Accel Mode |
+  OK: SRVR dynamic HMI label preserved: Drive Mode |
+  OK: SRVR dynamic HMI label preserved: Battery Change |
+  OK: SRVR config migration/calibrated-state persistence retained
+  OK: SRVR Goto anti-hunt approach logic retained
+  OK: Setup exposes the EdgeBox native joystick input instead of legacy ADS1115 wording
+  OK: Setup does not expose the excluded W1P-TS
+  OK: CTRL and W1P source identify the EdgeBox-ESP-100 hardware baseline
+  OK: Setup preserves approved three-panel grid while replacing obsolete W1P-TS controls with CTRL-TS firmware status
+  OK: Free-D geometry markers are sampled from the exact rendered cable path
+  OK: CTRL carrier dual-OTA partition token: app0,     app,  ota_0
+  OK: CTRL carrier dual-OTA partition token: app1,     app,  ota_1
+  OK: CTRL carrier dual-OTA partition token: 0x600000
+  OK: CTRL-TS dual-OTA partition token: app0,     app,  ota_0
+  OK: CTRL-TS dual-OTA partition token: app1,     app,  ota_1
+  OK: CTRL-TS dual-OTA partition token: 0x380000
+  OK: W1P EdgeBox dual-OTA partition token: app0,     app,  ota_0
+  OK: W1P EdgeBox dual-OTA partition token: app1,     app,  ota_1
+  OK: W1P EdgeBox dual-OTA partition token: 0x600000
+  OK: CTRL HMI_STATUS diagnostic field source: g_hmiReportedVersion
+  OK: CTRL HMI_STATUS diagnostic field source: HV_CTRL_TS_REQUIRED_VERSION
+  OK: CTRL HMI_STATUS diagnostic field source: hmiFwStateText()
+  OK: CTRL HMI_STATUS diagnostic field source: HV_CTRL_TS_IMAGE_AVAILABLE
+  OK: SRVR exposes CTRL-TS firmware diagnostic: _ctrl_ts_required_version
+  OK: SRVR exposes CTRL-TS firmware diagnostic: _ctrl_ts_fw_state
+  OK: SRVR exposes CTRL-TS firmware diagnostic: _ctrl_ts_image_available
+  OK: SRVR exposes CTRL-TS firmware diagnostic: def ctrlTsFirmwareState
+  OK: SRVR exposes CTRL-TS firmware diagnostic: def ctrlTsRequiredVersion
+  OK: SRVR exposes CTRL-TS firmware diagnostic: def joystickInputConnected
+  OK: A7 host sanity: 16-bit flags + big-endian float decode
+
+==> python3 /mnt/data/hvp2p_rev04/tools/test_rs485_frame_host.py
+crc=7442b814
+RS485_FRAME_HOST_PASS
+PYTHON_CRC_CROSSCHECK_PASS 7442b814
+
+==> python3 /mnt/data/hvp2p_rev04/tools/test_hmi_fw_retry_contract.py
+HMI_FW_RETRY_CONTRACT_PASS: lost block ACK, lost FW_RESULT, stale sequence, rollback guards
+
+==> python3 /mnt/data/hvp2p_rev04/tools/test_hmi_target_gate.py
+HMI_TARGET_GATE_PASS
+wrong hardware/protocol can never enter automatic update
+correct target with mismatched version/hash enters automatic update
+
+==> python3 /mnt/data/hvp2p_rev04/tools/test_embed_tool.py
+Image:    /tmp/hvp2p_embed_test_7g59bqvs/fixture.ino.bin
+Hardware: WS-ESP32S3-7
+Protocol: 1
+Version:  v26.08.31.04
+Size:     4096 bytes (0.004 MiB)
+SHA256:   120ca14d2ef4662d8f89da7e5a26a6e54cb6f59915e121c71a8f9a6a906b51c7
+Wrote:    /tmp/hvp2p_embed_test_7g59bqvs/HV_P2P_CTRL_TS_Firmware_Image.h
+STAGED_HMI_HEADER_PASS
+hardware=WS-ESP32S3-7
+protocol=1
+version=v26.08.31.04
+size=4096
+sha256=120ca14d2ef4662d8f89da7e5a26a6e54cb6f59915e121c71a8f9a6a906b51c7
+EMBED_TOOL_SELFTEST_PASS
+
+==> python3 /mnt/data/hvp2p_rev04/tools/validate_build_pipeline.py
+OK  workflow core 3.3.8
+OK  workflow Arduino CLI pinned
+OK  HMI LVGL pinned
+OK  display panel pinned
+OK  IO expander pinned
+OK  JPEGDEC pinned
+OK  LVGL config prepared beside library
+OK  LVGL config enables Arduino tick
+OK  LVGL required fonts enabled
+OK  HMI only uses available Montserrat sizes
+OK  HMI avoids Arduino HEX macro collision
+OK  HMI Update.write uses const-safe scratch buffer
+OK  HMI LVGL 35 percent opacity is explicit
+OK  native builder HMI first
+OK  native builder embeds before CTRL
+OK  EdgeBox forces 16M
+OK  HMI forces 16M OPI
+OK  HMI target slot guarded
+OK  CTRL target slot guarded
+OK  source CTRL hard build guard
+OK  embed verifies ESP magic
+OK  embed writes HW/proto/version/hash
+OK  W1P dual OTA added
+OK  artifact upload present
+BUILD_PIPELINE_VALIDATION_PASS (24 checks)
+
+==> python3 /mnt/data/hvp2p_rev04/tools/test_modbus_contract_host.py
+MODBUS_CRC_HOST_PASS q1=CDC5 q2=0B98
+
+==> python3 /mnt/data/hvp2p_rev04/tools/test_srvr_wire_contract.py
+SRVR_WIRE_CONTRACT_PASS: actual _parse_control_packet accepts EdgeBox A7 16-bit flags / network-order float
+
+==> python3 -m py_compile /mnt/data/hvp2p_rev04/SRVR_GitHub_v26.08.31.04/backend.py /mnt/data/hvp2p_rev04/SRVR_GitHub_v26.08.31.04/main.py
+
+==> python3 /mnt/data/hvp2p_rev04/SRVR_GitHub_v26.08.31.04/tools/validate_project.py
+HV P2P SRVR preflight PASS
+  Python syntax: OK
+  Qt Quick only / no Tkinter: OK
+  QML/backend interface: OK
+  QRC/project manifest: OK
+  Four-page heading/style contract + clipping guards: OK
+  Joystick calibration wizard + neutral-return safety interlock: OK
+  Run 20/25/25/30 geometry: OK
+  Proven W1P/CTRL critical command + secondary interface contract: OK
+  Isolated deployment staging + smoke checks: OK
+
+ALL_SOURCE_CHECKS_PASS
+NOTE: Native Arduino compilation is performed by .github/workflows/firmware-build.yml; physical RS485/EL7/motion tests remain bench commissioning gates.
