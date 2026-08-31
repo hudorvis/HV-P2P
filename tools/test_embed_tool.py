@@ -4,7 +4,7 @@ from pathlib import Path
 import hashlib, shutil, subprocess, sys, tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-FRAME = ROOT / 'HV_P2P_CTRL_EDGEBOX_v26.08.31.09' / 'HV_P2P_RS485_Frame.h'
+FRAME = ROOT / 'HV_P2P_CTRL_EDGEBOX_v26.08.31.10' / 'HV_P2P_RS485_Frame.h'
 EMBED = ROOT / 'tools' / 'embed_ctrl_ts_firmware.py'
 VERIFY = ROOT / 'tools' / 'verify_staged_hmi_header.py'
 
@@ -16,7 +16,7 @@ with tempfile.TemporaryDirectory(prefix='hvp2p_embed_test_') as td:
     fixture.write_bytes(bytes([0xE9]) + bytes((i % 251 for i in range(1,4096))))
     shutil.copy2(FRAME, d/'HV_P2P_RS485_Frame.h')
     out=d/'HV_P2P_CTRL_TS_Firmware_Image.h'
-    subprocess.run([sys.executable,str(EMBED),str(fixture),'v26.08.31.09',str(out)],check=True)
+    subprocess.run([sys.executable,str(EMBED),str(fixture),'v26.08.31.10',str(out)],check=True)
     subprocess.run([sys.executable,str(VERIFY),str(out),str(fixture)],check=True)
     txt=out.read_text()
     assert hashlib.sha256(fixture.read_bytes()).hexdigest() in txt

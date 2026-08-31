@@ -6,10 +6,10 @@ wf=(ROOT/'.github/workflows/complete-build.yml').read_text()
 builder=(ROOT/'tools/native_build_firmware.py').read_text()
 lvglprep=(ROOT/'tools/prepare_lvgl_config.py').read_text()
 waveshareprep=(ROOT/'tools/prepare_waveshare_library.py').read_text()
-hmi=(ROOT/'HV_P2P_CTRL_TS_v26.08.31.09/HV_P2P_CTRL_TS_v26.08.31.09.ino').read_text()
+hmi=(ROOT/'HV_P2P_CTRL_TS_v26.08.31.10/HV_P2P_CTRL_TS_v26.08.31.10.ino').read_text()
 embed=(ROOT/'tools/embed_ctrl_ts_firmware.py').read_text()
-guard=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.08.31.09/HV_P2P_CTRL_TS_Firmware_Image.h').read_text()
-w1pp=(ROOT/'HV_P2P_W1P_EDGEBOX_v26.08.31.09/partitions.csv').read_text()
+guard=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.08.31.10/HV_P2P_CTRL_TS_Firmware_Image.h').read_text()
+w1pp=(ROOT/'HV_P2P_W1P_EDGEBOX_v26.08.31.10/partitions.csv').read_text()
 checks={
  'workflow core 3.3.8': 'esp32:esp32@3.3.8' in wf,
  'workflow Arduino CLI pinned': "version: '1.5.1'" in wf,
@@ -38,13 +38,13 @@ checks={
  'embed verifies ESP magic': 'ESP_IMAGE_MAGIC = 0xE9' in embed,
  'embed writes HW/proto/version/hash': all(x in embed for x in ('HV_CTRL_TS_REQUIRED_HW','HV_CTRL_TS_REQUIRED_PROTOCOL','HV_CTRL_TS_REQUIRED_VERSION','HV_CTRL_TS_REQUIRED_SHA256')),
  'W1P dual OTA added': all(x in w1pp for x in ('ota_0','ota_1','0x600000')),
- 'firmware artifact upload present': 'HV-P2P-v26.08.31.09-Native-Firmware' in wf,
- 'SRVR macOS job present': 'runs-on: macos-15-intel' in wf and 'HV-P2P-SRVR-v26.08.31.09-macOS-Intel' in wf,
- 'complete matched artifact present': 'HV-P2P-v26.08.31.09-Complete-Release' in wf and 'needs: [build-firmware, build-srvr]' in wf,
+ 'firmware artifact upload present': 'HV-P2P-v26.08.31.10-Native-Firmware' in wf,
+ 'SRVR macOS job present': 'runs-on: macos-15-intel' in wf and 'HV-P2P-SRVR-v26.08.31.10-macOS-Intel' in wf,
+ 'complete matched artifact present': 'HV-P2P-v26.08.31.10-Complete-Release' in wf and 'needs: [build-firmware, build-srvr]' in wf,
  'SRVR bundle metadata pinned': all(x in wf for x in ('BUNDLE_IDENTIFIER', 'com.hvp2p.srvr', 'BUNDLE_SHORT_VERSION', 'BUNDLE_BUILD_VERSION', 'HVP2PReleaseVersion')),
- 'complete release preserves original SRVR ZIP': 'SRVR artifact must remain one untouched ZIP' in wf and "expected_srvr=root/'SRVR'/'HV P2P SRVR v26.08.31.09 macOS Intel.zip'" in wf,
+ 'complete release preserves original SRVR ZIP': 'SRVR artifact must remain one untouched ZIP' in wf and "expected_srvr=root/'SRVR'/'HV P2P SRVR v26.08.31.10 macOS Intel.zip'" in wf,
  'complete release internal SHA256 manifest': "manifest=root/'SHA256SUMS.txt'" in wf and "sha256(p)" in wf,
- 'complete release external SHA256': "Path(str(out)+'.sha256')" in wf and 'HV P2P v26.08.31.09 Complete Release.zip.sha256' in wf,
+ 'complete release external SHA256': "Path(str(out)+'.sha256')" in wf and 'HV P2P v26.08.31.10 Complete Release.zip.sha256' in wf,
 }
 failed=[k for k,v in checks.items() if not v]
 for k,v in checks.items(): print(('OK  ' if v else 'FAIL')+k)

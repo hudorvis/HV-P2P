@@ -1,4 +1,4 @@
-# HV P2P v26.08.31.09 — Native Build & Functional Bench Checklist
+# HV P2P v26.08.31.10 — Native Build & Functional Bench Checklist
 
 ## A. Native build gate
 
@@ -11,24 +11,24 @@
 - [ ] Confirm CTRL-TS native app is >32 KiB and <= `0x380000` bytes.
 - [ ] Confirm carrier verification prints `STAGED_HMI_HEADER_PASS`.
 - [ ] Confirm generated carrier hardware is `WS-ESP32S3-7`, protocol `1`, version
-      `v26.08.31.09`, and its SHA matches the native CTRL-TS `.ino.bin`.
+      `v26.08.31.10`, and its SHA matches the native CTRL-TS `.ino.bin`.
 - [ ] Confirm complete CTRL app including embedded CTRL-TS image is <= `0x600000`.
 - [ ] Confirm W1P app is <= `0x600000`.
-- [ ] Confirm the native builder verifies the compiled CTRL binary contains `HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_VERSION=v26.08.31.09`.
-- [ ] Confirm the native builder verifies the compiled W1P binary contains `HV_P2P_FW_ROLE=W1P;HV_P2P_FW_VERSION=v26.08.31.09`.
+- [ ] Confirm the native builder verifies the compiled CTRL binary contains `HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_VERSION=v26.08.31.10`.
+- [ ] Confirm the native builder verifies the compiled W1P binary contains `HV_P2P_FW_ROLE=W1P;HV_P2P_FW_VERSION=v26.08.31.10`.
 - [ ] Confirm `NATIVE_BUILD_MANIFEST.json` records the exact Waveshare git commit.
-- [ ] Confirm the macOS app Info.plist reports `CFBundleIdentifier=com.hvp2p.srvr`, `CFBundleShortVersionString=26.8.31`, `CFBundleVersion=2608.31.9`, and `HVP2PReleaseVersion=26.08.31.09`.
-- [ ] Confirm the Complete Release `SRVR/` directory contains the original unextracted `HV P2P SRVR v26.08.31.09 macOS Intel.zip` and no extracted `.app`.
-- [ ] Confirm `COMPLETE_RELEASE/SHA256SUMS.txt` exists and the external `HV P2P v26.08.31.09 Complete Release.zip.sha256` matches the exact combined ZIP.
-- [ ] Download `HV-P2P-v26.08.31.09-Native-Firmware` artifact and retain `NATIVE_BUILD_MANIFEST.json` + `SHA256SUMS.txt`.
+- [ ] Confirm the macOS app Info.plist reports `CFBundleIdentifier=com.hvp2p.srvr`, `CFBundleShortVersionString=26.8.31`, `CFBundleVersion=2608.31.10`, and `HVP2PReleaseVersion=26.08.31.10`.
+- [ ] Confirm the Complete Release `SRVR/` directory contains the original unextracted `HV P2P SRVR v26.08.31.10 macOS Intel.zip` and no extracted `.app`.
+- [ ] Confirm `COMPLETE_RELEASE/SHA256SUMS.txt` exists and the external `HV P2P v26.08.31.10 Complete Release.zip.sha256` matches the exact combined ZIP.
+- [ ] Download `HV-P2P-v26.08.31.10-Native-Firmware` artifact and retain `NATIVE_BUILD_MANIFEST.json` + `SHA256SUMS.txt`.
 - [ ] Download and preserve the exact Complete Release ZIP byte-for-byte; do not extract/re-zip the nested SRVR ZIP before returning it for audit.
 
 ## B. Initial flashing
 
 - [ ] Verify EdgeBox serial-number/hardware revision before using its external USB port for
       programming; older EdgeBox revisions use the internal UART programming header.
-- [ ] One-time USB flash CTRL-TS v26.08.31.09 first.
-- [ ] Flash W1P EdgeBox with its matching v26.08.31.09 native build.
+- [ ] One-time USB flash CTRL-TS v26.08.31.10 first.
+- [ ] Flash W1P EdgeBox with its matching v26.08.31.10 native build.
 - [ ] Flash CTRL EdgeBox with the **staged/native CTRL build** that contains the real HMI image.
 - [ ] Never attempt to compile the clean CTRL source by deleting/bypassing the carrier `#error`.
 
@@ -138,7 +138,7 @@ Only after independent E-stop/STO/brake/power-isolation circuits are proven.
 - [ ] Verify Battery Change auto-cancels correctly on return inside limits.
 - [ ] Exercise E-stop from SRVR, CTRL and W1P and verify source/combinations display correctly.
 
-## K. v26.08.31.09 locked Run / Setup / Virtual acceptance
+## K. v26.08.31.10 locked Run / Setup / Virtual acceptance
 
 Perform Virtual-mode checks with the physical load safely isolated until its output-inhibit behavior is independently confirmed.
 
@@ -161,5 +161,5 @@ Perform Virtual-mode checks with the physical load safely isolated until its out
 
 ## Release label
 
-Do not label v26.08.31.09 “hardware-tested” until every applicable physical gate above is recorded.
+Do not label v26.08.31.10 “hardware-tested” until every applicable physical gate above is recorded.
 A successful GitHub native build means **compile-ready/test-firmware produced**, not powered-motion proof.

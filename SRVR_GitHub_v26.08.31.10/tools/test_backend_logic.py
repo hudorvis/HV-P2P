@@ -35,7 +35,7 @@ from backend import (
 )
 
 app = QCoreApplication.instance() or QCoreApplication([])
-b = HVP2PBackend(version="26.08.31.09", smoke_test=True)
+b = HVP2PBackend(version="26.08.31.10", smoke_test=True)
 
 try:
     # Atomic file helper must retain a previous-good recovery copy and never
@@ -318,7 +318,7 @@ try:
     b.resetSetupSettings()
     assert b.setupDraft["drive_modes"][0]["name"] == "Run Saved Mode"
 
-    # v26.08.31.09 Virtual Position Source is a true SRVR demo mode. Setup must
+    # v26.08.31.10 Virtual Position Source is a true SRVR demo mode. Setup must
     # stage it, Apply must activate it, CTRL input may move the simulated position
     # without W1P/EL7 health, and physical W1P feedback must not overwrite it.
     assert b.positionSource == "Encoder"
@@ -329,6 +329,14 @@ try:
     assert b.positionSource == "Virtual" and b._safety_servo_inhibited
     now = time.time(); b._ctrl_rx_times.clear(); b._ctrl_rx_times.extend([now - 0.05, now])
     b.w1p.last_seen = 0.0; b.winch_rs_status = "Disconnected"; b._ctrl_flags = 0
+    # Isolate the Virtual demo assertion from direction/calibration/service state
+    # deliberately exercised by earlier tests in this same backend instance.
+    b.reverse_joystick = False
+    b._not_calibrated = False
+    b.calibration_open = False; b.calibration_type = ""
+    b.battery_change_mode = False
+    b.goto_target_m = None
+    b.state.near_limit.position_m = 0.0; b.state.far_limit.position_m = 100.0
     b._ctrl_axis = 0.5; b.state.pos_m = 50.0
     b._safety_active_last = False; b._joystick_neutral_required = False
     b._motion_tick()
@@ -340,7 +348,7 @@ try:
     b._virtual_motion_step()
     assert float(b.state.pos_m) > old_pos, "Virtual position did not integrate simulated speed"
     virtual_pos = float(b.state.pos_m); virtual_speed = float(b.current_speed_mps)
-    b._parse_w1p("STATUS POS_M=12.345 VEL_MPS=-4.5 IP=172.20.1.102 WRITE_EN=0 SW_SRVON=0 VEL_WD=0 SERVICE_LOCK=0 RS_STAT=CONNECTED LEAD_CFG=OK FW=v26.08.31.09")
+    b._parse_w1p("STATUS POS_M=12.345 VEL_MPS=-4.5 IP=172.20.1.102 WRITE_EN=0 SW_SRVON=0 VEL_WD=0 SERVICE_LOCK=0 RS_STAT=CONNECTED LEAD_CFG=OK FW=v26.08.31.10")
     assert abs(float(b.state.pos_m) - virtual_pos) < 1e-9 and abs(float(b.current_speed_mps) - virtual_speed) < 1e-9
     # Leaving Virtual is deliberately fail-safe: no physical motion is accepted
     # until the normal neutral/re-arm sequence has completed.
@@ -922,7 +930,7 @@ try:
     assert backup_cfg.is_file()
     expected_backup = json.loads(backup_cfg.read_text())
     b._config_path.write_text('{broken-json', encoding='utf-8')
-    b2 = HVP2PBackend(version="26.08.31.09", smoke_test=True)
+    b2 = HVP2PBackend(version="26.08.31.10", smoke_test=True)
     try:
         assert json.loads(b2._config_path.read_text()) == expected_backup
     finally:

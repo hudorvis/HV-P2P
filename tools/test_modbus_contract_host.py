@@ -2,7 +2,7 @@
 from pathlib import Path
 import re, subprocess, tempfile
 ROOT=Path(__file__).resolve().parents[1]
-W=ROOT/'HV_P2P_W1P_EDGEBOX_v26.08.31.09'/'HV_P2P_W1P_EDGEBOX_v26.08.31.09.ino'
+W=ROOT/'HV_P2P_W1P_EDGEBOX_v26.08.31.10'/'HV_P2P_W1P_EDGEBOX_v26.08.31.10.ino'
 src=W.read_text()
 # Extract exact CRC function from W1P source.
 m=re.search(r'static uint16_t modbusCRC16\([^\{]+\{',src)

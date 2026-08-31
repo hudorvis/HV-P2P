@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "26.08.31.09"
+VERSION = "26.08.31.10"
 ERRORS: list[str] = []
 
 
@@ -350,7 +350,7 @@ require('width:parent.width*.22' in qml_main and
 require(qml_main.count('width:f(72)') >= 2 and 'parent.width-f(48+72+66)' in qml_main,
         "Free-D lens decoded percentage width fix is missing")
 
-# v26.08.31.09 locked Run/Setup revision. Keep the approved panel geometry and
+# v26.08.31.10 locked Run/Setup revision. Keep the approved panel geometry and
 # setting semantics while guarding only the requested presentation/interaction deltas.
 require('text:"HV P2P\\nSRVR"' in qml_main and 'HV P2P  |  SRVR' not in qml_main and 'P2P°\\nSRVR' not in qml_main,
         "locked two-line HV P2P/SRVR logo/header revision is missing")
@@ -526,7 +526,7 @@ require('profileValue(Number(gp.x), key)' in span_qml and
         'var gv=root.sideView ? Number(gp.y)' not in span_qml,
         "Free-D geometry markers are not pinned to the exact calculated cable profile")
 
-# v26.08.31.09 integration contract: fifth CTRL-TS AUX travels in the spare A7
+# v26.08.31.10 integration contract: fifth CTRL-TS AUX travels in the spare A7
 # 16-bit flag, and display packets expose all five state-aware labels.
 require("FLAG_AUX5 = 0x0400" in backend, "AUX5 controller flag missing")
 require('f"aux5={labels[4]}"' in backend, "DSP1 AUX5 field missing")
@@ -595,6 +595,11 @@ require('freeDPage.fdDraft.skate_weight_value' in qml_main and 'setWeightValue("
         "staged Skate Weight editor is not wired to the Free-D draft backend")
 require('Text { width:f(150); anchors.verticalCenter:parent.verticalCenter; text:"Drive Mode"' in qml_main,
         "System Drive Mode row is not aligned to the common 150px control column")
+# Virtual is a safety mode even when CI/smoke-test suppresses hardware writes.
+# Keep the local Servo Enable inhibit latched independently of send_safety.
+_virtual_branch = backend.split('if new_source == "Virtual":', 1)[1].split('else:', 1)[0] if 'if new_source == "Virtual":' in backend else ''
+require('self._safety_servo_inhibited = True' in _virtual_branch,
+        "Virtual Position Source does not latch the local Servo Enable inhibit independently of hardware I/O")
 require('fillText("SKATE"' not in span_qml, "Top/Side span diagrams still draw the SKATE text label")
 
 if ERRORS:

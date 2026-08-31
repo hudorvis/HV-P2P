@@ -199,7 +199,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.08.31.09", smoke_test: bool = False):
+    def __init__(self, version="26.08.31.10", smoke_test: bool = False):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -1095,6 +1095,11 @@ class HVP2PBackend(QObject):
         self._virtual_last_tick = time.monotonic()
         self.position_source = new_source
         if new_source == "Virtual":
+            # The local safety state is part of the mode transition itself and
+            # must not depend on whether hardware I/O is enabled (for example
+            # smoke-test/CI mode). Real runs additionally transmit STOP +
+            # SW_SRVON 0 through _virtual_output_inhibit() below.
+            self._safety_servo_inhibited = True
             self._joystick_neutral_required = False
             if send_safety:
                 self._virtual_output_inhibit(force=True)
