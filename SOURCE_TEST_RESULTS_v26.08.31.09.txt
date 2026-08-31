@@ -1,29 +1,29 @@
 
-==> python3 /mnt/data/hvp2p_rev06/tools/validate_edgebox_integration.py
-HV P2P EdgeBox v26.08.31.06 source-level integration validation PASS
-Checks passed: 253
-  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.08.31.06/HV_P2P_CTRL_EDGEBOX_v26.08.31.06.ino
-  OK: exists: HV_P2P_W1P_EDGEBOX_v26.08.31.06/HV_P2P_W1P_EDGEBOX_v26.08.31.06.ino
-  OK: exists: HV_P2P_CTRL_TS_v26.08.31.06/HV_P2P_CTRL_TS_v26.08.31.06.ino
-  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.08.31.06/HV_P2P_RS485_Frame.h
-  OK: exists: HV_P2P_CTRL_TS_v26.08.31.06/HV_P2P_RS485_Frame.h
-  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.08.31.06/HV_P2P_CTRL_TS_Firmware_Image.h
-  OK: exists: SRVR_GitHub_v26.08.31.06/backend.py
-  OK: exists: SRVR_GitHub_v26.08.31.06/main.py
-  OK: exists: SRVR_GitHub_v26.08.31.06/qml/pages/SetupPage.qml
-  OK: exists: SRVR_GitHub_v26.08.31.06/qml/components/SpanDiagram.qml
-  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.08.31.06/partitions.csv
-  OK: exists: HV_P2P_CTRL_TS_v26.08.31.06/partitions.csv
-  OK: exists: HV_P2P_W1P_EDGEBOX_v26.08.31.06/partitions.csv
-  OK: Arduino same-name sketch folder: HV_P2P_CTRL_EDGEBOX_v26.08.31.06
-  OK: Arduino same-name sketch folder: HV_P2P_W1P_EDGEBOX_v26.08.31.06
-  OK: Arduino same-name sketch folder: HV_P2P_CTRL_TS_v26.08.31.06
+==> python3 /mnt/data/hv09/tools/validate_edgebox_integration.py
+HV P2P EdgeBox v26.08.31.09 source-level integration validation PASS
+Checks passed: 316
+  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.08.31.09/HV_P2P_CTRL_EDGEBOX_v26.08.31.09.ino
+  OK: exists: HV_P2P_W1P_EDGEBOX_v26.08.31.09/HV_P2P_W1P_EDGEBOX_v26.08.31.09.ino
+  OK: exists: HV_P2P_CTRL_TS_v26.08.31.09/HV_P2P_CTRL_TS_v26.08.31.09.ino
+  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.08.31.09/HV_P2P_RS485_Frame.h
+  OK: exists: HV_P2P_CTRL_TS_v26.08.31.09/HV_P2P_RS485_Frame.h
+  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.08.31.09/HV_P2P_CTRL_TS_Firmware_Image.h
+  OK: exists: SRVR_GitHub_v26.08.31.09/backend.py
+  OK: exists: SRVR_GitHub_v26.08.31.09/main.py
+  OK: exists: SRVR_GitHub_v26.08.31.09/qml/pages/SetupPage.qml
+  OK: exists: SRVR_GitHub_v26.08.31.09/qml/components/SpanDiagram.qml
+  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.08.31.09/partitions.csv
+  OK: exists: HV_P2P_CTRL_TS_v26.08.31.09/partitions.csv
+  OK: exists: HV_P2P_W1P_EDGEBOX_v26.08.31.09/partitions.csv
+  OK: Arduino same-name sketch folder: HV_P2P_CTRL_EDGEBOX_v26.08.31.09
+  OK: Arduino same-name sketch folder: HV_P2P_W1P_EDGEBOX_v26.08.31.09
+  OK: Arduino same-name sketch folder: HV_P2P_CTRL_TS_v26.08.31.09
   OK: CTRL: all (), [], {} balanced
-  OK: CTRL: release version v26.08.31.06
+  OK: CTRL: release version v26.08.31.09
   OK: W1P: all (), [], {} balanced
-  OK: W1P: release version v26.08.31.06
+  OK: W1P: release version v26.08.31.09
   OK: CTRL-TS: all (), [], {} balanced
-  OK: CTRL-TS: release version v26.08.31.06
+  OK: CTRL-TS: release version v26.08.31.09
   OK: CTRL and CTRL-TS use byte-identical RS485 framing header
   OK: W1P-TS remains excluded
   OK: CTRL EdgeBox Ethernet pin: EDGEBOX_ETH_CS   10
@@ -153,11 +153,13 @@ Checks passed: 253
   OK: W1P proven v26.08.19.01 logic preserved: serviceMotionProfile
   OK: W1P proven v26.08.19.01 logic preserved: limitVelocityForSoftLimits
   OK: W1P proven v26.08.19.01 logic preserved: driveStopNow
-  OK: W1P proven v26.08.19.01 logic preserved: driveAutoEnableReady
   OK: W1P proven v26.08.19.01 logic preserved: servicePeerTimeout
-  OK: W1P proven v26.08.19.01 logic preserved: handleCommand
-  OK: W1P proven v26.08.19.01 logic preserved: sendStatusLine
   OK: W1P proven v26.08.19.01 logic preserved: preserveDisplayedPositionForMotorDirectionChange
+  OK: W1P v26.08.31.09 reviewed safety extension hash locked: driveAutoEnableReady
+  OK: W1P v26.08.31.09 reviewed safety extension hash locked: handleCommand
+  OK: W1P v26.08.31.09 reviewed safety extension hash locked: sendStatusLine
+  OK: W1P v26.08.31.09 reviewed safety extension hash locked: serviceVelocityCommandWatchdog
+  OK: W1P v26.08.31.09 reviewed safety extension hash locked: hvPrepareSafeServiceState
   OK: W1P Leadshine/safety contract: RS485_BAUD = 115200
   OK: W1P Leadshine/safety contract: DRIVE_MODBUS_ID = 1
   OK: W1P Leadshine/safety contract: SERIAL_8N1
@@ -185,6 +187,40 @@ Checks passed: 253
   OK: W1P peer-timeout code directly stops drive
   OK: W1P STOP and SW_SRVON command contract retained
   OK: SW Servo Enable waits for verified BRK-OFF/output map
+  OK: W1P independent VEL watchdog timeout is 650ms
+  OK: W1P VEL watchdog keys only from VEL freshness, not generic peer traffic
+  OK: W1P VEL watchdog stops, locks drive writes and drops software Servo Enable
+  OK: W1P main loop services the independent VEL watchdog
+  OK: W1P status exposes watchdog/service safety state to SRVR
+  OK: W1P service gate uses fresh post-stop EL7 samples and proves stopped/SRV-ST-off/BRK-OFF-off state
+  OK: W1P OTA/reboot/reset all enter the safe service gate
+  OK: W1P service/watchdog latch requires STOP re-arm path
+  OK: W1P exposes explicit local-IP readdress command
+  OK: W1P readdress reuses verified safe-service gate then persists/reboots
+  OK: W1P readdress has explicit success/failure acknowledgement
+  OK: W1P readdress is transactional with previous-IP rollback state
+  OK: W1P commits only after SRVR reaches provisional IP and services rollback timeout
+  OK: W1P restores previous IP and reboots when provisional address is not confirmed
+  OK: W1P STATUS reports actual live local IP
+  OK: SRVR safely requests and confirms W1P local-IP changes before retargeting
+  OK: SRVR recovers a lost SET_NETWORK acknowledgement by proving the provisional W1P address
+  OK: Setup Apply fails closed if W1P local-IP change is not confirmed
+  OK: SRVR private config uses fsync + atomic rename
+  OK: SRVR recovers private config from previous-good backup
+  OK: Free-D u24 lens output has true unsigned 24-bit encoder
+  OK: Free-D D1 input validates checksum before consuming telemetry
+  OK: CTRL OTA embeds expected app role signature
+  OK: CTRL OTA scans uploaded app contents for role identity
+  OK: CTRL OTA aborts a wrong-content app before activation
+  OK: CTRL compiled app retains role/version build identity token
+  OK: W1P OTA embeds expected app role signature
+  OK: W1P OTA scans uploaded app contents for role identity
+  OK: W1P OTA aborts a wrong-content app before activation
+  OK: W1P compiled app retains role/version build identity token
+  OK: SRVR parses W1P watchdog/service safety flags
+  OK: SRVR consolidates W1P internal motion safety state
+  OK: SRVR motion tick treats W1P watchdog/service lock as safety stop
+  OK: SRVR operator/CTRL-TS status classifies W1P watchdog/service lock as W1P fault
   OK: CTRL-TS retains five AUX touch tiles
   OK: CTRL-TS shared SRVR-family palette token present: 0x0f1316
   OK: CTRL-TS shared SRVR-family palette token present: 0x171c20
@@ -230,11 +266,38 @@ Checks passed: 253
   OK: SRVR dynamic HMI label preserved: Battery Change |
   OK: SRVR config migration/calibrated-state persistence retained
   OK: SRVR Goto anti-hunt approach logic retained
-  OK: Setup exposes the EdgeBox native joystick input instead of legacy ADS1115 wording
+  OK: Setup uses locked generic CTRL/W1P status row labels
   OK: Setup does not expose the excluded W1P-TS
   OK: CTRL and W1P source identify the EdgeBox-ESP-100 hardware baseline
-  OK: Setup preserves approved three-panel grid while replacing obsolete W1P-TS controls with CTRL-TS firmware status
+  OK: Setup preserves approved three-panel grid with locked CTRL-TS status panel
   OK: Free-D geometry markers are sampled from the exact rendered cable path
+  OK: exists: SRVR_GitHub_v26.08.31.09/qml/Main.qml
+  OK: Run/Setup shared header uses locked two-line HV P2P / SRVR logo only
+  OK: Run Save/Recall/Slip use one global five-second two-step confirmation state
+  OK: Run confirmation action covered: preset:save:
+  OK: Run confirmation action covered: preset:recall:
+  OK: Run confirmation action covered: limit:save:Near
+  OK: Run confirmation action covered: limit:recall:Near
+  OK: Run confirmation action covered: limit:slip:Near
+  OK: Run confirmation action covered: limit:save:Far
+  OK: Run confirmation action covered: limit:recall:Far
+  OK: Run confirmation action covered: limit:slip:Far
+  OK: Run confirmation action covered: limit:save:Ref
+  OK: Run confirmation action covered: limit:recall:Ref
+  OK: Run confirmation action covered: limit:slip:Ref
+  OK: Run System Mode 1/Mode 2 labels are fully readable
+  OK: Run System action columns share the locked left alignment
+  OK: Run To Near/To Far units sit beside their numeric values
+  OK: Setup exposes Encoder and Virtual position sources
+  OK: Virtual mode positively stops W1P and inhibits physical Servo Enable
+  OK: Virtual mode simulates requested velocity locally while physical VEL emission remains Encoder-only
+  OK: Virtual demo mode does not require W1P/EL7 health to exercise CTRL/CTRL-TS input
+  OK: Physical W1P feedback cannot overwrite Virtual demo position/speed
+  OK: Virtual Slip/re-reference does not rewrite physical W1P position
+  OK: CTRL and W1P publish actual firmware identity for Setup
+  OK: SRVR exposes locked CTRL/W1P Setup diagnostics
+  OK: CTRL-TS Link uses the same Active/Disconnected dot status model as node links
+  OK: Motion Profiles centre divider has even Mode 1/Mode 2 spacing
   OK: CTRL carrier dual-OTA partition token: app0,     app,  ota_0
   OK: CTRL carrier dual-OTA partition token: app1,     app,  ota_1
   OK: CTRL carrier dual-OTA partition token: 0x600000
@@ -256,42 +319,45 @@ Checks passed: 253
   OK: SRVR exposes CTRL-TS firmware diagnostic: def joystickInputConnected
   OK: A7 host sanity: 16-bit flags + big-endian float decode
 
-==> python3 /mnt/data/hvp2p_rev06/tools/test_rs485_frame_host.py
+==> python3 /mnt/data/hv09/tools/test_rs485_frame_host.py
 crc=7442b814
 RS485_FRAME_HOST_PASS
 PYTHON_CRC_CROSSCHECK_PASS 7442b814
 
-==> python3 /mnt/data/hvp2p_rev06/tools/test_hmi_fw_retry_contract.py
+==> python3 /mnt/data/hv09/tools/test_hmi_fw_retry_contract.py
 HMI_FW_RETRY_CONTRACT_PASS: lost block ACK, lost FW_RESULT, stale sequence, rollback guards
 
-==> python3 /mnt/data/hvp2p_rev06/tools/test_hmi_target_gate.py
+==> python3 /mnt/data/hv09/tools/test_hmi_target_gate.py
 HMI_TARGET_GATE_PASS
 wrong hardware/protocol can never enter automatic update
 correct target with mismatched version/hash enters automatic update
 
-==> python3 /mnt/data/hvp2p_rev06/tools/test_embed_tool.py
-Image:    /tmp/hvp2p_embed_test_0ve7t0in/fixture.ino.bin
+==> python3 /mnt/data/hv09/tools/test_embed_tool.py
+Image:    /tmp/hvp2p_embed_test_vsxzofiv/fixture.ino.bin
 Hardware: WS-ESP32S3-7
 Protocol: 1
-Version:  v26.08.31.06
+Version:  v26.08.31.09
 Size:     4096 bytes (0.004 MiB)
 SHA256:   120ca14d2ef4662d8f89da7e5a26a6e54cb6f59915e121c71a8f9a6a906b51c7
-Wrote:    /tmp/hvp2p_embed_test_0ve7t0in/HV_P2P_CTRL_TS_Firmware_Image.h
+Wrote:    /tmp/hvp2p_embed_test_vsxzofiv/HV_P2P_CTRL_TS_Firmware_Image.h
 STAGED_HMI_HEADER_PASS
 hardware=WS-ESP32S3-7
 protocol=1
-version=v26.08.31.06
+version=v26.08.31.09
 size=4096
 sha256=120ca14d2ef4662d8f89da7e5a26a6e54cb6f59915e121c71a8f9a6a906b51c7
 EMBED_TOOL_SELFTEST_PASS
 
-==> python3 /mnt/data/hvp2p_rev06/tools/validate_build_pipeline.py
+==> python3 /mnt/data/hv09/tools/validate_build_pipeline.py
 OK  workflow core 3.3.8
 OK  workflow Arduino CLI pinned
 OK  HMI LVGL pinned
 OK  display panel pinned
 OK  IO expander pinned
 OK  Waveshare CH422G 0.0.3 compatibility patch
+OK  Waveshare library commit pinned
+OK  native manifest records Waveshare commit
+OK  native builder verifies retained app role/version identity
 OK  JPEGDEC pinned
 OK  LVGL config prepared beside library
 OK  LVGL config enables Arduino tick
@@ -313,17 +379,21 @@ OK  W1P dual OTA added
 OK  firmware artifact upload present
 OK  SRVR macOS job present
 OK  complete matched artifact present
-BUILD_PIPELINE_VALIDATION_PASS (27 checks)
+OK  SRVR bundle metadata pinned
+OK  complete release preserves original SRVR ZIP
+OK  complete release internal SHA256 manifest
+OK  complete release external SHA256
+BUILD_PIPELINE_VALIDATION_PASS (34 checks)
 
-==> python3 /mnt/data/hvp2p_rev06/tools/test_modbus_contract_host.py
+==> python3 /mnt/data/hv09/tools/test_modbus_contract_host.py
 MODBUS_CRC_HOST_PASS q1=CDC5 q2=0B98
 
-==> python3 /mnt/data/hvp2p_rev06/tools/test_srvr_wire_contract.py
+==> python3 /mnt/data/hv09/tools/test_srvr_wire_contract.py
 SRVR_WIRE_CONTRACT_PASS: actual _parse_control_packet accepts EdgeBox A7 16-bit flags / network-order float
 
-==> python3 -m py_compile /mnt/data/hvp2p_rev06/SRVR_GitHub_v26.08.31.06/backend.py /mnt/data/hvp2p_rev06/SRVR_GitHub_v26.08.31.06/main.py
+==> python3 -m py_compile /mnt/data/hv09/SRVR_GitHub_v26.08.31.09/backend.py /mnt/data/hv09/SRVR_GitHub_v26.08.31.09/main.py
 
-==> python3 /mnt/data/hvp2p_rev06/SRVR_GitHub_v26.08.31.06/tools/validate_project.py
+==> python3 /mnt/data/hv09/SRVR_GitHub_v26.08.31.09/tools/validate_project.py
 HV P2P SRVR preflight PASS
   Python syntax: OK
   Qt Quick only / no Tkinter: OK

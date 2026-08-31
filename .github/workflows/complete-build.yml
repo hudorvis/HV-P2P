@@ -1,9 +1,12 @@
-name: HV P2P Complete Build v26.08.31.06
+name: HV P2P Complete Build v26.08.31.09
 
 on:
   workflow_dispatch:
   push:
     branches: [main, master]
+
+env:
+  WAVESHARE_ST7262_LVGL_COMMIT: '593775b89ebfd2d411df3eadba7bc382767ed4a4'
 
 permissions:
   contents: read
@@ -43,7 +46,13 @@ jobs:
           arduino-cli lib install 'ESP32_IO_Expander@0.0.3'
           arduino-cli lib install 'JPEGDEC@1.8.4'
           mkdir -p "$HOME/Arduino/libraries"
-          git clone --depth 1 https://github.com/iamfaraz/Waveshare_ST7262_LVGL.git "$HOME/Arduino/libraries/Waveshare_ST7262_LVGL"
+          WAVESHARE_LIB="$HOME/Arduino/libraries/Waveshare_ST7262_LVGL"
+          rm -rf "$WAVESHARE_LIB"
+          git init "$WAVESHARE_LIB"
+          git -C "$WAVESHARE_LIB" remote add origin https://github.com/iamfaraz/Waveshare_ST7262_LVGL.git
+          git -C "$WAVESHARE_LIB" fetch --depth 1 origin "$WAVESHARE_ST7262_LVGL_COMMIT"
+          git -C "$WAVESHARE_LIB" checkout --detach FETCH_HEAD
+          test "$(git -C "$WAVESHARE_LIB" rev-parse HEAD)" = "$WAVESHARE_ST7262_LVGL_COMMIT"
           python3 tools/prepare_waveshare_library.py --libraries-dir "$HOME/Arduino/libraries"
           grep -R -F 'ESP_IO_EXPANDER_I2C_CH422G_ADDRESS_000' "$HOME/Arduino/libraries/Waveshare_ST7262_LVGL/src/Waveshare_ST7262_LVGL.cpp"
           python3 tools/prepare_lvgl_config.py --libraries-dir "$HOME/Arduino/libraries"
@@ -60,12 +69,12 @@ jobs:
 
       - name: Check that source CTRL still contains build guard
         run: |
-          grep -F '#error "CTRL-TS firmware image has not been staged.' HV_P2P_CTRL_EDGEBOX_v26.08.31.06/HV_P2P_CTRL_TS_Firmware_Image.h
+          grep -F '#error "CTRL-TS firmware image has not been staged.' HV_P2P_CTRL_EDGEBOX_v26.08.31.09/HV_P2P_CTRL_TS_Firmware_Image.h
 
       - name: Upload functional-test firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HV-P2P-v26.08.31.06-Native-Firmware
+          name: HV-P2P-v26.08.31.09-Native-Firmware
           path: NATIVE_BUILD_ARTIFACTS/
           if-no-files-found: error
           retention-days: 30
@@ -75,9 +84,12 @@ jobs:
     timeout-minutes: 50
     defaults:
       run:
-        working-directory: SRVR_GitHub_v26.08.31.06
+        working-directory: SRVR_GitHub_v26.08.31.09
     env:
-      APP_VERSION: '26.08.31.06'
+      APP_VERSION: '26.08.31.09'
+      BUNDLE_IDENTIFIER: 'com.hvp2p.srvr'
+      BUNDLE_SHORT_VERSION: '26.8.31'
+      BUNDLE_BUILD_VERSION: '2608.31.9'
       QT_QUICK_CONTROLS_STYLE: Basic
       PYTHONUNBUFFERED: '1'
 
@@ -97,7 +109,7 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
-          cache-dependency-path: SRVR_GitHub_v26.08.31.06/requirements.txt
+          cache-dependency-path: SRVR_GitHub_v26.08.31.09/requirements.txt
 
       - name: Static project preflight
         shell: bash
@@ -127,11 +139,11 @@ jobs:
           set -euxo pipefail
           # Explicitly prove CI can import the application backend before running
           # the larger regression suite. This catches path mistakes immediately.
-          PYTHONPATH="$GITHUB_WORKSPACE/SRVR_GitHub_v26.08.31.06${PYTHONPATH:+:$PYTHONPATH}" python - <<'PY'
+          PYTHONPATH="$GITHUB_WORKSPACE/SRVR_GitHub_v26.08.31.09${PYTHONPATH:+:$PYTHONPATH}" python - <<'PY'
           import backend
           print("backend import PASS:", backend.__file__)
           PY
-          PYTHONPATH="$GITHUB_WORKSPACE/SRVR_GitHub_v26.08.31.06${PYTHONPATH:+:$PYTHONPATH}" python -m tools.test_backend_logic
+          PYTHONPATH="$GITHUB_WORKSPACE/SRVR_GitHub_v26.08.31.09${PYTHONPATH:+:$PYTHONPATH}" python -m tools.test_backend_logic
 
       - name: Create isolated deployment source tree
         shell: bash
@@ -268,9 +280,21 @@ jobs:
           /usr/libexec/PlistBuddy -c 'Set :CFBundleName HV P2P SRVR' "$PLIST" || /usr/libexec/PlistBuddy -c 'Add :CFBundleName string HV P2P SRVR' "$PLIST"
           /usr/libexec/PlistBuddy -c 'Delete :CFBundleIconFile' "$PLIST" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c 'Add :CFBundleIconFile string HV_P2P_SRVR.icns' "$PLIST"
+          /usr/libexec/PlistBuddy -c 'Delete :CFBundleIdentifier' "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string $BUNDLE_IDENTIFIER" "$PLIST"
+          /usr/libexec/PlistBuddy -c 'Delete :CFBundleShortVersionString' "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $BUNDLE_SHORT_VERSION" "$PLIST"
+          /usr/libexec/PlistBuddy -c 'Delete :CFBundleVersion' "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $BUNDLE_BUILD_VERSION" "$PLIST"
+          /usr/libexec/PlistBuddy -c 'Delete :HVP2PReleaseVersion' "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :HVP2PReleaseVersion string $APP_VERSION" "$PLIST"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$PLIST")" = 'HV P2P SRVR'
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$PLIST")" = 'HV P2P SRVR'
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$PLIST")" = 'HV_P2P_SRVR.icns'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")" = "$BUNDLE_IDENTIFIER"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")" = "$BUNDLE_SHORT_VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST")" = "$BUNDLE_BUILD_VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :HVP2PReleaseVersion' "$PLIST")" = "$APP_VERSION"
 
           # The exact v03/v04 failure is now checked again on the completed app.
           LEAKS="$(find "$APP_PATH/Contents" \
@@ -389,8 +413,8 @@ jobs:
       - name: Upload GitHub Actions artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HV-P2P-SRVR-v26.08.31.06-macOS-Intel
-          path: HV P2P SRVR v26.08.31.06 macOS Intel.zip
+          name: HV-P2P-SRVR-v26.08.31.09-macOS-Intel
+          path: HV P2P SRVR v26.08.31.09 macOS Intel.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -404,13 +428,13 @@ jobs:
       - name: Download native firmware artifact
         uses: actions/download-artifact@v4
         with:
-          name: HV-P2P-v26.08.31.06-Native-Firmware
+          name: HV-P2P-v26.08.31.09-Native-Firmware
           path: COMPLETE_RELEASE/FIRMWARE
 
       - name: Download macOS SRVR artifact
         uses: actions/download-artifact@v4
         with:
-          name: HV-P2P-SRVR-v26.08.31.06-macOS-Intel
+          name: HV-P2P-SRVR-v26.08.31.09-macOS-Intel
           path: COMPLETE_RELEASE/SRVR
 
       - name: Create combined HV P2P release ZIP
@@ -418,23 +442,45 @@ jobs:
         run: |
           set -euxo pipefail
           cat > COMPLETE_RELEASE/README_FIRST.txt <<'EOF'
-          HV P2P v26.08.31.06 - COMPLETE GITHUB BUILD OUTPUT
+          HV P2P v26.08.31.09 - COMPLETE GITHUB BUILD OUTPUT
 
           FIRMWARE/ contains the native CTRL-TS, CTRL EdgeBox and W1P EdgeBox build
           products plus STAGED_SOURCE. For Arduino IDE programming, use the three
           sketch folders under FIRMWARE/STAGED_SOURCE; the staged CTRL source contains
           the exact compiled CTRL-TS carrier image and SHA-256 from this same build.
 
-          SRVR/ contains HV P2P SRVR v26.08.31.06 macOS Intel.zip, which contains
-          the matching HV P2P SRVR.app for Intel Macs.
+          SRVR/ contains the ORIGINAL, UNEXTRACTED file:
+          HV P2P SRVR v26.08.31.09 macOS Intel.zip
+          That ZIP contains the matching HV P2P SRVR.app for Intel Macs.
+
+          SHA256SUMS.txt authenticates every file inside COMPLETE_RELEASE before this
+          combined ZIP is made. Do not extract/re-zip the SRVR ZIP when archiving or
+          returning the build for source-vs-build audit. Preserve this Complete Release
+          ZIP byte-for-byte; its external .sha256 file identifies the authoritative ZIP.
 
           Both firmware and SRVR jobs must pass before this complete artifact is created.
           EOF
           python3 - <<'PY'
           from pathlib import Path
-          import zipfile
+          import hashlib, zipfile
           root=Path('COMPLETE_RELEASE')
-          out=Path('HV P2P v26.08.31.06 Complete Release.zip')
+          expected_srvr=root/'SRVR'/'HV P2P SRVR v26.08.31.09 macOS Intel.zip'
+          srvr_entries=[p for p in (root/'SRVR').iterdir() if p.is_file()]
+          assert srvr_entries == [expected_srvr], f'SRVR artifact must remain one untouched ZIP: {srvr_entries}'
+          assert not any(p.suffix == '.app' or p.name.endswith('.app') for p in root.rglob('*')), 'SRVR .app must not be extracted into Complete Release'
+
+          def sha256(p):
+              h=hashlib.sha256()
+              with p.open('rb') as f:
+                  for chunk in iter(lambda:f.read(1024*1024), b''):
+                      h.update(chunk)
+              return h.hexdigest()
+
+          manifest=root/'SHA256SUMS.txt'
+          files=[p for p in sorted(root.rglob('*')) if p.is_file() and p != manifest]
+          manifest.write_text(''.join(f'{sha256(p)}  {p.relative_to(root).as_posix()}\n' for p in files), encoding='utf-8')
+
+          out=Path('HV P2P v26.08.31.09 Complete Release.zip')
           with zipfile.ZipFile(out,'w',compression=zipfile.ZIP_DEFLATED) as z:
               for p in sorted(root.rglob('*')):
                   if p.is_file():
@@ -443,15 +489,21 @@ jobs:
               assert z.testzip() is None
               names=z.namelist()
               assert any('FIRMWARE/STAGED_SOURCE/' in n for n in names)
-              assert any(n.endswith('HV P2P SRVR v26.08.31.06 macOS Intel.zip') for n in names)
-          print(out)
+              assert 'COMPLETE_RELEASE/SRVR/HV P2P SRVR v26.08.31.09 macOS Intel.zip' in names
+              assert 'COMPLETE_RELEASE/SHA256SUMS.txt' in names
+              assert not any(n.endswith('.app/') or '.app/' in n for n in names), 'extracted .app leaked into Complete Release'
+          outer_hash=sha256(out)
+          Path(str(out)+'.sha256').write_text(f'{outer_hash}  {out.name}\n', encoding='utf-8')
+          print(out, outer_hash)
           PY
 
       - name: Upload complete matched release
         uses: actions/upload-artifact@v4
         with:
-          name: HV-P2P-v26.08.31.06-Complete-Release
-          path: HV P2P v26.08.31.06 Complete Release.zip
+          name: HV-P2P-v26.08.31.09-Complete-Release
+          path: |
+            HV P2P v26.08.31.09 Complete Release.zip
+            HV P2P v26.08.31.09 Complete Release.zip.sha256
           if-no-files-found: error
           compression-level: 0
           retention-days: 30

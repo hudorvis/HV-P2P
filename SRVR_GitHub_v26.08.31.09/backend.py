@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
-import copy, json, math, os, queue, socket, struct, threading, time
+import copy, ipaddress, json, math, os, queue, socket, struct, threading, time
 from urllib.parse import unquote, urlparse
 
 from PySide6.QtCore import QObject, Property, Signal, Slot, QTimer
@@ -60,6 +60,62 @@ def _s24be(value: int) -> bytes:
     value = max(-8388608, min(8388607, int(value)))
     if value < 0: value += 1 << 24
     return bytes(((value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff))
+
+
+def _u24be(value: int) -> bytes:
+    value = max(0, min(0xFFFFFF, int(value)))
+    return bytes(((value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff))
+
+
+def _lens24be(value: int, lens_type: str) -> bytes:
+    return _u24be(value) if str(lens_type).lower() == "u24" else _s24be(value)
+
+
+def _freed_checksum_valid(data: bytes) -> bool:
+    # Free-D D1 is 29 bytes. Byte 28 makes the low 8 bits of the complete
+    # packet sum equal 0x40, matching the existing transmitter implementation.
+    return len(data) >= 29 and ((sum(data[:29]) & 0xFF) == 0x40)
+
+
+def _fsync_parent_directory(path: Path) -> None:
+    try:
+        fd = os.open(str(path.parent), os.O_RDONLY)
+    except Exception:
+        return
+    try:
+        os.fsync(fd)
+    except Exception:
+        pass
+    finally:
+        os.close(fd)
+
+
+def _atomic_replace_bytes(path: Path, payload: bytes) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f".{path.name}.tmp-{os.getpid()}-{threading.get_ident()}")
+    try:
+        with open(temp, "wb") as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temp, path)
+        _fsync_parent_directory(path)
+    finally:
+        try:
+            if temp.exists():
+                temp.unlink()
+        except Exception:
+            pass
+
+
+def _atomic_write_text(path: Path, text: str, make_backup: bool = True) -> None:
+    path = Path(path)
+    if make_backup and path.exists():
+        # The previous complete file becomes the recovery copy before the new
+        # temp file is atomically renamed into place.
+        _atomic_replace_bytes(path.with_suffix(path.suffix + ".bak"), path.read_bytes())
+    _atomic_replace_bytes(path, str(text).encode("utf-8"))
 
 
 @dataclass
@@ -143,7 +199,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.08.31.06", smoke_test: bool = False):
+    def __init__(self, version="26.08.31.09", smoke_test: bool = False):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -157,6 +213,7 @@ class HVP2PBackend(QObject):
         self.state = WinchState()
         self.ctrl_ip = "172.20.1.101"
         self.w1p_ip = "172.20.1.102"
+        self.w1p_reported_ip = ""
         self.w1p_port = 5000
         self.reverse_joystick = False
         self.reverse_motor = False
@@ -168,6 +225,9 @@ class HVP2PBackend(QObject):
         self.joystick_cal_centre = 0.0
         self.joystick_cal_right = 1.0
         self.position_source = "Encoder"
+        self._virtual_velocity_mps = 0.0
+        self._virtual_last_tick = time.monotonic()
+        self._virtual_inhibit_last_tx = 0.0
         self.ctrl_aux_assignments = [
             "Drive Mode", "Near Limit Save", "Preset 5 Recall",
             "Battery Change Mode", "Ref Point Slip",
@@ -225,6 +285,9 @@ class HVP2PBackend(QObject):
         self.winch_do5_assignment = None
         self.winch_fault_output = False
         self._w1p_estop = False
+        self.winch_vel_watchdog_fault = False
+        self.winch_service_safety_lock = False
+        self._w1p_internal_safety = False
         self._ctrl_estop = False
         self._srvr_estop = False
         self._not_calibrated = True
@@ -248,6 +311,8 @@ class HVP2PBackend(QObject):
         self._ctrl_ts_image_available = False
         self._ctrl_ts_compatible_reported = False
         self._ctrl_ts_age_ms = 999999
+        self._ctrl_fw_version = ""
+        self._w1p_fw_version = ""
         self._ads1115_status_last_seen = 0.0
         self._ads1115_connected_reported = False
         self._w1p_ts_last_seen = 0.0
@@ -498,6 +563,7 @@ class HVP2PBackend(QObject):
         now = time.time()
         self._ctrl_ts_last_seen = now
         self._ctrl_ts_connected_reported = str(fields.get("ctrl_ts", "0")).strip() == "1"
+        self._ctrl_fw_version = str(fields.get("ctrl_version", self._ctrl_fw_version or ""))
         self._ctrl_ts_version = str(fields.get("version", ""))
         self._ctrl_ts_required_version = str(fields.get("required", self._ctrl_ts_required_version))
         self._ctrl_ts_fw_state = str(fields.get("fw_state", self._ctrl_ts_fw_state or "idle"))
@@ -566,13 +632,26 @@ class HVP2PBackend(QObject):
             return
         if line.startswith("ERR"):
             self._log(f"[W1P] {line}"); return
+        if line.startswith("HELLO"):
+            # A HELLO follows a new W1P peer/socket association, including a
+            # deliberate Setup IP readdress reboot. Capture the actual firmware
+            # identity for Setup diagnostics, then re-send the complete live
+            # W1P contract because packets sent while the EdgeBox rebooted may
+            # have been lost.
+            for token in line.split()[1:]:
+                if token.startswith("VER="):
+                    self._w1p_fw_version = token.split("=", 1)[1].strip()
+                    break
+            if not self.smoke_test:
+                self._sync_w1p_settings()
+            return
         if not line.startswith("STATUS"): return
         fields = {}
         for p in line.split()[1:]:
             if "=" in p:
                 k,v = p.split("=",1); fields[k]=v
         try:
-            if "POS_M" in fields:
+            if "POS_M" in fields and self.position_source != "Virtual":
                 new_pos = float(fields["POS_M"])
                 if self._sanity_accept_winch_position(new_pos, fields):
                     self.state.pos_m = new_pos
@@ -580,7 +659,9 @@ class HVP2PBackend(QObject):
             if "SPAN_M" in fields: self.state.total_length_m = float(fields["SPAN_M"])
             if "NL" in fields: self.state.near_limit.position_m = float(fields["NL"])
             if "FL" in fields: self.state.far_limit.position_m = float(fields["FL"])
-            if "VEL_MPS" in fields: self.current_speed_mps = float(fields["VEL_MPS"])
+            if "VEL_MPS" in fields and self.position_source != "Virtual": self.current_speed_mps = float(fields["VEL_MPS"])
+            if "FW" in fields: self._w1p_fw_version = str(fields["FW"])
+            if "IP" in fields: self.w1p_reported_ip = str(fields["IP"])
             if "WRITE_EN" in fields: self.winch_drive_writes_enabled = fields["WRITE_EN"].lower() in ("1","true","on")
             if "UPM" in fields: self.winch_units_per_m = float(fields["UPM"])
             if "SW_SRVON" in fields: self.winch_sw_srvon = fields["SW_SRVON"].lower() in ("1","true","on","ok")
@@ -610,6 +691,9 @@ class HVP2PBackend(QObject):
             estop = fields.get("ESTOP","0").lower() not in ("0","false","off")
             src = fields.get("ESTOP_SRC","").upper()
             self._w1p_estop = bool(estop and src in ("","W1P","LOCAL"))
+            self.winch_vel_watchdog_fault = fields.get("VEL_WD", "0") == "1"
+            self.winch_service_safety_lock = fields.get("SERVICE_LOCK", "0") == "1"
+            self._w1p_internal_safety = self.winch_vel_watchdog_fault or self.winch_service_safety_lock
             rs = fields.get("RS_STAT", fields.get("MODBUS","0")).upper()
             cfg = fields.get("LEAD_CFG","MISMATCH").upper()
             fb_ok = fields.get("MODBUS","0").upper() in ("1","OK","CONNECTED","TRUE","ON")
@@ -693,6 +777,107 @@ class HVP2PBackend(QObject):
         self.w1p.send(f"SET_LIMIT_NEAR {nl:.3f}")
         self.w1p.send(f"SET_LIMIT_FAR {fl:.3f}")
         self._sync_service_mode_to_winch(force=True)
+
+    @staticmethod
+    def _normalise_ipv4(value: str) -> str:
+        try:
+            ip = ipaddress.ip_address(str(value).strip())
+        except ValueError as exc:
+            raise ValueError(f"invalid IPv4 address: {value}") from exc
+        if ip.version != 4 or ip.is_unspecified or ip.is_multicast:
+            raise ValueError(f"invalid W1P IPv4 address: {value}")
+        return str(ip)
+
+    def _probe_w1p_address(self, host: str, timeout_s: float = 2.8) -> bool:
+        """Prove that the configured SRVR host can reach W1P at ``host``.
+
+        This is used only as recovery for a lost SET_NETWORK acknowledgement.
+        W1P treats the first valid SRVR packet at a provisional address as the
+        transaction commit; if no such packet arrives, W1P rolls itself back.
+        """
+        host = self._normalise_ipv4(host)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.settimeout(0.12)
+            deadline = time.monotonic() + max(0.5, float(timeout_s))
+            next_probe = 0.0
+            while time.monotonic() < deadline:
+                now = time.monotonic()
+                if now >= next_probe:
+                    next_probe = now + 0.20
+                    try:
+                        sock.sendto(b"STATUS\n", (host, int(self.w1p_port)))
+                    except OSError:
+                        pass
+                try:
+                    data, addr = sock.recvfrom(4096)
+                except socket.timeout:
+                    continue
+                except OSError:
+                    continue
+                if not addr or addr[0] != host:
+                    continue
+                for raw in data.decode("ascii", "ignore").splitlines():
+                    line = raw.strip()
+                    if not line.startswith("STATUS"):
+                        continue
+                    fields = self._parse_pipe_fields(line)
+                    try:
+                        reported = self._normalise_ipv4(fields.get("IP", ""))
+                    except ValueError:
+                        continue
+                    if reported == host:
+                        return True
+            return False
+        finally:
+            sock.close()
+
+    def _request_w1p_readdress(self, new_ip: str, timeout_s: float = 2.2) -> bool:
+        """Safely persist/reboot W1P onto ``new_ip`` before SRVR changes target.
+
+        The request is sent to the currently connected W1P address and waits for
+        the EdgeBox's post-safety-gate acknowledgement. If it cannot prove the
+        change was accepted, Setup remains unapplied rather than orphaning W1P.
+        """
+        new_ip = self._normalise_ipv4(new_ip)
+        old_ip = self._normalise_ipv4(self.w1p_ip)
+        if new_ip == old_ip:
+            return True
+        if self.smoke_test:
+            return True
+        if not self.w1p.connected:
+            self._log(f"[Config] W1P IP change refused: current W1P {old_ip} is not connected")
+            return False
+
+        # Help the EdgeBox reach its verified stopped/braked service state before
+        # asking it to persist the new address. The W1P command repeats and
+        # independently verifies the same fail-safe conditions.
+        self._send_safety_stop_limited(force=True)
+        self._joystick_neutral_required = True
+        self.w1p.send(f"SET_NETWORK|w1p_ip={new_ip}")
+        deadline = time.monotonic() + max(0.5, float(timeout_s))
+        while time.monotonic() < deadline:
+            try:
+                line = self._w1p_rx.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            text = str(line or "").strip()
+            if text.startswith("OK SET_NETWORK"):
+                self._log(f"[Config] W1P accepted IP change {old_ip} -> {new_ip}; rebooting")
+                return True
+            if text.startswith("ERR SET_NETWORK"):
+                self._log(f"[Config] W1P IP change refused: {text}")
+                return False
+            self._parse_w1p(text)
+        # UDP acknowledgements are not reliable. The W1P change is transactional:
+        # after reboot it waits for a valid SRVR packet on the provisional address
+        # and rolls back automatically if none arrives. Probe the requested address
+        # before declaring failure so a lost ACK cannot strand the controller.
+        if self._probe_w1p_address(new_ip):
+            self._log(f"[Config] W1P SET_NETWORK acknowledgement was lost, but {new_ip} answered with its live IP; accepting readdress")
+            return True
+        self._log(f"[Config] W1P IP change could not be confirmed; W1P will roll back to {old_ip} if it rebooted provisionally")
+        return False
 
     def _service_override_active(self) -> bool:
         """Service movement is allowed at reduced speed during calibration/battery work.
@@ -873,10 +1058,83 @@ class HVP2PBackend(QObject):
         v_allowed = max(0.10, v_allowed)
         return last_dir * min(vmax, v_allowed), False
 
+    @staticmethod
+    def _normalise_position_source(value) -> str:
+        return "Virtual" if str(value or "").strip().lower().startswith("virtual") else "Encoder"
+
+    def _virtual_output_inhibit(self, force: bool = False):
+        """Keep the physical W1P output fail-safe while SRVR is in demo mode."""
+        if self.position_source != "Virtual":
+            return
+        now = time.monotonic()
+        if not force and (now - float(self._virtual_inhibit_last_tx or 0.0)) < 1.0:
+            return
+        self._virtual_inhibit_last_tx = now
+        # Virtual is deliberately a local SRVR simulation. Never rely on the
+        # absence of VEL packets alone: positively stop W1P and inhibit software
+        # Servo Enable whenever a physical W1P happens to be present.
+        if not self.smoke_test:
+            try:
+                self.w1p.send("STOP")
+                self.w1p.send("SW_SRVON 0")
+            except Exception:
+                pass
+        self._safety_servo_inhibited = True
+
+    def _apply_position_source_runtime(self, value, *, send_safety: bool = True):
+        new_source = self._normalise_position_source(value)
+        old_source = str(self.position_source)
+        if new_source == old_source:
+            return
+        self._cancel_goto()
+        self.requested_speed_mps = 0.0
+        self.last_winch_output = 0.0
+        self.last_sent_vel = 0.0
+        self.current_speed_mps = 0.0
+        self._virtual_velocity_mps = 0.0
+        self._virtual_last_tick = time.monotonic()
+        self.position_source = new_source
+        if new_source == "Virtual":
+            self._joystick_neutral_required = False
+            if send_safety:
+                self._virtual_output_inhibit(force=True)
+            self._log("[SRVR] Position Source set to Virtual; physical W1P velocity output inhibited")
+        else:
+            # Leaving demo mode must not let a displaced joystick become a live
+            # command. Keep Servo Enable inhibited until normal safety checks are
+            # clear and the operator returns through neutral.
+            self._joystick_neutral_required = True
+            self._safety_servo_inhibited = True
+            if send_safety and not self.smoke_test:
+                try:
+                    self.w1p.send("STOP")
+                    self.w1p.send("SW_SRVON 0")
+                except Exception:
+                    pass
+            self._log("[SRVR] Position Source set to Encoder; waiting for joystick neutral before W1P re-arm")
+
+    def _virtual_motion_step(self):
+        if self.position_source != "Virtual":
+            self._virtual_last_tick = time.monotonic()
+            return
+        now = time.monotonic()
+        dt = max(0.0, min(0.20, now - float(self._virtual_last_tick or now)))
+        self._virtual_last_tick = now
+        try:
+            pos = float(self.state.pos_m or 0.0) + float(self._virtual_velocity_mps) * dt
+            self.state.pos_m = pos
+            self.current_speed_mps = float(self._virtual_velocity_mps)
+        except Exception:
+            self._virtual_velocity_mps = 0.0
+            self.current_speed_mps = 0.0
+
     def _send_stop_command(self):
         self.last_sent_vel = 0.0
         self.requested_speed_mps = 0.0
         self.last_winch_output = 0.0
+        self._virtual_velocity_mps = 0.0
+        if self.position_source == "Virtual":
+            self.current_speed_mps = 0.0
         self._cancel_goto()
         if not self.smoke_test:
             self.w1p.send("STOP")
@@ -905,6 +1163,10 @@ class HVP2PBackend(QObject):
         """Restore software Servo Enable only after a safety-clear neutral check."""
         if not self._safety_servo_inhibited:
             return
+        if self.position_source == "Virtual":
+            # Demo mode must never restore the physical winch Servo Enable.
+            self._virtual_output_inhibit(force=True)
+            return
         # Keep W1P stopped while its PA4.00/SRV-ON path settles. W1P itself still
         # requires a fresh non-zero VEL before command writes can re-arm.
         self._send_stop_command()
@@ -918,6 +1180,17 @@ class HVP2PBackend(QObject):
 
     def _send_velocity(self, vel: float, force: bool = False):
         vel = float(vel)
+        if self.position_source == "Virtual":
+            # Virtual mode is a local SRVR demo simulation. The operator may use
+            # the real CTRL/CTRL-TS joystick and shortcuts, but a non-zero W1P VEL
+            # packet is never emitted. Track requested motion locally instead.
+            self.requested_speed_mps = vel
+            self._virtual_velocity_mps = vel
+            self.current_speed_mps = vel
+            self.last_winch_output = 0.0
+            self.last_sent_vel = 0.0
+            self._virtual_output_inhibit()
+            return
         now = time.time()
         same = abs(vel-self.last_sent_vel) < .01
         if not force and same:
@@ -1058,9 +1331,11 @@ class HVP2PBackend(QObject):
         ramp_far = self._ramp_distance(self.state.far_limit, max(0.001, far_rel))
         ctrl_ok = self._ctrl_connected()
         w1p_ok = bool(self.w1p.connected)
-        if not w1p_ok:
+        if self.position_source == "Virtual":
+            w1p_state = "demo"
+        elif not w1p_ok:
             w1p_state = "error"
-        elif self.winch_rs_status != "Connected" or self._w1p_estop:
+        elif self.winch_rs_status != "Connected" or self._w1p_estop or self._w1p_internal_safety:
             w1p_state = "fault"
         else:
             w1p_state = "ok"
@@ -1140,20 +1415,26 @@ class HVP2PBackend(QObject):
             pass
 
     def _motion_tick(self):
+        self._virtual_motion_step()
+        self._virtual_output_inhibit()
         connected = self._ctrl_connected()
         flags = self._ctrl_flags
         self._ctrl_estop = bool(flags & FLAG_ESTOP_PRESSED)
 
-        # Fail-safe sources are real connection / physical E-stop / RS485 faults.
+        # Fail-safe sources include physical/link/RS485 faults plus W1P local command/service watchdogs.
         # Not-calibrated and calibration are SERVICE states, not E-stop states.
+        physical_winch_required = self.position_source != "Virtual"
         safety = bool(
             self._srvr_estop
             or self._ctrl_estop
-            or self._w1p_estop
             or bool(flags & FLAG_ADS1115_FAULT)
             or (not connected)
-            or (not self.w1p.connected)
-            or (self.winch_rs_status != "Connected")
+            or (physical_winch_required and (
+                self._w1p_estop
+                or self._w1p_internal_safety
+                or (not self.w1p.connected)
+                or (self.winch_rs_status != "Connected")
+            ))
         )
         self.state.estop_active = safety
 
@@ -1263,6 +1544,8 @@ class HVP2PBackend(QObject):
             except socket.timeout: continue
             except OSError: break
             if not data or len(data)<29 or data[0]!=0xD1: continue
+            if not _freed_checksum_valid(data):
+                continue
             now=time.time(); raw_pan=_s24_to_int(data[2:5]); raw_tilt=_s24_to_int(data[5:8]); raw_roll=_s24_to_int(data[8:11])
             rz=_u24_to_int(data[20:23]); rf=_u24_to_int(data[23:26])
             zoom_dec = self._decode_lens(rz)
@@ -1564,7 +1847,7 @@ class HVP2PBackend(QObject):
         payload = bytearray((0xD1, max(0,min(255,int(raw.get("Cam ID",1))))))
         for v in (pan,tilt,roll): payload.extend(_s24be(round(float(v)*32768)))
         for v in (ox,oy,oz): payload.extend(_s24be(round(float(v)*pos_scale)))
-        payload.extend(_s24be(int(zoom))); payload.extend(_s24be(int(focus))); payload.extend(b"\x00\x00")
+        payload.extend(_lens24be(int(zoom), lens_type)); payload.extend(_lens24be(int(focus), lens_type)); payload.extend(b"\x00\x00")
         payload.append((0x40-sum(payload[:28]))&0xff)
         try:
             self._freed_sock.sendto(bytes(payload),(str(applied.get("target_ip",self.freed_target_ip)), int(applied.get("target_port",self.freed_target_port))))
@@ -1806,7 +2089,7 @@ class HVP2PBackend(QObject):
                 self.joystick_cal_left, self.joystick_cal_centre, self.joystick_cal_right = left, centre, right
         except Exception:
             pass
-        self.position_source = "Encoder"
+        self._apply_position_source_runtime(snap.get("position_source", self.position_source), send_safety=not self.smoke_test)
         self.winch_units_per_m = max(1.0, float(snap.get("units_per_m", self.winch_units_per_m)))
         self.drive_modes = self._normalise_drive_modes(snap.get("drive_modes", self.drive_modes))
         self.active_drive_mode = 0 if int(snap.get("active_drive_mode", self.active_drive_mode)) <= 0 else 1
@@ -1842,7 +2125,7 @@ class HVP2PBackend(QObject):
                     snap["joystick_calibration"] = {"left":left, "centre":centre, "right":right}
             except Exception:
                 pass
-        snap["position_source"] = "Encoder"
+        snap["position_source"] = self._normalise_position_source(c.get("position_source", snap["position_source"]))
         try: snap["units_per_m"] = max(1.0, float(c.get("units_per_m", snap["units_per_m"])))
         except Exception: pass
         snap["drive_modes"] = self._normalise_drive_modes(c.get("drive_modes", snap["drive_modes"]))
@@ -2093,13 +2376,27 @@ class HVP2PBackend(QObject):
         return c, changed
 
     def _load_config(self):
+        recovered_from_backup = False
         try:
             if not self._config_path.exists():
                 self._apply_active_drive_profile(sync=False)
                 return
-            c = json.loads(self._config_path.read_text())
-            if not isinstance(c, dict):
-                raise ValueError("config root must be an object")
+            try:
+                c = json.loads(self._config_path.read_text(encoding="utf-8"))
+                if not isinstance(c, dict):
+                    raise ValueError("config root must be an object")
+            except Exception as primary_exc:
+                backup = self._config_path.with_suffix(self._config_path.suffix + ".bak")
+                if not backup.exists():
+                    raise
+                try:
+                    c = json.loads(backup.read_text(encoding="utf-8"))
+                    if not isinstance(c, dict):
+                        raise ValueError("backup config root must be an object")
+                    recovered_from_backup = True
+                    self._log(f"[Config] primary config invalid; recovered previous-good backup ({primary_exc})")
+                except Exception:
+                    raise primary_exc
             c, migrated = self._migrate_config_dict(c)
 
             self.ctrl_ip = str(c.get("ctrl_ip", self.ctrl_ip) or self.ctrl_ip)
@@ -2116,9 +2413,11 @@ class HVP2PBackend(QObject):
                     self.joystick_cal_left, self.joystick_cal_centre, self.joystick_cal_right = left, centre, right
             except Exception:
                 pass
-            # Encoder is the currently proven position source. Persist the field
-            # for the locked Setup control without inventing an unverified source.
-            self.position_source = "Encoder"
+            # Encoder is the physical source; Virtual is an SRVR-only demo source
+            # that never emits a non-zero W1P velocity command.
+            self.position_source = self._normalise_position_source(c.get("position_source", self.position_source))
+            self._virtual_velocity_mps = 0.0
+            self._virtual_last_tick = time.monotonic()
             self.ctrl_aux_assignments = [str(x) for x in self._normalise_list(c.get("ctrl_aux_assignments"), self.ctrl_aux_assignments, 5)]
             self.w1p_aux_assignments = [str(x) for x in self._normalise_list(c.get("w1p_aux_assignments"), self.w1p_aux_assignments, 5)]
             self.winch_units_per_m = max(1.0, float(c.get("units_per_m", self.winch_units_per_m)))
@@ -2207,17 +2506,21 @@ class HVP2PBackend(QObject):
             self.cable_weight_unit = "lbs/100m" if str(fd.get("cable_weight_unit", self.cable_weight_unit)).lower().startswith("lb") else "kg/100m"
             self.cable_tension_unit = "lbs" if str(fd.get("cable_tension_unit", self.cable_tension_unit)).lower().startswith("lb") else "kg"
             self.highline_mode = "Dual Highline" if str(fd.get("highline_mode", self.highline_mode)).lower().startswith("dual") else "Single Highline"
-            if migrated:
-                # Rewrite the private config once in canonical form so a copied
-                # v26.06.26.25 file becomes a forward-compatible Update-4 file.
-                self._save_config(include_staged_freed=True)
-                self._log("[Config] migrated legacy configuration to schema 2")
+            if migrated or recovered_from_backup:
+                # Rewrite migrations and recovered backup state once in canonical
+                # form. When recovering, do not replace the known-good .bak with
+                # the corrupt primary file we just rejected.
+                self._save_config(include_staged_freed=True, make_backup=not recovered_from_backup)
+                if migrated:
+                    self._log("[Config] migrated legacy configuration to schema 2")
+                if recovered_from_backup:
+                    self._log("[Config] restored primary config atomically from previous-good backup")
         except Exception as exc:
             self._log(f"[Config] load failed: {exc}")
             self.drive_modes = self._normalise_drive_modes(self.drive_modes)
             self._apply_active_drive_profile(sync=False)
 
-    def _save_config(self, include_staged_freed: bool = False):
+    def _save_config(self, include_staged_freed: bool = False, make_backup: bool = True):
         try:
             # Free-D has explicit Apply/Reset semantics. Unrelated saves (preset,
             # drive mode, etc.) must not accidentally commit staged Free-D edits.
@@ -2286,7 +2589,7 @@ class HVP2PBackend(QObject):
                     "highline_mode": str(freed_snap.get("highline_mode", self.highline_mode)),
                 },
             }
-            self._config_path.write_text(json.dumps(c, indent=2))
+            _atomic_write_text(self._config_path, json.dumps(c, indent=2) + "\n", make_backup=make_backup)
         except Exception as exc:
             self._log(f"[Config] save failed: {exc}")
 
@@ -2299,6 +2602,14 @@ class HVP2PBackend(QObject):
     def freeDActive(self): return bool(self.freed_input_last_rx and time.time()-self.freed_input_last_rx<2.0)
     @Property(float, notify=stateChanged)
     def freeDFps(self): return float(self.freed_in_fps)
+    @Property(str, notify=stateChanged)
+    def ctrlFirmwareVersion(self): return str(self._ctrl_fw_version or "—")
+    @Property(str, notify=stateChanged)
+    def w1pFirmwareVersion(self): return str(self._w1p_fw_version or "—")
+    @Property(bool, notify=stateChanged)
+    def ctrlEStopActive(self): return bool(self._ctrl_estop)
+    @Property(bool, notify=stateChanged)
+    def w1pEStopActive(self): return bool(self._w1p_estop)
     @Property(bool, notify=stateChanged)
     def ctrlTsConnected(self):
         return bool(self._ctrl_connected() and self._ctrl_ts_connected_reported and
@@ -2365,9 +2676,12 @@ class HVP2PBackend(QObject):
             or (not self._ctrl_connected())
         )
         w1p_fault = bool(
-            self._w1p_estop
-            or (not self.w1p.connected)
-            or (self.winch_rs_status != "Connected")
+            self.position_source != "Virtual" and (
+                self._w1p_estop
+                or self._w1p_internal_safety
+                or (not self.w1p.connected)
+                or (self.winch_rs_status != "Connected")
+            )
         )
 
         parts = []
@@ -2874,7 +3188,7 @@ class HVP2PBackend(QObject):
         self._winch_position_accept_jump_until = time.time() + 2.0
         self._winch_last_pos_accept_t = 0.0
         self._send_velocity(0.0, force=True)
-        if not self.smoke_test:
+        if not self.smoke_test and self.position_source != "Virtual":
             self.w1p.send(f"SYNC_POS {float(pos_m):.3f}")
 
     @Slot()
@@ -3011,7 +3325,21 @@ class HVP2PBackend(QObject):
     @Slot()
     def applySetupSettings(self):
         """Atomically commit the Setup draft; no Setup editor writes are live before this."""
-        self._restore_setup_snapshot(copy.deepcopy(self._setup_draft))
+        draft = copy.deepcopy(self._setup_draft)
+        try:
+            new_w1p_ip = self._normalise_ipv4(draft.get("w1p_ip", self.w1p_ip))
+            draft["w1p_ip"] = new_w1p_ip
+            draft["ctrl_ip"] = self._normalise_ipv4(draft.get("ctrl_ip", self.ctrl_ip))
+        except ValueError as exc:
+            self._log(f"[Config] Setup apply refused: {exc}")
+            return
+        if new_w1p_ip == draft["ctrl_ip"]:
+            self._log("[Config] Setup apply refused: CTRL and W1P cannot use the same IP address")
+            return
+        if new_w1p_ip != self.w1p_ip and not self._request_w1p_readdress(new_w1p_ip):
+            self._log("[Config] Setup apply refused because W1P local IP was not safely changed")
+            return
+        self._restore_setup_snapshot(draft)
         if self._pending_import_config is not None and not self._pending_import_setup_handled:
             self._apply_imported_run_config(self._pending_import_config)
             self._pending_import_setup_handled = True
@@ -3123,7 +3451,7 @@ class HVP2PBackend(QObject):
 
     @Slot(str)
     def setPositionSource(self, value):
-        self.position_source = "Encoder"
+        self._apply_position_source_runtime(value, send_safety=not self.smoke_test)
         self._save_config(); self._notify_config()
 
     @Slot(int, str, float)
@@ -3179,7 +3507,7 @@ class HVP2PBackend(QObject):
 
     @Slot(str)
     def setSetupPositionSource(self, value):
-        self._setup_draft["position_source"] = "Encoder"
+        self._setup_draft["position_source"] = self._normalise_position_source(value)
         self._setup_draft_dirty = True
         self._notify_config()
 

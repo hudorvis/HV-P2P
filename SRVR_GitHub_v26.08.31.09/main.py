@@ -31,7 +31,7 @@ import PySide6.QtQuickControls2  # noqa: F401
 
 from backend import HVP2PBackend
 
-APP_VERSION = "26.08.31.06"
+APP_VERSION = "26.08.31.09"
 
 
 def _exercise_qml(app: QGuiApplication, engine: QQmlApplicationEngine, backend: HVP2PBackend) -> bool:

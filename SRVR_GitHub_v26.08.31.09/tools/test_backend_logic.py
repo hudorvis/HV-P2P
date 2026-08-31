@@ -24,6 +24,9 @@ os.environ["HOME"] = TMP_HOME.name
 from PySide6.QtCore import QCoreApplication
 from backend import (
     HVP2PBackend,
+    _atomic_write_text,
+    _freed_checksum_valid,
+    _lens24be,
     CONTROL_PACKET_CODE,
     FLAG_ADS1115_FAULT,
     FLAG_AUX1,
@@ -32,9 +35,31 @@ from backend import (
 )
 
 app = QCoreApplication.instance() or QCoreApplication([])
-b = HVP2PBackend(version="26.08.31.06", smoke_test=True)
+b = HVP2PBackend(version="26.08.31.09", smoke_test=True)
 
 try:
+    # Atomic file helper must retain a previous-good recovery copy and never
+    # expose a partially-written destination.
+    atomic_path = Path(TMP_HOME.name) / "atomic-config.json"
+    _atomic_write_text(atomic_path, '{"seq":1}\n')
+    _atomic_write_text(atomic_path, '{"seq":2}\n')
+    assert json.loads(atomic_path.read_text()) == {"seq": 2}
+    assert json.loads(atomic_path.with_suffix('.json.bak').read_text()) == {"seq": 1}
+
+    # Free-D lens output must cover the entire unsigned 24-bit domain; signed
+    # packing remains unchanged for the other supported lens data types.
+    assert _lens24be(0xFFFFFF, "u24") == b"\xff\xff\xff"
+    assert _lens24be(0x800000, "u24") == b"\x80\x00\x00"
+    assert _lens24be(0xFFFFFF + 1, "u24") == b"\xff\xff\xff"
+    assert _lens24be(-1, "i24") == b"\xff\xff\xff"
+
+    # Free-D D1 checksum matches the transmitter's 0x40 low-byte sum contract.
+    freed = bytearray([0xD1, 1]) + bytearray(26)
+    freed.append((0x40 - sum(freed[:28])) & 0xFF)
+    assert len(freed) == 29 and _freed_checksum_valid(bytes(freed))
+    freed[5] ^= 0x01
+    assert not _freed_checksum_valid(bytes(freed))
+
     # CTRL packet compatibility (A6 and extended A7).
     import struct
     a6 = bytes([CONTROL_PACKET_CODE, 0x04]) + struct.pack("!f", 0.5) + b"\x00\x00"
@@ -61,6 +86,8 @@ try:
     b.w1p.last_seen = now
     b._parse_w1p("W1P_HMI_STATUS|w1p_ts=1|version=wTEST|age_ms=15")
     assert b.w1pTsConnected and b._w1p_ts_version == "wTEST" and b._w1p_ts_age_ms == 15
+    b._parse_w1p("STATUS POS_M=0 VEL_MPS=0 IP=172.20.1.102 WRITE_EN=0 SW_SRVON=0 VEL_WD=0 SERVICE_LOCK=0 RS_STAT=CONNECTED LEAD_CFG=OK")
+    assert b.w1p_reported_ip == "172.20.1.102"
 
     # CTRL-TS display packet must retain the required DSP1 contract understood by
     # the proven CTRL relay/CTRL-TS firmware. It is display-only, not motion data.
@@ -290,6 +317,37 @@ try:
     b.renameSetupDriveMode(0, "Unapplied Setup Mode")
     b.resetSetupSettings()
     assert b.setupDraft["drive_modes"][0]["name"] == "Run Saved Mode"
+
+    # v26.08.31.09 Virtual Position Source is a true SRVR demo mode. Setup must
+    # stage it, Apply must activate it, CTRL input may move the simulated position
+    # without W1P/EL7 health, and physical W1P feedback must not overwrite it.
+    assert b.positionSource == "Encoder"
+    b.beginSetupEdit()
+    b.setSetupPositionSource("Virtual")
+    assert b.positionSource == "Encoder" and b.setupDraft["position_source"] == "Virtual"
+    b.applySetupSettings()
+    assert b.positionSource == "Virtual" and b._safety_servo_inhibited
+    now = time.time(); b._ctrl_rx_times.clear(); b._ctrl_rx_times.extend([now - 0.05, now])
+    b.w1p.last_seen = 0.0; b.winch_rs_status = "Disconnected"; b._ctrl_flags = 0
+    b._ctrl_axis = 0.5; b.state.pos_m = 50.0
+    b._safety_active_last = False; b._joystick_neutral_required = False
+    b._motion_tick()
+    assert not b.state.estop_active, "Virtual demo incorrectly required physical W1P/EL7 health"
+    assert b.requested_speed_mps > 0.0 and b.current_speed_mps > 0.0
+    assert abs(b.last_winch_output) < 1e-9 and abs(b.last_sent_vel) < 1e-9
+    old_pos = float(b.state.pos_m)
+    b._virtual_last_tick = time.monotonic() - 0.10
+    b._virtual_motion_step()
+    assert float(b.state.pos_m) > old_pos, "Virtual position did not integrate simulated speed"
+    virtual_pos = float(b.state.pos_m); virtual_speed = float(b.current_speed_mps)
+    b._parse_w1p("STATUS POS_M=12.345 VEL_MPS=-4.5 IP=172.20.1.102 WRITE_EN=0 SW_SRVON=0 VEL_WD=0 SERVICE_LOCK=0 RS_STAT=CONNECTED LEAD_CFG=OK FW=v26.08.31.09")
+    assert abs(float(b.state.pos_m) - virtual_pos) < 1e-9 and abs(float(b.current_speed_mps) - virtual_speed) < 1e-9
+    # Leaving Virtual is deliberately fail-safe: no physical motion is accepted
+    # until the normal neutral/re-arm sequence has completed.
+    b.beginSetupEdit(); b.setSetupPositionSource("Encoder"); b.applySetupSettings()
+    assert b.positionSource == "Encoder" and b._joystick_neutral_required and b._safety_servo_inhibited
+    now = time.time(); b._ctrl_rx_times.clear(); b._ctrl_rx_times.extend([now - 0.05, now])
+    b.w1p.last_seen = now; b.winch_rs_status = "Connected"; b._ctrl_flags = 0
 
     # Joystick Calibration is a real three-step Left/Centre/Right wizard. Moving
     # the stick while it is open must never generate motion, and the captured
@@ -810,6 +868,41 @@ try:
         fake_w1p.sent.clear(); b._restore_servo_after_safety_neutral()
         assert "STOP" in fake_w1p.sent and "SW_SRVON 1" in fake_w1p.sent
 
+        # Setup W1P-IP changes use the currently connected old address until the
+        # EdgeBox confirms that its safe service gate accepted the new local IP.
+        while not b._w1p_rx.empty():
+            b._w1p_rx.get_nowait()
+        b._w1p_rx.put_nowait("OK SET_NETWORK W1P_IP=172.20.1.120 REBOOTING=1")
+        fake_w1p.sent.clear()
+        assert b._request_w1p_readdress("172.20.1.120", timeout_s=0.25)
+        assert "SET_NETWORK|w1p_ip=172.20.1.120" in fake_w1p.sent
+
+        # If the UDP acknowledgement is lost after W1P has rebooted, SRVR must
+        # accept the change only after independently proving that the requested
+        # new address is alive and reports itself as that IP. W1P itself keeps a
+        # provisional previous-IP rollback armed until this contact occurs.
+        original_probe = b._probe_w1p_address
+        try:
+            b._probe_w1p_address = lambda host, timeout_s=2.8: host == "172.20.1.121"
+            while not b._w1p_rx.empty():
+                b._w1p_rx.get_nowait()
+            fake_w1p.sent.clear()
+            assert b._request_w1p_readdress("172.20.1.121", timeout_s=0.01)
+            assert "SET_NETWORK|w1p_ip=172.20.1.121" in fake_w1p.sent
+
+            b._probe_w1p_address = lambda host, timeout_s=2.8: False
+            while not b._w1p_rx.empty():
+                b._w1p_rx.get_nowait()
+            fake_w1p.sent.clear()
+            assert not b._request_w1p_readdress("172.20.1.122", timeout_s=0.01)
+        finally:
+            b._probe_w1p_address = original_probe
+        try:
+            b._normalise_ipv4("999.1.1.1")
+            raise AssertionError("invalid W1P IPv4 address accepted")
+        except ValueError:
+            pass
+
         # The display packet is sent to the configured CTRL IP on UDP/5000 and
         # remains a separate DSP1 telemetry path.
         b._last_ctrl_display_packet = b""
@@ -821,6 +914,19 @@ try:
         b.smoke_test = original_smoke
         b.w1p = original_w1p
         b._ctrl_display_sock = original_display_sock
+
+    # Corrupt the primary private config after a valid backup exists. A fresh
+    # backend must recover the previous-good .bak and atomically restore primary.
+    b._save_config(); b._save_config()
+    backup_cfg = b._config_path.with_suffix(b._config_path.suffix + ".bak")
+    assert backup_cfg.is_file()
+    expected_backup = json.loads(backup_cfg.read_text())
+    b._config_path.write_text('{broken-json', encoding='utf-8')
+    b2 = HVP2PBackend(version="26.08.31.09", smoke_test=True)
+    try:
+        assert json.loads(b2._config_path.read_text()) == expected_backup
+    finally:
+        b2.shutdown()
 
     print("BACKEND REGRESSION PASS")
 finally:

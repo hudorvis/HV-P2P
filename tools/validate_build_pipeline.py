@@ -6,10 +6,10 @@ wf=(ROOT/'.github/workflows/complete-build.yml').read_text()
 builder=(ROOT/'tools/native_build_firmware.py').read_text()
 lvglprep=(ROOT/'tools/prepare_lvgl_config.py').read_text()
 waveshareprep=(ROOT/'tools/prepare_waveshare_library.py').read_text()
-hmi=(ROOT/'HV_P2P_CTRL_TS_v26.08.31.06/HV_P2P_CTRL_TS_v26.08.31.06.ino').read_text()
+hmi=(ROOT/'HV_P2P_CTRL_TS_v26.08.31.09/HV_P2P_CTRL_TS_v26.08.31.09.ino').read_text()
 embed=(ROOT/'tools/embed_ctrl_ts_firmware.py').read_text()
-guard=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.08.31.06/HV_P2P_CTRL_TS_Firmware_Image.h').read_text()
-w1pp=(ROOT/'HV_P2P_W1P_EDGEBOX_v26.08.31.06/partitions.csv').read_text()
+guard=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.08.31.09/HV_P2P_CTRL_TS_Firmware_Image.h').read_text()
+w1pp=(ROOT/'HV_P2P_W1P_EDGEBOX_v26.08.31.09/partitions.csv').read_text()
 checks={
  'workflow core 3.3.8': 'esp32:esp32@3.3.8' in wf,
  'workflow Arduino CLI pinned': "version: '1.5.1'" in wf,
@@ -17,6 +17,9 @@ checks={
  'display panel pinned': "ESP32_Display_Panel@0.1.6" in wf,
  'IO expander pinned': "ESP32_IO_Expander@0.0.3" in wf,
  'Waveshare CH422G 0.0.3 compatibility patch': 'prepare_waveshare_library.py --libraries-dir' in wf and 'ESP_IO_EXPANDER_I2C_CH422G_ADDRESS_000' in waveshareprep and 'refusing to patch Waveshare library' in waveshareprep,
+ 'Waveshare library commit pinned': "WAVESHARE_ST7262_LVGL_COMMIT: '593775b89ebfd2d411df3eadba7bc382767ed4a4'" in wf and 'git -C "$WAVESHARE_LIB" fetch --depth 1 origin "$WAVESHARE_ST7262_LVGL_COMMIT"' in wf and 'rev-parse HEAD' in wf,
+ 'native manifest records Waveshare commit': 'WAVESHARE_ST7262_LVGL_COMMIT' in builder and '"dependencies"' in builder and '"commit": WAVESHARE_ST7262_LVGL_COMMIT' in builder,
+ 'native builder verifies retained app role/version identity': 'require_binary_token(ctrl_app' in builder and 'HV_P2P_FW_ROLE=CTRL' in builder and 'require_binary_token(w1p_app' in builder and 'HV_P2P_FW_ROLE=W1P' in builder,
  'JPEGDEC pinned': "JPEGDEC@1.8.4" in wf,
  'LVGL config prepared beside library': 'prepare_lvgl_config.py --libraries-dir' in wf and 'lv_conf.h' in wf,
  'LVGL config enables Arduino tick': 'LV_TICK_CUSTOM 1' in lvglprep and 'LV_TICK_CUSTOM_SYS_TIME_EXPR (millis())' in lvglprep,
@@ -35,9 +38,13 @@ checks={
  'embed verifies ESP magic': 'ESP_IMAGE_MAGIC = 0xE9' in embed,
  'embed writes HW/proto/version/hash': all(x in embed for x in ('HV_CTRL_TS_REQUIRED_HW','HV_CTRL_TS_REQUIRED_PROTOCOL','HV_CTRL_TS_REQUIRED_VERSION','HV_CTRL_TS_REQUIRED_SHA256')),
  'W1P dual OTA added': all(x in w1pp for x in ('ota_0','ota_1','0x600000')),
- 'firmware artifact upload present': 'HV-P2P-v26.08.31.06-Native-Firmware' in wf,
- 'SRVR macOS job present': 'runs-on: macos-15-intel' in wf and 'HV-P2P-SRVR-v26.08.31.06-macOS-Intel' in wf,
- 'complete matched artifact present': 'HV-P2P-v26.08.31.06-Complete-Release' in wf and 'needs: [build-firmware, build-srvr]' in wf,
+ 'firmware artifact upload present': 'HV-P2P-v26.08.31.09-Native-Firmware' in wf,
+ 'SRVR macOS job present': 'runs-on: macos-15-intel' in wf and 'HV-P2P-SRVR-v26.08.31.09-macOS-Intel' in wf,
+ 'complete matched artifact present': 'HV-P2P-v26.08.31.09-Complete-Release' in wf and 'needs: [build-firmware, build-srvr]' in wf,
+ 'SRVR bundle metadata pinned': all(x in wf for x in ('BUNDLE_IDENTIFIER', 'com.hvp2p.srvr', 'BUNDLE_SHORT_VERSION', 'BUNDLE_BUILD_VERSION', 'HVP2PReleaseVersion')),
+ 'complete release preserves original SRVR ZIP': 'SRVR artifact must remain one untouched ZIP' in wf and "expected_srvr=root/'SRVR'/'HV P2P SRVR v26.08.31.09 macOS Intel.zip'" in wf,
+ 'complete release internal SHA256 manifest': "manifest=root/'SHA256SUMS.txt'" in wf and "sha256(p)" in wf,
+ 'complete release external SHA256': "Path(str(out)+'.sha256')" in wf and 'HV P2P v26.08.31.09 Complete Release.zip.sha256' in wf,
 }
 failed=[k for k,v in checks.items() if not v]
 for k,v in checks.items(): print(('OK  ' if v else 'FAIL')+k)

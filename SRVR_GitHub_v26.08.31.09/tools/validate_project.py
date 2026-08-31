@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "26.08.31.06"
+VERSION = "26.08.31.09"
 ERRORS: list[str] = []
 
 
@@ -262,9 +262,10 @@ require('import "pages"' in qml_main and 'SetupPage {' in qml_main and 'LogPage 
 require("functional interim visual" not in qml_main and "final Setup visual design has not yet been locked" not in qml_main,
         "interim Setup implementation remains in Main.qml")
 for token in (
-    "CTRL-TS Link", "Joystick AI0", "JOYSTICK CALIBRATION", "EL7 RS485",
+    "CTRL-TS Link", "CTRL IP", "W1P IP", "JOYSTICK CALIBRATION",
     "MOTION PROFILES", "DRIVE BEHAVIOUR", "CTRL-TS AUX ASSIGN",
     "LIMIT CALIBRATION", "WINCH CALIBRATION", "SAVE CONFIG", "LOAD CONFIG",
+    "Position Source", "Virtual",
 ):
     require(token in qml_setup, f"final Setup content missing: {token}")
 for token in ("LOG VIEW", "SEVERITY", "SEARCH", "ACTIONS", "LIVE LOG", "SYSTEM SUMMARY", "Backend State", "System Uptime"):
@@ -308,15 +309,16 @@ for token in ('FREE-D INPUT', 'FREE-D OUTPUT', 'GEOMETRY', 'LENS CALIBRATION',
             f"Free-D heading/subheading is not shared blue: {token}")
 for token in ('JOYSTICK CALIBRATION', '〽  MOTION PROFILES',
               'MODE 1', 'MODE 2', 'DRIVE BEHAVIOUR', 'ϟ  ACTIONS',
-              '♧  CTRL-TS AUX ASSIGN', '▣  CTRL-TS / FIRMWARE', '⌾  CALIBRATION'):
+              '♧  CTRL-TS AUX ASSIGN', '▣  CTRL-TS', '⌾  CALIBRATION'):
     require(re.search(r'text\s*:\s*"' + re.escape(token) + r'"[^}]{0,180}?color\s*:\s*root\.cyan', qml_setup) is not None,
             f"Setup heading/subheading is not shared blue: {token}")
 for token in ('⌘  CTRL', '♨  W1P'):
     require(re.search(r'text\s*:\s*"' + re.escape(token) + r'"[^}]{0,180}?color\s*:\s*root\.cyan', qml_setup) is not None,
             f"Setup node heading is not shared blue: {token}")
-require('Joystick AI0' in qml_setup and 'CTRL-TS / FIRMWARE' in qml_setup and
+require('text:"Link"' in qml_setup and 'text:"RS485"' in qml_setup and 'text:"E-Stop"' in qml_setup and
+        'text:"Firmware"' in qml_setup and '▣  CTRL-TS' in qml_setup and
         'backend.ctrlTsFirmwareState' in qml_setup,
-        "Setup does not reflect the current EdgeBox/CTRL-TS architecture diagnostics")
+        "Setup does not reflect the locked EdgeBox/CTRL-TS architecture diagnostics")
 # Shared SRVR/CTRL-TS palette uses exact common shell tokens rather than near-duplicate greens/borders.
 all_qml = "\n".join(pp.read_text(errors="replace") for pp in (ROOT/"qml").rglob("*.qml"))
 require('#62d64d' not in all_qml and '#55cf52' not in all_qml and '#4a5054' not in all_qml,
@@ -337,16 +339,53 @@ require('property color headingColor: "#26d5ff"' in span_qml and
 
 # Screenshot-derived clipping fixes must remain mathematically contained without
 # changing any locked panel allocation.
-require('width:f(54); height:parent.height; text:"Mode 1"; font.pixelSize:f(11)' in qml_main and
-        'width:f(54); height:parent.height; text:"Mode 2"; font.pixelSize:f(11)' in qml_main and
-        qml_main.count('width:(parent.width-f(150+54+54+16))/2') >= 2 and
-        qml_main.count('leftPadding:f(4); rightPadding:f(4)') >= 2,
-        "Run System Drive Mode row clipping fix is missing")
+require('width:f(70); height:parent.height; text:"Mode 1"; font.pixelSize:f(11)' in qml_main and
+        'width:f(70); height:parent.height; text:"Mode 2"; font.pixelSize:f(11)' in qml_main and
+        (qml_main.count('Text { width:f(150)') + qml_main.count('Text{width:f(150)')) >= 4 and
+        (qml_main.count('Item {\n                                                width:parent.width-f(150)') + qml_main.count('Item{width:parent.width-f(150)')) >= 4,
+        "Run System Mode labels/aligned action-column fix is missing")
 require('width:parent.width*.22' in qml_main and
         qml_main.count('width:parent.width*.22') >= 3,
         "Free-D Parameter column clipping fix is missing")
 require(qml_main.count('width:f(72)') >= 2 and 'parent.width-f(48+72+66)' in qml_main,
         "Free-D lens decoded percentage width fix is missing")
+
+# v26.08.31.09 locked Run/Setup revision. Keep the approved panel geometry and
+# setting semantics while guarding only the requested presentation/interaction deltas.
+require('text:"HV P2P\\nSRVR"' in qml_main and 'HV P2P  |  SRVR' not in qml_main and 'P2P°\\nSRVR' not in qml_main,
+        "locked two-line HV P2P/SRVR logo/header revision is missing")
+require('property string pendingShortcutAction' in qml_main and
+        'shortcutConfirmRemaining = 5' in qml_main and
+        'text:window.shortcutActionText' in qml_main and
+        'cancelShortcutConfirm()' in qml_main and
+        'shortcutConfirmTimer' in qml_main,
+        "Run Save/Recall/Slip five-second two-step confirmation is missing")
+for token in ('preset:save:', 'preset:recall:', 'limit:save:Near', 'limit:recall:Near', 'limit:slip:Near',
+              'limit:save:Far', 'limit:recall:Far', 'limit:slip:Far',
+              'limit:save:Ref', 'limit:recall:Ref', 'limit:slip:Ref'):
+    require(token in qml_main, f"Run confirmed shortcut action missing: {token}")
+require(qml_main.count('Row { anchors.centerIn:parent; spacing:f(7)') >= 2,
+        "Run To Near/To Far units are not kept beside their values")
+require('model:["Encoder","Virtual"]' in qml_setup and
+        'backend.setSetupPositionSource(currentText)' in qml_setup,
+        "Setup Virtual position-source selection is missing")
+for token in ('def _virtual_output_inhibit', 'def _virtual_motion_step', 'self.position_source == "Virtual"',
+              'physical_winch_required = self.position_source != "Virtual"'):
+    require(token in backend, f"Virtual demo-mode safety/runtime implementation missing: {token}")
+require('self.w1p.send("SW_SRVON 0")' in backend and 'self.w1p.send("STOP")' in backend,
+        "Virtual demo mode does not positively inhibit physical W1P output")
+require('if "POS_M" in fields and self.position_source != "Virtual"' in backend and
+        'if "VEL_MPS" in fields and self.position_source != "Virtual"' in backend,
+        "physical W1P feedback can overwrite Virtual demo position/speed")
+require('def ctrlFirmwareVersion' in backend and 'def w1pFirmwareVersion' in backend and
+        'def ctrlEStopActive' in backend and 'def w1pEStopActive' in backend,
+        "locked CTRL/W1P Setup diagnostic properties are missing")
+require(qml_setup.count('text:"Link"') >= 2 and qml_setup.count('text:"RS485"') >= 2 and
+        qml_setup.count('text:"E-Stop"') >= 2 and qml_setup.count('text:"Firmware"') >= 2,
+        "CTRL/W1P generic six-row status labels are missing")
+require('text:"CTRL-TS Link"' in qml_setup and
+        'text:backend.ctrlTsConnected?"Active":"Disconnected"' in qml_setup,
+        "CTRL-TS Link is not using Active/Disconnected status semantics")
 
 # Joystick calibration is a real three-step wizard, not a no-op button. It must
 # capture raw Left/Centre/Right values, persist them, and fail-safe motion to zero
@@ -412,11 +451,12 @@ for forbidden in ('backend.renameDriveMode(', 'backend.setDriveModeValue(',
 for required in ('backend.renameSetupDriveMode(', 'backend.setSetupDriveModeValue(',
                  'backend.setSetupJoystickDeadband(', 'backend.setSetupAuxAssignment(',
                  'backend.setSetupNetwork(', 'backend.setSetupDirection(',
-                 'backend.setSetupUnitsPerM(', 'backend.setSetupAccelerationMode(',
-                 'backend.setSetupBatteryChange('):
+                 'backend.setSetupUnitsPerM(', 'backend.setSetupPositionSource(',
+                 'backend.setSetupAccelerationMode(', 'backend.setSetupBatteryChange('):
     require(required in qml_setup, f"Setup staged editor binding missing: {required}")
 require('self._setup_draft_dirty = True' in backend and
-        'self._restore_setup_snapshot(copy.deepcopy(self._setup_draft))' in backend and
+        'draft = copy.deepcopy(self._setup_draft)' in backend and
+        'self._restore_setup_snapshot(draft)' in backend and
         'def resetSetupSettings' in backend,
         "Setup draft Apply/Reset backend is incomplete")
 require('if not getattr(self, "_setup_draft_dirty", False):' in backend,
@@ -453,8 +493,11 @@ require('self._save_config' not in joy_src,
 # Motion Profiles row must contain both six-row mode tables before the divider;
 # this is the screenshot-derived Stop Deceleration/divider overlap fix.
 require('width:parent.width; height:root.f(250)' in qml_setup and
-        qml_setup.count('spacing:root.f(2)') >= 2,
-        "Setup Motion Profiles divider containment fix is missing")
+        qml_setup.count('spacing:root.f(2)') >= 2 and
+        'anchors.rightMargin:root.f(15)' in qml_setup and
+        'anchors.leftMargin:root.f(15)' in qml_setup and
+        qml_setup.count('width:(parent.width-root.f(1))/2') >= 2,
+        "Setup Motion Profiles even divider/containment fix is missing")
 
 # The v13 live API remains available for compatibility, but Setup.qml is not
 # permitted to call it. This protects existing backend integrations while
@@ -483,7 +526,7 @@ require('profileValue(Number(gp.x), key)' in span_qml and
         'var gv=root.sideView ? Number(gp.y)' not in span_qml,
         "Free-D geometry markers are not pinned to the exact calculated cable profile")
 
-# v26.08.31.06 integration contract: fifth CTRL-TS AUX travels in the spare A7
+# v26.08.31.09 integration contract: fifth CTRL-TS AUX travels in the spare A7
 # 16-bit flag, and display packets expose all five state-aware labels.
 require("FLAG_AUX5 = 0x0400" in backend, "AUX5 controller flag missing")
 require('f"aux5={labels[4]}"' in backend, "DSP1 AUX5 field missing")
@@ -539,6 +582,10 @@ require('cp assets/HV_P2P_SRVR_icon.png "$STAGE/HV_P2P_SRVR_icon.png"' in workfl
         "P2P SRVR bundle icon is not restored during packaging")
 require('CFBundleDisplayName' in workflow and "HV P2P SRVR'" in workflow,
         "HV P2P SRVR bundle display metadata is not enforced")
+require(all(token in workflow for token in ('CFBundleIdentifier', 'com.hvp2p.srvr', 'CFBundleShortVersionString', 'CFBundleVersion', 'HVP2PReleaseVersion')),
+        "HV P2P SRVR stable bundle identity/version metadata is not enforced")
+require('SRVR artifact must remain one untouched ZIP' in workflow and 'SHA256SUMS.txt' in workflow and 'Complete Release.zip.sha256' in workflow,
+        "complete release does not preserve/hash the original SRVR ZIP and authoritative release ZIP")
 require('QT_QPA_PLATFORM=cocoa "$ROUNDTRIP_EXE" --smoke-test' in workflow,
         "round-trip extracted app smoke test missing")
 

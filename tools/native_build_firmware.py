@@ -26,10 +26,14 @@ import subprocess
 import sys
 import tempfile
 
-VER = "26.08.31.06"
+VER = "26.08.31.09"
 SEMVER = f"v{VER}"
 CTRL_SLOT = 0x600000
 HMI_SLOT = 0x380000
+WAVESHARE_ST7262_LVGL_COMMIT = os.environ.get(
+    "WAVESHARE_ST7262_LVGL_COMMIT",
+    "593775b89ebfd2d411df3eadba7bc382767ed4a4",
+)
 
 # Espressif Arduino core 3.3.8 exposes the EdgeBox board but defaults it to 4 MB.
 # The physical EdgeBox-ESP-100 is 16 MB, so FlashSize=16M is mandatory here.
@@ -59,6 +63,13 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def require_binary_token(path: Path, token: str, role: str) -> None:
+    raw = path.read_bytes()
+    encoded = token.encode("ascii")
+    if encoded not in raw:
+        raise SystemExit(f"ERROR: {role} compiled application is missing retained build identity token: {token}")
 
 
 def find_app_bin(build_dir: Path, sketch_stem: str) -> Path:
@@ -154,11 +165,13 @@ def main() -> int:
         ctrl_app = compile_sketch(args.arduino_cli, stage / ctrl_name, EDGEBOX_FQBN, build / "ctrl", CTRL_SLOT)
         if not 0 < ctrl_app.stat().st_size <= CTRL_SLOT:
             raise SystemExit(f"ERROR: CTRL app {ctrl_app.stat().st_size} exceeds 0x{CTRL_SLOT:X} app slot")
+        require_binary_token(ctrl_app, f"HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_VERSION={SEMVER}", "CTRL")
 
         # 4. W1P uses the same 16 MB dual-OTA partition map.
         w1p_app = compile_sketch(args.arduino_cli, stage / w1p_name, EDGEBOX_FQBN, build / "w1p", CTRL_SLOT)
         if not 0 < w1p_app.stat().st_size <= CTRL_SLOT:
             raise SystemExit(f"ERROR: W1P app {w1p_app.stat().st_size} exceeds 0x{CTRL_SLOT:X} app slot")
+        require_binary_token(w1p_app, f"HV_P2P_FW_ROLE=W1P;HV_P2P_FW_VERSION={SEMVER}", "W1P")
 
         # 5. Preserve the fully staged CTRL source used to produce the binary.
         staged_src = output / "STAGED_SOURCE"
@@ -189,6 +202,16 @@ def main() -> int:
         manifest = {
             "release": SEMVER,
             "arduino_core": "esp32:esp32@3.3.8",
+            "dependencies": {
+                "Waveshare_ST7262_LVGL": {
+                    "repository": "https://github.com/iamfaraz/Waveshare_ST7262_LVGL.git",
+                    "commit": WAVESHARE_ST7262_LVGL_COMMIT,
+                },
+                "lvgl": "8.3.11",
+                "ESP32_Display_Panel": "0.1.6",
+                "ESP32_IO_Expander": "0.0.3",
+                "JPEGDEC": "1.8.4",
+            },
             "fqbn": {"CTRL_TS": HMI_FQBN, "CTRL": EDGEBOX_FQBN, "W1P": EDGEBOX_FQBN},
             "slot_limits": {"CTRL_TS": HMI_SLOT, "CTRL": CTRL_SLOT, "W1P": CTRL_SLOT},
             "applications": {

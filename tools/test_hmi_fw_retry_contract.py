@@ -8,7 +8,7 @@ expected offset/result behavior for lost ACK/FW_RESULT cases.
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = "26.08.31.06"
+VER = "26.08.31.09"
 CTRL = (ROOT/f"HV_P2P_CTRL_EDGEBOX_v{VER}"/f"HV_P2P_CTRL_EDGEBOX_v{VER}.ino").read_text(errors="replace")
 TS = (ROOT/f"HV_P2P_CTRL_TS_v{VER}"/f"HV_P2P_CTRL_TS_v{VER}.ino").read_text(errors="replace")
 

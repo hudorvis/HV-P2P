@@ -67,12 +67,14 @@ Item {
                     width: parent.usable*0.205
                     height: parent.height
                     Column {
-                        anchors.fill: parent; anchors.margins: root.f(17); spacing: root.f(8)
+                        anchors.fill: parent; anchors.margins: root.f(17); spacing: root.f(5)
                         Text { text:"⌘  CTRL"; color:root.cyan; font.pixelSize:root.f(15); font.weight:Font.Medium }
-                        Row { width:parent.width; height:root.f(31); Text{width:root.f(145);anchors.verticalCenter:parent.verticalCenter;text:"CTRL IP";color:root.fg;font.pixelSize:root.f(12)} HVField{width:parent.width-root.f(145);height:parent.height;bindModel:true;modelText:backend.setupDraft.ctrl_ip;horizontalAlignment:TextInput.AlignHCenter;onCommit:function(v){backend.setSetupNetwork("CTRL",v)}} }
-                        Row { width:parent.width; height:root.f(25); Text{width:root.f(145);anchors.verticalCenter:parent.verticalCenter;text:"CTRL-TS Link";color:root.fg;font.pixelSize:root.f(12)} StatusDot{width:root.f(11);height:root.f(11);radius:root.f(6);anchors.verticalCenter:parent.verticalCenter;active:backend.ctrlTsConnected} Text{anchors.verticalCenter:parent.verticalCenter;leftPadding:root.f(8);text:backend.ctrlTsConnected?"Connected":"Disconnected";color:root.fg;font.pixelSize:root.f(12)} }
-                        Row { width:parent.width; height:root.f(25); Text{width:root.f(145);anchors.verticalCenter:parent.verticalCenter;text:"Joystick AI0";color:root.fg;font.pixelSize:root.f(12)} StatusDot{width:root.f(11);height:root.f(11);radius:root.f(6);anchors.verticalCenter:parent.verticalCenter;active:backend.joystickInputConnected} Text{anchors.verticalCenter:parent.verticalCenter;leftPadding:root.f(8);text:backend.joystickInputConnected?"Ready":"Input Fault";color:root.fg;font.pixelSize:root.f(12)} }
-                        Row { width:parent.width; height:root.f(31); Text{width:root.f(145);anchors.verticalCenter:parent.verticalCenter;text:"Direction";color:root.fg;font.pixelSize:root.f(12)} HVCombo{width:parent.width-root.f(145);height:parent.height;model:["Normal","Inverted"];currentIndex:backend.setupDraft.reverse_joystick?1:0;onActivated:function(){backend.setSetupDirection("CTRL",currentIndex===1)}} }
+                        Row { width:parent.width; height:root.f(31); Text{width:root.f(108);anchors.verticalCenter:parent.verticalCenter;text:"CTRL IP";color:root.fg;font.pixelSize:root.f(12)} HVField{width:parent.width-root.f(108);height:parent.height;bindModel:true;modelText:backend.setupDraft.ctrl_ip;horizontalAlignment:TextInput.AlignHCenter;onCommit:function(v){backend.setSetupNetwork("CTRL",v)}} }
+                        Row { width:parent.width; height:root.f(25); Text{width:root.f(108);anchors.verticalCenter:parent.verticalCenter;text:"Link";color:root.fg;font.pixelSize:root.f(12)} StatusDot{width:root.f(11);height:root.f(11);radius:root.f(6);anchors.verticalCenter:parent.verticalCenter;active:backend.ctrlConnected} Text{anchors.verticalCenter:parent.verticalCenter;leftPadding:root.f(8);text:backend.ctrlConnected?"Active":"Disconnected";color:root.fg;font.pixelSize:root.f(12)} }
+                        Row { width:parent.width; height:root.f(25); Text{width:root.f(108);anchors.verticalCenter:parent.verticalCenter;text:"RS485";color:root.fg;font.pixelSize:root.f(12)} StatusDot{width:root.f(11);height:root.f(11);radius:root.f(6);anchors.verticalCenter:parent.verticalCenter;active:backend.ctrlTsConnected} Text{anchors.verticalCenter:parent.verticalCenter;leftPadding:root.f(8);text:backend.ctrlTsConnected?"Active":"Disconnected";color:root.fg;font.pixelSize:root.f(12)} }
+                        Row { width:parent.width; height:root.f(25); Text{width:root.f(108);anchors.verticalCenter:parent.verticalCenter;text:"E-Stop";color:root.fg;font.pixelSize:root.f(12)} StatusDot{width:root.f(11);height:root.f(11);radius:root.f(6);anchors.verticalCenter:parent.verticalCenter;active:backend.ctrlConnected&&!backend.ctrlEStopActive} Text{anchors.verticalCenter:parent.verticalCenter;leftPadding:root.f(8);text:!backend.ctrlConnected?"Input Fault":backend.ctrlEStopActive?"E-Stop":"Ready";color:root.fg;font.pixelSize:root.f(12)} }
+                        Row { width:parent.width; height:root.f(25); Text{width:root.f(108);anchors.verticalCenter:parent.verticalCenter;text:"Firmware";color:root.fg;font.pixelSize:root.f(12)} HVReadout{width:parent.width-root.f(108);height:parent.height;text:backend.ctrlFirmwareVersion} }
+                        Row { width:parent.width; height:root.f(31); Text{width:root.f(108);anchors.verticalCenter:parent.verticalCenter;text:"Direction";color:root.fg;font.pixelSize:root.f(12)} HVCombo{width:parent.width-root.f(108);height:parent.height;model:["Normal","Inverted"];currentIndex:backend.setupDraft.reverse_joystick?1:0;onActivated:function(){backend.setSetupDirection("CTRL",currentIndex===1)}} }
                         Rectangle { width:parent.width; height:1; color:root.line }
                         Text { text:"JOYSTICK CALIBRATION"; color:root.cyan; font.pixelSize:root.f(12) }
                         Item {
@@ -98,15 +100,17 @@ Item {
                     width: parent.usable*0.175
                     height: parent.height
                     Column {
-                        anchors.fill: parent; anchors.margins: root.f(17); spacing: root.f(9)
+                        anchors.fill: parent; anchors.margins: root.f(17); spacing: root.f(5)
                         Text { text:"♨  W1P"; color:root.cyan; font.pixelSize:root.f(15); font.weight:Font.Medium }
                         Row { width:parent.width; height:root.f(31); Text{width:root.f(108);anchors.verticalCenter:parent.verticalCenter;text:"W1P IP";color:root.fg;font.pixelSize:root.f(12)} HVField{width:parent.width-root.f(108);height:parent.height;bindModel:true;modelText:backend.setupDraft.w1p_ip;horizontalAlignment:TextInput.AlignHCenter;onCommit:function(v){backend.setSetupNetwork("W1P",v)}} }
-                        Row { width:parent.width; height:root.f(25); Text{width:root.f(108);anchors.verticalCenter:parent.verticalCenter;text:"W1P Link";color:root.fg;font.pixelSize:root.f(12)} StatusDot{width:root.f(11);height:root.f(11);radius:root.f(6);anchors.verticalCenter:parent.verticalCenter;active:backend.w1pConnected} Text{anchors.verticalCenter:parent.verticalCenter;leftPadding:root.f(8);text:backend.w1pConnected?"Connected":"Disconnected";color:root.fg;font.pixelSize:root.f(12)} }
-                        Row { width:parent.width; height:root.f(25); Text{width:root.f(108);anchors.verticalCenter:parent.verticalCenter;text:"EL7 RS485";color:root.fg;font.pixelSize:root.f(12)} StatusDot{width:root.f(11);height:root.f(11);radius:root.f(6);anchors.verticalCenter:parent.verticalCenter;active:backend.rs485Connected} Text{anchors.verticalCenter:parent.verticalCenter;leftPadding:root.f(8);text:backend.rs485Connected?"Connected":"Disconnected";color:root.fg;font.pixelSize:root.f(12)} }
+                        Row { width:parent.width; height:root.f(25); Text{width:root.f(108);anchors.verticalCenter:parent.verticalCenter;text:"Link";color:root.fg;font.pixelSize:root.f(12)} StatusDot{width:root.f(11);height:root.f(11);radius:root.f(6);anchors.verticalCenter:parent.verticalCenter;active:backend.w1pConnected} Text{anchors.verticalCenter:parent.verticalCenter;leftPadding:root.f(8);text:backend.w1pConnected?"Active":"Disconnected";color:root.fg;font.pixelSize:root.f(12)} }
+                        Row { width:parent.width; height:root.f(25); Text{width:root.f(108);anchors.verticalCenter:parent.verticalCenter;text:"RS485";color:root.fg;font.pixelSize:root.f(12)} StatusDot{width:root.f(11);height:root.f(11);radius:root.f(6);anchors.verticalCenter:parent.verticalCenter;active:backend.rs485Connected} Text{anchors.verticalCenter:parent.verticalCenter;leftPadding:root.f(8);text:backend.rs485Connected?"Active":"Disconnected";color:root.fg;font.pixelSize:root.f(12)} }
+                        Row { width:parent.width; height:root.f(25); Text{width:root.f(108);anchors.verticalCenter:parent.verticalCenter;text:"E-Stop";color:root.fg;font.pixelSize:root.f(12)} StatusDot{width:root.f(11);height:root.f(11);radius:root.f(6);anchors.verticalCenter:parent.verticalCenter;active:backend.w1pConnected&&!backend.w1pEStopActive} Text{anchors.verticalCenter:parent.verticalCenter;leftPadding:root.f(8);text:!backend.w1pConnected?"Input Fault":backend.w1pEStopActive?"E-Stop":"Ready";color:root.fg;font.pixelSize:root.f(12)} }
+                        Row { width:parent.width; height:root.f(25); Text{width:root.f(108);anchors.verticalCenter:parent.verticalCenter;text:"Firmware";color:root.fg;font.pixelSize:root.f(12)} HVReadout{width:parent.width-root.f(108);height:parent.height;text:backend.w1pFirmwareVersion} }
                         Row { width:parent.width; height:root.f(31); Text{width:root.f(108);anchors.verticalCenter:parent.verticalCenter;text:"Direction";color:root.fg;font.pixelSize:root.f(12)} HVCombo{width:parent.width-root.f(108);height:parent.height;model:["Normal","Inverted"];currentIndex:backend.setupDraft.reverse_motor?1:0;onActivated:function(){backend.setSetupDirection("W1P",currentIndex===1)}} }
                         Rectangle { width:parent.width; height:1; color:root.line }
                         Row { width:parent.width; height:root.f(31); Text{width:root.f(108);anchors.verticalCenter:parent.verticalCenter;text:"CMD Units Per M";color:root.fg;font.pixelSize:root.f(11)} HVField{width:parent.width-root.f(152);height:parent.height;bindModel:true;modelText:Number(backend.setupDraft.units_per_m).toFixed(2);horizontalAlignment:TextInput.AlignHCenter;onCommit:function(v){var n=parseFloat(v);if(!isNaN(n))backend.setSetupUnitsPerM(n)}} Text{width:root.f(44);anchors.verticalCenter:parent.verticalCenter;text:"u/m";horizontalAlignment:Text.AlignHCenter;color:root.fg;font.pixelSize:root.f(11)} }
-                        Row { width:parent.width; height:root.f(31); Text{width:root.f(108);anchors.verticalCenter:parent.verticalCenter;text:"Position Source";color:root.fg;font.pixelSize:root.f(11)} HVCombo{width:parent.width-root.f(108);height:parent.height;model:["Encoder"];currentIndex:0;onActivated:function(){backend.setSetupPositionSource(currentText)}} }
+                        Row { width:parent.width; height:root.f(31); Text{width:root.f(108);anchors.verticalCenter:parent.verticalCenter;text:"Position Source";color:root.fg;font.pixelSize:root.f(11)} HVCombo{width:parent.width-root.f(108);height:parent.height;model:["Encoder","Virtual"];currentIndex:root.idx(model,backend.setupDraft.position_source);onActivated:function(){backend.setSetupPositionSource(currentText)}} }
                     }
                 }
 
@@ -120,9 +124,9 @@ Item {
                         Row {
                             width:parent.width; height:root.f(250)
                             Item {
-                                width:(parent.width-root.f(18))/2; height:parent.height
+                                width:(parent.width-root.f(1))/2; height:parent.height
                                 Column {
-                                    anchors.fill:parent; spacing:root.f(2)
+                                    anchors.fill:parent; anchors.rightMargin:root.f(15); spacing:root.f(2)
                                     Text { width:parent.width; text:"MODE 1"; horizontalAlignment:Text.AlignHCenter; color:root.cyan; font.pixelSize:root.f(11) }
                                     Row { width:parent.width;height:root.f(31);Text{width:root.f(118);anchors.verticalCenter:parent.verticalCenter;text:"Name";color:root.fg;font.pixelSize:root.f(11)}HVField{width:parent.width-root.f(118);height:parent.height;bindModel:true;modelText:backend.setupDraft.drive_modes[0].name;horizontalAlignment:TextInput.AlignHCenter;onCommit:function(v){backend.renameSetupDriveMode(0,v)}} }
                                     Repeater {
@@ -146,9 +150,9 @@ Item {
                             }
                             Rectangle { width:1;height:parent.height;color:root.line }
                             Item {
-                                width:(parent.width-root.f(18))/2; height:parent.height
+                                width:(parent.width-root.f(1))/2; height:parent.height
                                 Column {
-                                    anchors.fill:parent; anchors.leftMargin:root.f(17); spacing:root.f(2)
+                                    anchors.fill:parent; anchors.leftMargin:root.f(15); spacing:root.f(2)
                                     Text { width:parent.width; text:"MODE 2"; horizontalAlignment:Text.AlignHCenter; color:root.cyan; font.pixelSize:root.f(11) }
                                     Row { width:parent.width;height:root.f(31);Text{width:root.f(118);anchors.verticalCenter:parent.verticalCenter;text:"Name";color:root.fg;font.pixelSize:root.f(11)}HVField{width:parent.width-root.f(118);height:parent.height;bindModel:true;modelText:backend.setupDraft.drive_modes[1].name;horizontalAlignment:TextInput.AlignHCenter;onCommit:function(v){backend.renameSetupDriveMode(1,v)}} }
                                     Repeater {
@@ -219,20 +223,17 @@ Item {
                     }
                 }
 
-                // Preserve the approved three-panel Setup grid, but use the old
-                // W1P-TS footprint for the current thin-HMI/firmware architecture.
+                // CTRL-TS status/firmware identity panel.
                 Panel {
                     width:parent.usable*0.175;height:parent.height
                     Column {
-                        anchors.fill:parent;anchors.margins:root.f(17);spacing:root.f(9)
-                        Text{text:"▣  CTRL-TS / FIRMWARE";color:root.cyan;font.pixelSize:root.f(15);font.weight:Font.Medium}
-                        Row{width:parent.width;height:root.f(25);Text{width:root.f(80);anchors.verticalCenter:parent.verticalCenter;text:"HMI";color:root.fg;font.pixelSize:root.f(11)}Text{anchors.verticalCenter:parent.verticalCenter;text:"Waveshare 7-inch";color:root.fg;font.pixelSize:root.f(11)}}
-                        Row{width:parent.width;height:root.f(25);Text{width:root.f(80);anchors.verticalCenter:parent.verticalCenter;text:"Link";color:root.fg;font.pixelSize:root.f(11)}Text{anchors.verticalCenter:parent.verticalCenter;text:"RS485 115200";color:root.fg;font.pixelSize:root.f(11)}}
+                        anchors.fill:parent;anchors.margins:root.f(17);spacing:root.f(10)
+                        Text{text:"▣  CTRL-TS";color:root.cyan;font.pixelSize:root.f(15);font.weight:Font.Medium}
+                        Row{width:parent.width;height:root.f(25);Text{width:root.f(94);anchors.verticalCenter:parent.verticalCenter;text:"CTRL-TS Link";color:root.fg;font.pixelSize:root.f(11)}StatusDot{width:root.f(11);height:root.f(11);radius:root.f(6);anchors.verticalCenter:parent.verticalCenter;active:backend.ctrlTsConnected}Text{anchors.verticalCenter:parent.verticalCenter;leftPadding:root.f(7);text:backend.ctrlTsConnected?"Active":"Disconnected";color:root.fg;font.pixelSize:root.f(11)}}
                         Rectangle{width:parent.width;height:1;color:root.line}
                         Row{width:parent.width;height:root.f(25);Text{width:root.f(80);anchors.verticalCenter:parent.verticalCenter;text:"Detected";color:root.fg;font.pixelSize:root.f(11)}Text{anchors.verticalCenter:parent.verticalCenter;text:backend.ctrlTsVersion;color:backend.ctrlTsCompatible?root.green:root.fg;font.pixelSize:root.f(11)}}
                         Row{width:parent.width;height:root.f(25);Text{width:root.f(80);anchors.verticalCenter:parent.verticalCenter;text:"Required";color:root.fg;font.pixelSize:root.f(11)}Text{anchors.verticalCenter:parent.verticalCenter;text:backend.ctrlTsRequiredVersion;color:root.fg;font.pixelSize:root.f(11)}}
                         Row{width:parent.width;height:root.f(25);Text{width:root.f(80);anchors.verticalCenter:parent.verticalCenter;text:"Update";color:root.fg;font.pixelSize:root.f(11)}StatusDot{width:root.f(11);height:root.f(11);radius:root.f(6);anchors.verticalCenter:parent.verticalCenter;active:backend.ctrlTsCompatible}Text{anchors.verticalCenter:parent.verticalCenter;leftPadding:root.f(7);text:backend.ctrlTsFirmwareState;color:root.fg;font.pixelSize:root.f(11)}}
-                        Row{width:parent.width;height:root.f(25);Text{width:root.f(80);anchors.verticalCenter:parent.verticalCenter;text:"CTRL Image";color:root.fg;font.pixelSize:root.f(11)}Text{anchors.verticalCenter:parent.verticalCenter;text:backend.ctrlTsImageAvailable?"Staged":"Not staged";color:backend.ctrlTsImageAvailable?root.green:root.fg;font.pixelSize:root.f(11)}}
                     }
                 }
 

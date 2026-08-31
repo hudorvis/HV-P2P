@@ -26,12 +26,15 @@ ApplicationWindow {
     property color red: "#ef5757"
     property int page: 0
     property int shortcutTab: 0
+    property string pendingShortcutAction: ""
+    property int shortcutConfirmRemaining: 0
     property real s: Math.min(width/1672, height/941)
 
     function f(v) { return Math.max(1, v*s) }
     function changePage(i) {
         // Force any active HVField to commit BEFORE its page is hidden.
         editCommitSink.forceActiveFocus()
+        cancelShortcutConfirm()
         if (i === 1 && page !== 1)
             backend.beginSetupEdit()
         if (i === 2 && page !== 2)
@@ -42,7 +45,40 @@ ApplicationWindow {
         // This is deliberately ordered: focus loss commits the old tab's field
         // before shortcutTab changes, preventing cross-tab preset writes.
         editCommitSink.forceActiveFocus()
+        cancelShortcutConfirm()
         shortcutTab = i
+    }
+    function cancelShortcutConfirm() {
+        pendingShortcutAction = ""
+        shortcutConfirmRemaining = 0
+        shortcutConfirmTimer.stop()
+    }
+    function shortcutActionText(key, normalText) {
+        return pendingShortcutAction === key ? "Confirm? " + shortcutConfirmRemaining + "s" : normalText
+    }
+    function executeShortcutAction(key) {
+        var parts = String(key).split(":")
+        if (parts.length < 3) return
+        if (parts[0] === "preset") {
+            var pi = parseInt(parts[2])
+            if (parts[1] === "save") backend.savePreset(pi)
+            else if (parts[1] === "recall") backend.recallPreset(pi)
+        } else if (parts[0] === "limit") {
+            var which = parts[2]
+            if (parts[1] === "save") backend.saveLimit(which)
+            else if (parts[1] === "recall") backend.recallLimit(which)
+            else if (parts[1] === "slip") backend.slipLimit(which)
+        }
+    }
+    function requestShortcutAction(key) {
+        if (pendingShortcutAction === key) {
+            cancelShortcutConfirm()
+            executeShortcutAction(key)
+            return
+        }
+        pendingShortcutAction = key
+        shortcutConfirmRemaining = 5
+        shortcutConfirmTimer.restart()
     }
     function indexOfValue(list, value) {
         for (var i=0; i<list.length; ++i) if (String(list[i]) === String(value)) return i
@@ -50,6 +86,15 @@ ApplicationWindow {
     }
 
     Item { id: editCommitSink; width: 0; height: 0; x: -10; y: -10 }
+    Timer {
+        id: shortcutConfirmTimer
+        interval: 1000
+        repeat: true
+        onTriggered: {
+            shortcutConfirmRemaining -= 1
+            if (shortcutConfirmRemaining <= 0) cancelShortcutConfirm()
+        }
+    }
 
     Column {
         anchors.fill: parent
@@ -67,9 +112,8 @@ ApplicationWindow {
                     Rectangle {
                         x:f(4); y:f(1); width:f(78); height:f(54); radius:f(10)
                         color:"transparent"; border.color:green; border.width:1
-                        Text { anchors.centerIn:parent; text:"P2P°\nSRVR"; color:fg; font.pixelSize:f(19); horizontalAlignment:Text.AlignHCenter; lineHeight:.78 }
+                        Text { anchors.centerIn:parent; text:"HV P2P\nSRVR"; color:fg; font.pixelSize:f(19); horizontalAlignment:Text.AlignHCenter; lineHeight:.78 }
                     }
-                    Text { x:f(101); anchors.verticalCenter:parent.verticalCenter; text:"HV P2P  |  SRVR"; color:fg; font.pixelSize:f(27); font.weight:Font.Medium }
                 }
                 ConnectionCard { width:(parent.width-f(360)-f(170)-f(40))/3; height:parent.height; title:"CTRL"; active:backend.ctrlConnected; line1:backend.ctrlConnected?"Connected":"Disconnected"; line2:backend.ctrlIp }
                 ConnectionCard { width:(parent.width-f(360)-f(170)-f(40))/3; height:parent.height; title:"W1P"; active:backend.w1pConnected; line1:backend.w1pConnected?"Connected":"Disconnected"; line2:backend.w1pIp }
@@ -158,7 +202,20 @@ ApplicationWindow {
                                     Text { width:parent.width; text:"CURRENT POSITION"; color:muted; font.pixelSize:f(12); horizontalAlignment:Text.AlignHCenter }
                                     Row { anchors.horizontalCenter:parent.horizontalCenter; spacing:f(8); Text{text:Number(backend.position).toFixed(2);color:fg;font.pixelSize:f(31)} Text{text:"m";color:muted;font.pixelSize:f(14);anchors.baseline:parent.children[0].baseline} }
                                     Rectangle { width:parent.width; height:1; color:"#32383c" }
-                                    Row { width:parent.width; height:f(82); Item{width:parent.width/2;height:parent.height;Text{anchors.top:parent.top;anchors.horizontalCenter:parent.horizontalCenter;text:"TO NEAR";color:muted;font.pixelSize:f(12)}Text{anchors.centerIn:parent;text:Number(backend.toNear).toFixed(2);color:lime;font.pixelSize:f(20)}Text{anchors.right:parent.right;anchors.verticalCenter:parent.verticalCenter;text:"m";color:muted;font.pixelSize:f(13)}} Rectangle{width:1;height:parent.height;color:"#32383c"} Item{width:parent.width/2-1;height:parent.height;Text{anchors.top:parent.top;anchors.horizontalCenter:parent.horizontalCenter;text:"TO FAR";color:muted;font.pixelSize:f(12)}Text{anchors.centerIn:parent;text:Number(backend.toFar).toFixed(2);color:lime;font.pixelSize:f(20)}Text{anchors.right:parent.right;anchors.verticalCenter:parent.verticalCenter;text:"m";color:muted;font.pixelSize:f(13)}} }
+                                    Row {
+                                        width:parent.width; height:f(82)
+                                        Item {
+                                            width:parent.width/2; height:parent.height
+                                            Text { anchors.top:parent.top; anchors.horizontalCenter:parent.horizontalCenter; text:"TO NEAR"; color:muted; font.pixelSize:f(12) }
+                                            Row { anchors.centerIn:parent; spacing:f(7); Text{text:Number(backend.toNear).toFixed(2);color:lime;font.pixelSize:f(20)} Text{text:"m";color:muted;font.pixelSize:f(13);anchors.baseline:parent.children[0].baseline} }
+                                        }
+                                        Rectangle { width:1; height:parent.height; color:"#32383c" }
+                                        Item {
+                                            width:parent.width/2-1; height:parent.height
+                                            Text { anchors.top:parent.top; anchors.horizontalCenter:parent.horizontalCenter; text:"TO FAR"; color:muted; font.pixelSize:f(12) }
+                                            Row { anchors.centerIn:parent; spacing:f(7); Text{text:Number(backend.toFar).toFixed(2);color:lime;font.pixelSize:f(20)} Text{text:"m";color:muted;font.pixelSize:f(13);anchors.baseline:parent.children[0].baseline} }
+                                        }
+                                    }
                                 }
                             }
 
@@ -190,9 +247,9 @@ ApplicationWindow {
                                                 Text { width:f(22); anchors.verticalCenter:parent.verticalCenter; text:"P"+(parent.pi+1); color:fg; font.pixelSize:f(13) }
                                                 HVField { objectName:"presetName"+(parent.pi+1); width:parent.width-f(22+5+73+5+55+5+58+5+26); height:parent.height; bindModel:true; modelText:parent.p?String(parent.p.name):""; onCommit:function(v){backend.setPresetName(parent.pi,v)} }
                                                 HVField { objectName:"presetPosition"+(parent.pi+1); width:f(73); height:parent.height; bindModel:true; modelText:parent.p&&parent.p.set?Number(parent.p.position).toFixed(2):"0.00"; horizontalAlignment:TextInput.AlignHCenter; onCommit:function(v){var n=parseFloat(v);if(!isNaN(n))backend.setPresetPosition(parent.pi,n)} }
-                                                HVButton { width:f(55); height:parent.height; text:"Save"; onClicked:backend.savePreset(parent.pi) }
-                                                HVButton { width:f(58); height:parent.height; text:"Recall"; enabled:parent.p?parent.p.set:false; onClicked:backend.recallPreset(parent.pi) }
-                                                HVButton { width:f(26); height:parent.height; text:parent.p&&parent.p.visible?"◉":"○"; onClicked:backend.togglePresetVisible(parent.pi) }
+                                                HVButton { width:f(55); height:parent.height; property string actionKey:"preset:save:"+parent.pi; text:window.shortcutActionText(actionKey,"Save"); selected:window.pendingShortcutAction===actionKey; onClicked:window.requestShortcutAction(actionKey) }
+                                                HVButton { width:f(58); height:parent.height; property string actionKey:"preset:recall:"+parent.pi; text:window.shortcutActionText(actionKey,"Recall"); selected:window.pendingShortcutAction===actionKey; enabled:parent.p?parent.p.set:false; onClicked:window.requestShortcutAction(actionKey) }
+                                                HVButton { width:f(26); height:parent.height; text:parent.p&&parent.p.visible?"◉":"○"; onClicked:{window.cancelShortcutConfirm();backend.togglePresetVisible(parent.pi)} }
                                             }
                                         }
                                     }
@@ -207,39 +264,43 @@ ApplicationWindow {
                                                 Text { width:f(22); anchors.verticalCenter:parent.verticalCenter; text:"P"+(parent.pi+1); color:fg; font.pixelSize:f(13) }
                                                 HVField { objectName:"presetName"+(parent.pi+1); width:parent.width-f(22+5+73+5+55+5+58+5+26); height:parent.height; bindModel:true; modelText:parent.p?String(parent.p.name):""; onCommit:function(v){backend.setPresetName(parent.pi,v)} }
                                                 HVField { objectName:"presetPosition"+(parent.pi+1); width:f(73); height:parent.height; bindModel:true; modelText:parent.p&&parent.p.set?Number(parent.p.position).toFixed(2):"0.00"; horizontalAlignment:TextInput.AlignHCenter; onCommit:function(v){var n=parseFloat(v);if(!isNaN(n))backend.setPresetPosition(parent.pi,n)} }
-                                                HVButton { width:f(55); height:parent.height; text:"Save"; onClicked:backend.savePreset(parent.pi) }
-                                                HVButton { width:f(58); height:parent.height; text:"Recall"; enabled:parent.p?parent.p.set:false; onClicked:backend.recallPreset(parent.pi) }
-                                                HVButton { width:f(26); height:parent.height; text:parent.p&&parent.p.visible?"◉":"○"; onClicked:backend.togglePresetVisible(parent.pi) }
+                                                HVButton { width:f(55); height:parent.height; property string actionKey:"preset:save:"+parent.pi; text:window.shortcutActionText(actionKey,"Save"); selected:window.pendingShortcutAction===actionKey; onClicked:window.requestShortcutAction(actionKey) }
+                                                HVButton { width:f(58); height:parent.height; property string actionKey:"preset:recall:"+parent.pi; text:window.shortcutActionText(actionKey,"Recall"); selected:window.pendingShortcutAction===actionKey; enabled:parent.p?parent.p.set:false; onClicked:window.requestShortcutAction(actionKey) }
+                                                HVButton { width:f(26); height:parent.height; text:parent.p&&parent.p.visible?"◉":"○"; onClicked:{window.cancelShortcutConfirm();backend.togglePresetVisible(parent.pi)} }
                                             }
                                         }
                                     }
 
                                     Column {
                                         visible:window.shortcutTab===2; width:parent.width; spacing:f(2)
-                                        Row { width:parent.width;height:f(31);spacing:f(5); Text{width:f(95);anchors.verticalCenter:parent.verticalCenter;text:"NEAR LIMIT";color:fg;font.pixelSize:f(13)} HVButton{width:(parent.width-f(110))/3;height:parent.height;text:"Save";onClicked:backend.saveLimit("Near")} HVButton{width:(parent.width-f(110))/3;height:parent.height;text:"Recall";onClicked:backend.recallLimit("Near")} HVButton{width:(parent.width-f(110))/3;height:parent.height;text:"Slip";onClicked:backend.slipLimit("Near")} }
+                                        Row { width:parent.width;height:f(31);spacing:f(5); Text{width:f(95);anchors.verticalCenter:parent.verticalCenter;text:"NEAR LIMIT";color:fg;font.pixelSize:f(13)} HVButton{width:(parent.width-f(110))/3;height:parent.height;property string actionKey:"limit:save:Near";text:window.shortcutActionText(actionKey,"Save");selected:window.pendingShortcutAction===actionKey;onClicked:window.requestShortcutAction(actionKey)} HVButton{width:(parent.width-f(110))/3;height:parent.height;property string actionKey:"limit:recall:Near";text:window.shortcutActionText(actionKey,"Recall");selected:window.pendingShortcutAction===actionKey;onClicked:window.requestShortcutAction(actionKey)} HVButton{width:(parent.width-f(110))/3;height:parent.height;property string actionKey:"limit:slip:Near";text:window.shortcutActionText(actionKey,"Slip");selected:window.pendingShortcutAction===actionKey;onClicked:window.requestShortcutAction(actionKey)} }
                                         Row { width:parent.width;height:f(31);spacing:f(5); Text{width:f(95);anchors.verticalCenter:parent.verticalCenter;text:"Ramping";color:fg;font.pixelSize:f(13)} HVCombo{id:nearMode;width:parent.width-f(95+5+94);height:parent.height;model:["Distance","Percentage"];currentIndex:backend.nearRampMode==="Percentage"?1:0;onActivated:function(){backend.changeRampingMode("Near",currentText)}} HVField{width:f(89);height:parent.height;bindModel:true;modelText:Number(backend.nearRampValue).toFixed(2)+(backend.nearRampMode==="Percentage"?" %":" m");horizontalAlignment:TextInput.AlignHCenter;onCommit:function(v){var n=parseFloat(v);if(!isNaN(n))backend.setRamping("Near",nearMode.currentText,n)}} }
                                         Rectangle { width:parent.width; height:1; color:"#343a3e" }
-                                        Row { width:parent.width;height:f(31);spacing:f(5); Text{width:f(95);anchors.verticalCenter:parent.verticalCenter;text:"FAR LIMIT";color:fg;font.pixelSize:f(13)} HVButton{width:(parent.width-f(110))/3;height:parent.height;text:"Save";onClicked:backend.saveLimit("Far")} HVButton{width:(parent.width-f(110))/3;height:parent.height;text:"Recall";onClicked:backend.recallLimit("Far")} HVButton{width:(parent.width-f(110))/3;height:parent.height;text:"Slip";onClicked:backend.slipLimit("Far")} }
+                                        Row { width:parent.width;height:f(31);spacing:f(5); Text{width:f(95);anchors.verticalCenter:parent.verticalCenter;text:"FAR LIMIT";color:fg;font.pixelSize:f(13)} HVButton{width:(parent.width-f(110))/3;height:parent.height;property string actionKey:"limit:save:Far";text:window.shortcutActionText(actionKey,"Save");selected:window.pendingShortcutAction===actionKey;onClicked:window.requestShortcutAction(actionKey)} HVButton{width:(parent.width-f(110))/3;height:parent.height;property string actionKey:"limit:recall:Far";text:window.shortcutActionText(actionKey,"Recall");selected:window.pendingShortcutAction===actionKey;onClicked:window.requestShortcutAction(actionKey)} HVButton{width:(parent.width-f(110))/3;height:parent.height;property string actionKey:"limit:slip:Far";text:window.shortcutActionText(actionKey,"Slip");selected:window.pendingShortcutAction===actionKey;onClicked:window.requestShortcutAction(actionKey)} }
                                         Row { width:parent.width;height:f(31);spacing:f(5); Text{width:f(95);anchors.verticalCenter:parent.verticalCenter;text:"Ramping";color:fg;font.pixelSize:f(13)} HVCombo{id:farMode;width:parent.width-f(95+5+94);height:parent.height;model:["Distance","Percentage"];currentIndex:backend.farRampMode==="Percentage"?1:0;onActivated:function(){backend.changeRampingMode("Far",currentText)}} HVField{width:f(89);height:parent.height;bindModel:true;modelText:Number(backend.farRampValue).toFixed(2)+(backend.farRampMode==="Percentage"?" %":" m");horizontalAlignment:TextInput.AlignHCenter;onCommit:function(v){var n=parseFloat(v);if(!isNaN(n))backend.setRamping("Far",farMode.currentText,n)}} }
                                         Rectangle { width:parent.width; height:1; color:"#343a3e" }
-                                        Row { width:parent.width;height:f(31);spacing:f(5); Text{width:f(95);anchors.verticalCenter:parent.verticalCenter;text:"REF POINT";color:fg;font.pixelSize:f(13)} HVButton{width:(parent.width-f(110))/3;height:parent.height;text:"Save";onClicked:backend.saveLimit("Ref")} HVButton{width:(parent.width-f(110))/3;height:parent.height;text:"Recall";onClicked:backend.recallLimit("Ref")} HVButton{width:(parent.width-f(110))/3;height:parent.height;text:"Slip";onClicked:backend.slipLimit("Ref")} }
+                                        Row { width:parent.width;height:f(31);spacing:f(5); Text{width:f(95);anchors.verticalCenter:parent.verticalCenter;text:"REF POINT";color:fg;font.pixelSize:f(13)} HVButton{width:(parent.width-f(110))/3;height:parent.height;property string actionKey:"limit:save:Ref";text:window.shortcutActionText(actionKey,"Save");selected:window.pendingShortcutAction===actionKey;onClicked:window.requestShortcutAction(actionKey)} HVButton{width:(parent.width-f(110))/3;height:parent.height;property string actionKey:"limit:recall:Ref";text:window.shortcutActionText(actionKey,"Recall");selected:window.pendingShortcutAction===actionKey;onClicked:window.requestShortcutAction(actionKey)} HVButton{width:(parent.width-f(110))/3;height:parent.height;property string actionKey:"limit:slip:Ref";text:window.shortcutActionText(actionKey,"Slip");selected:window.pendingShortcutAction===actionKey;onClicked:window.requestShortcutAction(actionKey)} }
                                     }
 
                                     Column {
                                         visible:window.shortcutTab===3; width:parent.width; spacing:f(5)
-                                        Row { width:parent.width;height:f(32);Text{width:f(150);anchors.verticalCenter:parent.verticalCenter;text:"Acceleration Mode";color:fg;font.pixelSize:f(13)}HVButton{width:f(80);height:parent.height;text:"Power";selected:backend.accelerationMode==="Power";onClicked:backend.setAccelerationMode("Power")}HVButton{width:f(80);height:parent.height;text:"Speed";selected:backend.accelerationMode==="Speed";onClicked:backend.setAccelerationMode("Speed")} }
-                                        Row { width:parent.width;height:f(32);Text{width:f(150);anchors.verticalCenter:parent.verticalCenter;text:"Battery Change Mode";color:fg;font.pixelSize:f(13)}HVButton{width:f(80);height:parent.height;text:"Off";selected:!backend.batteryChange;onClicked:backend.setBatteryChange(false)}HVButton{width:f(80);height:parent.height;text:"On";selected:backend.batteryChange;onClicked:backend.setBatteryChange(true)} }
+                                        Row { width:parent.width;height:f(32);Text{width:f(150);anchors.verticalCenter:parent.verticalCenter;text:"Acceleration Mode";color:fg;font.pixelSize:f(13)} Item{width:parent.width-f(150);height:parent.height;Row{anchors.fill:parent;HVButton{width:f(80);height:parent.height;text:"Power";selected:backend.accelerationMode==="Power";onClicked:{window.cancelShortcutConfirm();backend.setAccelerationMode("Power")}}HVButton{width:f(80);height:parent.height;text:"Speed";selected:backend.accelerationMode==="Speed";onClicked:{window.cancelShortcutConfirm();backend.setAccelerationMode("Speed")}}}} }
+                                        Row { width:parent.width;height:f(32);Text{width:f(150);anchors.verticalCenter:parent.verticalCenter;text:"Battery Change Mode";color:fg;font.pixelSize:f(13)} Item{width:parent.width-f(150);height:parent.height;Row{anchors.fill:parent;HVButton{width:f(80);height:parent.height;text:"Off";selected:!backend.batteryChange;onClicked:{window.cancelShortcutConfirm();backend.setBatteryChange(false)}}HVButton{width:f(80);height:parent.height;text:"On";selected:backend.batteryChange;onClicked:{window.cancelShortcutConfirm();backend.setBatteryChange(true)}}}} }
                                         Row {
-                                            width: parent.width
-                                            height: f(32)
-                                            spacing: f(4)
+                                            width: parent.width; height: f(32)
                                             Text { width:f(150); anchors.verticalCenter:parent.verticalCenter; text:"Drive Mode"; color:fg; font.pixelSize:f(13) }
-                                            HVButton { width:f(54); height:parent.height; text:"Mode 1"; font.pixelSize:f(11); selected:backend.activeDriveMode===0; onClicked:backend.setDriveMode(0) }
-                                            HVField { width:(parent.width-f(150+54+54+16))/2; height:parent.height; bindModel:true; modelText:backend.driveMode1Name; font.pixelSize:f(11); leftPadding:f(4); rightPadding:f(4); onCommit:function(v){backend.renameDriveMode(0,v)} }
-                                            HVButton { width:f(54); height:parent.height; text:"Mode 2"; font.pixelSize:f(11); selected:backend.activeDriveMode===1; onClicked:backend.setDriveMode(1) }
-                                            HVField { width:(parent.width-f(150+54+54+16))/2; height:parent.height; bindModel:true; modelText:backend.driveMode2Name; font.pixelSize:f(11); leftPadding:f(4); rightPadding:f(4); onCommit:function(v){backend.renameDriveMode(1,v)} }
+                                            Item {
+                                                width:parent.width-f(150); height:parent.height
+                                                Row {
+                                                    anchors.fill:parent; spacing:f(4)
+                                                    HVButton { width:f(70); height:parent.height; text:"Mode 1"; font.pixelSize:f(11); selected:backend.activeDriveMode===0; onClicked:{window.cancelShortcutConfirm();backend.setDriveMode(0)} }
+                                                    HVField { width:(parent.width-f(70+70+12))/2; height:parent.height; bindModel:true; modelText:backend.driveMode1Name; font.pixelSize:f(11); leftPadding:f(4); rightPadding:f(4); onCommit:function(v){backend.renameDriveMode(0,v)} }
+                                                    HVButton { width:f(70); height:parent.height; text:"Mode 2"; font.pixelSize:f(11); selected:backend.activeDriveMode===1; onClicked:{window.cancelShortcutConfirm();backend.setDriveMode(1)} }
+                                                    HVField { width:(parent.width-f(70+70+12))/2; height:parent.height; bindModel:true; modelText:backend.driveMode2Name; font.pixelSize:f(11); leftPadding:f(4); rightPadding:f(4); onCommit:function(v){backend.renameDriveMode(1,v)} }
+                                                }
+                                            }
                                         }
-                                        Row { width:parent.width;height:f(32);spacing:f(7);Text{width:f(150);anchors.verticalCenter:parent.verticalCenter;text:"Calibration Mode";color:fg;font.pixelSize:f(13)}HVButton{width:(parent.width-f(157))/2;height:parent.height;text:"Limit Calibration";onClicked:backend.openLimitCalibration()}HVButton{width:(parent.width-f(157))/2;height:parent.height;text:"Winch Calibration";onClicked:backend.openWinchCalibration()} }
+                                        Row { width:parent.width;height:f(32);Text{width:f(150);anchors.verticalCenter:parent.verticalCenter;text:"Calibration Mode";color:fg;font.pixelSize:f(13)}Item{width:parent.width-f(150);height:parent.height;Row{anchors.fill:parent;spacing:f(7);HVButton{width:(parent.width-f(7))/2;height:parent.height;text:"Limit Calibration";onClicked:{window.cancelShortcutConfirm();backend.openLimitCalibration()}}HVButton{width:(parent.width-f(7))/2;height:parent.height;text:"Winch Calibration";onClicked:{window.cancelShortcutConfirm();backend.openWinchCalibration()}}}} }
                                     }
                                 }
                             }

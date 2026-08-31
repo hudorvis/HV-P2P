@@ -15,7 +15,7 @@
 static bool g_ads_inited = false;
 static uint8_t ADS_ADDR = 0x48;
 
-#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.08.31.06"
+#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.08.31.09"
 #define CTRL_HMI_ARCH "EdgeBox ESP-100 + isolated RS485 Waveshare thin HMI"
 
 IPAddress local_IP(172,20,1,101);
@@ -199,7 +199,7 @@ static uint32_t lastHmiLayoutForward = 0;
 #define HMI_LAYOUT_MAX_LEN 2200
 static const char* HMI_LAYOUT_NVS_NS = "hmiui";
 static const char* HMI_LAYOUT_NVS_KEY = "layout";
-static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.08.31.06|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
+static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.08.31.09|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
 
 
 
@@ -212,8 +212,9 @@ static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle
 //
 // Safety model:
 //   - This updater deliberately does NOT overwrite bootloader or partition table.
-//   - File validation is role/filename based on both browser-side and ESP32-side checks.
-//   - Do not rename binaries to bypass the role check.
+//   - Filename checks provide early operator feedback only.
+//   - App firmware is also content-verified for an embedded CTRL role signature before Update.end().
+//   - Renaming a binary cannot make another HV P2P device role pass the app check.
 static WebServer hvWebOta(80);
 
 static const char* HV_UPDATE_NODE_NAME = "HV P2P CTRL";
@@ -222,12 +223,32 @@ static const char* HV_UPDATE_APP_TOKEN = "HV_P2P_CTRL";
 static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_CTRL";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL_TS,W1P,W1P_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_CTRL_v*.ino.bin firmware. CTRL-TS and W1P files are rejected.";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_VERSION=v26.08.31.06";
+static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=CTRL;";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_VERSION=v26.08.31.09";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
 static bool hvUploadFinished = false;
+static bool hvUploadRoleMatched = false;
+static size_t hvUploadRoleMatchLen = 0;
 static String hvUploadError;
+
+static void hvScanUploadRoleSignature(const uint8_t* data, size_t len) {
+  if (hvUploadRoleMatched || !data || len == 0) return;
+  const size_t tokenLen = strlen(HV_UPDATE_ROLE_SIGNATURE);
+  for (size_t i = 0; i < len && !hvUploadRoleMatched; ++i) {
+    const char c = (char)data[i];
+    if (c == HV_UPDATE_ROLE_SIGNATURE[hvUploadRoleMatchLen]) {
+      ++hvUploadRoleMatchLen;
+      if (hvUploadRoleMatchLen == tokenLen) {
+        hvUploadRoleMatched = true;
+        hvUploadRoleMatchLen = 0;
+      }
+    } else {
+      hvUploadRoleMatchLen = (c == HV_UPDATE_ROLE_SIGNATURE[0]) ? 1 : 0;
+    }
+  }
+}
 
 static String hvUpperName(String s) {
   s.replace("-", "_");
@@ -294,7 +315,7 @@ static String hvOtaIndexHtml(const char* nodeName, const char* version, const St
   html += "<p class='warn'>"; html += HV_UPDATE_WARNING; html += "</p>";
   html += "<span class='pill'>App token: "; html += HV_UPDATE_APP_TOKEN; html += "</span><span class='pill'>Filesystem token: "; html += HV_UPDATE_FS_TOKEN; html += "</span>";
   html += "</div>";
-  html += "<div class='card'><h2>Main App Firmware</h2><p class='muted'>Drag and drop the exported Arduino <code>.ino.bin</code> here. This updates the running application only.</p>";
+  html += "<div class='card'><h2>Main App Firmware</h2><p class='muted'>Drag and drop the exported Arduino <code>.ino.bin</code> here. Filename is checked first; the uploaded binary must also contain the embedded CTRL role identity before it can be activated.</p>";
   html += "<div id='appDrop' class='drop'>Drop app firmware here<br><span class='muted'>or click to select</span><input id='appFile' type='file' accept='.bin'></div>";
   html += "<div class='bar'><div id='appFill' class='fill'></div></div><p id='appMsg' class='muted'></p></div>";
   html += "<div class='card'><h2>Web/UI Filesystem Partition</h2><p class='muted'>Optional. Use only if this device build includes a LittleFS/SPIFFS web/UI partition. Filename should include <code>LITTLEFS</code>, <code>SPIFFS</code>, <code>FILESYSTEM</code>, or <code>_FS</code>.</p>";
@@ -333,6 +354,8 @@ static void hvHandleUpload(bool filesystem) {
     hvUploadIsFs = filesystem;
     hvUploadAllowed = false;
     hvUploadFinished = false;
+    hvUploadRoleMatched = filesystem;
+    hvUploadRoleMatchLen = 0;
     hvUploadError = "";
     Serial.printf("[OTA] %s upload start: %s\n", filesystem ? "FS" : "APP", upload.filename.c_str());
     if(!hvAllowedUploadFilename(upload.filename, filesystem, hvUploadError)) {
@@ -348,22 +371,30 @@ static void hvHandleUpload(bool filesystem) {
     hvUploadAllowed = true;
   } else if(upload.status == UPLOAD_FILE_WRITE) {
     if(!hvUploadAllowed) return;
+    if(!filesystem) hvScanUploadRoleSignature(upload.buf, upload.currentSize);
     if(Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
       hvUploadError = "Update.write failed.";
       Update.printError(Serial);
     }
   } else if(upload.status == UPLOAD_FILE_END) {
     if(!hvUploadAllowed) return;
+    if(!filesystem && !hvUploadRoleMatched) {
+      hvUploadError = String("Rejected: firmware contents do not contain expected role signature ") + HV_UPDATE_ROLE_SIGNATURE;
+      Update.abort();
+      hvUploadAllowed = false;
+      Serial.printf("[OTA] Rejected by content identity: %s\n", hvUploadError.c_str());
+      return;
+    }
     if(Update.end(true)) {
       hvUploadFinished = true;
-      Serial.printf("[OTA] %s update success: %u bytes\n", filesystem ? "FS" : "APP", upload.totalSize);
+      Serial.printf("[OTA] %s update success: %u bytes%s\n", filesystem ? "FS" : "APP", upload.totalSize, filesystem ? "" : " (CTRL role verified)");
     } else {
       hvUploadError = "Update.end failed.";
       Update.printError(Serial);
     }
   } else if(upload.status == UPLOAD_FILE_ABORTED) {
     hvUploadError = "Upload aborted.";
-    Update.end();
+    Update.abort();
     Serial.println("[OTA] Aborted");
   }
 }
@@ -452,7 +483,7 @@ static void hvLoadHmiLayoutConfig() {
     int nl = stored.indexOf('\n');
     if(nl >= 0) stored = stored.substring(0, nl);
     stored.trim();
-    // v26.08.31.06 migration: older CTRL NVS layouts were main4/aux1-aux4.
+    // v26.08.31.09 migration: older CTRL NVS layouts were main4/aux1-aux4.
     // Preserve the operator's stored labels/settings but expose the new AUX5 tile.
     if(stored.indexOf("|layout=main4") >= 0) stored.replace("|layout=main4", "|layout=main5");
     if(stored.indexOf("|aux5=") < 0) stored += "|aux5=AUX 5";
@@ -777,6 +808,7 @@ static void sendHmiStatusToSrvr()
   uint32_t age = g_lastHmiRxMs ? (now - g_lastHmiRxMs) : 999999;
   String line = "HMI_STATUS";
   line += "|ctrl_ts=" + String(hmiLinkConnected() ? 1 : 0);
+  line += "|ctrl_version=v26.08.31.09";
   line += "|ads=" + String(g_ads_inited ? 1 : 0);
   line += "|age_ms=" + String((unsigned long)age);
   // Report the identity actually returned by the Waveshare rather than the CTRL
@@ -915,7 +947,7 @@ static void handleUdpRx()
     g_lastSrvrDisplayMs = millis();
     g_latestDisplayPacket = line;
     g_latestDisplayPacket.replace("DSP1|", "HMI1|");
-    // v26.08.31.06: store latest SRVR display packet only. The UART
+    // v26.08.31.09: store latest SRVR display packet only. The UART
     // forward is rate-limited in loop() so CTRL-TS is not flooded and the
     // left-side LVGL elements do not flicker from repeated redraw pressure.
   }
@@ -1246,6 +1278,7 @@ void setup()
   delay(200);
   Serial.println();
   Serial.println(CTRL_VERSION);
+  Serial.printf("[OTA] Build identity: %s\n", HV_UPDATE_BUILD_TOKEN);
   Serial.println(CTRL_HMI_ARCH);
   hvLoadHmiLayoutConfig();
   hvLoadNetworkConfig();
@@ -1322,7 +1355,7 @@ void loop()
     g_latestDisplayPacket = "";
   }
 
-  // v26.08.31.06: do not resend UIL1 layout on a timer.
+  // v26.08.31.09: do not resend UIL1 layout on a timer.
   // Some Waveshare/LVGL builds visibly flicker when the layout header/config
   // is resent periodically. Layout is now sent only at boot, upload/reset,
   // and in response to a CTRL-TS PING/reconnect request.

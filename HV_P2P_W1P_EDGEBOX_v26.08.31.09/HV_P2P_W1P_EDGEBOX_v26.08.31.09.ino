@@ -1,5 +1,5 @@
 // ============================================================
-// HV P2P W1P EdgeBox v26.08.31.06
+// HV P2P W1P EdgeBox v26.08.31.09
 // Seeed EdgeBox-ESP-100 Leadshine EL7-RS2000P commissioning interface
 //
 // Purpose:
@@ -46,7 +46,7 @@
 
 // -------------------- Version / identity --------------------
 static const char* FW_NAME    = "HV P2P W1P";
-static const char* FW_VERSION = "v26.08.31.06";
+static const char* FW_VERSION = "v26.08.31.09";
 static const char* NODE_BANNER = "HV_P2P_W1P";
 
 // -------------------- Network defaults --------------------
@@ -56,6 +56,14 @@ static IPAddress SUBNET(255, 255, 0, 0);
 static IPAddress DNS1(8, 8, 8, 8);
 static IPAddress DNS2(1, 1, 1, 1);
 static IPAddress SRVR_IP(172, 20, 1, 100);
+
+// Safe network-readdress transaction state. A SET_NETWORK change is provisional
+// until SRVR proves that it can reach W1P on the new address. If that proof never
+// arrives, W1P automatically restores its previous address and reboots.
+static bool NETWORK_READDRESS_PENDING = false;
+static IPAddress NETWORK_READDRESS_PREVIOUS_IP(0, 0, 0, 0);
+static uint32_t networkReaddressBootMs = 0;
+static const uint32_t NETWORK_READDRESS_CONFIRM_TIMEOUT_MS = 10000;
 
 // Seeed EdgeBox-ESP-100 fixed peripheral mapping.
 static const int EDGEBOX_ETH_CS = 10;
@@ -94,6 +102,12 @@ static bool parseIpString(const String &s_in, IPAddress &out){
   return true;
 }
 
+static bool usableNodeIp(const IPAddress &ip){
+  if(ip == IPAddress(0,0,0,0) || ip == IPAddress(255,255,255,255)) return false;
+  if(ip[0] >= 224) return false;  // multicast/reserved broadcast space
+  return true;
+}
+
 static String hvGetPipeField(const String &line, const char *key){
   String token = String("|") + key + "=";
   int st = line.indexOf(token);
@@ -116,8 +130,71 @@ static void loadNetworkConfig(){
   s = np.getString("srvr_ip", ""); if(s.length() && parseIpString(s, ip)) SRVR_IP = ip;
   s = np.getString("subnet",  ""); if(s.length() && parseIpString(s, ip)) SUBNET = ip;
   s = np.getString("gateway", ""); if(s.length() && parseIpString(s, ip)) GATEWAY = ip;
+  NETWORK_READDRESS_PENDING = np.getBool("ip_pending", false);
+  s = np.getString("ip_prev", "");
+  if(!(s.length() && parseIpString(s, ip) && usableNodeIp(ip))) {
+    NETWORK_READDRESS_PENDING = false;
+    NETWORK_READDRESS_PREVIOUS_IP = IPAddress(0,0,0,0);
+  } else {
+    NETWORK_READDRESS_PREVIOUS_IP = ip;
+  }
   np.end();
 }
+
+static bool saveW1pLocalIpForReboot(const IPAddress &next_w1p, String &note){
+  if(!usableNodeIp(next_w1p)) { note = "Bad W1P IP"; return false; }
+  Preferences np;
+  if(!np.begin("w1p-netcfg", false)) { note = "Cannot open W1P network preferences"; return false; }
+  const String previousIp = ipToString(LOCAL_IP);
+  const size_t prevWritten = np.putString("ip_prev", previousIp);
+  if(prevWritten == 0) {
+    np.end();
+    note = "Failed saving previous W1P IP";
+    return false;
+  }
+  const size_t pendingWritten = np.putBool("ip_pending", true);
+  if(pendingWritten == 0) {
+    np.remove("ip_prev");
+    np.end();
+    note = "Failed arming W1P IP rollback transaction";
+    return false;
+  }
+  // Write the new boot address last. If this final step fails, disarm the
+  // provisional transaction before returning so the old address stays active.
+  const size_t nextWritten = np.putString("w1p_ip", ipToString(next_w1p));
+  if(nextWritten == 0) {
+    np.putBool("ip_pending", false);
+    np.remove("ip_prev");
+    np.end();
+    note = "Failed saving new W1P IP";
+    return false;
+  }
+  np.end();
+  NETWORK_READDRESS_PREVIOUS_IP = LOCAL_IP;
+  NETWORK_READDRESS_PENDING = true;
+  note = "W1P IP saved provisionally for safe reboot";
+  return true;
+}
+
+static void confirmNetworkReaddress(){
+  if(!NETWORK_READDRESS_PENDING) return;
+  Preferences np;
+  bool committed = false;
+  if(np.begin("w1p-netcfg", false)) {
+    committed = np.putBool("ip_pending", false) > 0;
+    if(committed) np.remove("ip_prev");
+    np.end();
+  }
+  if(!committed) {
+    Serial.println("[NET] SRVR reached provisional address but commit marker could not be persisted; keeping rollback armed");
+    return;
+  }
+  Serial.printf("[NET] SRVR confirmed provisional address %s; readdress committed\n", ipToString(LOCAL_IP).c_str());
+  NETWORK_READDRESS_PENDING = false;
+  NETWORK_READDRESS_PREVIOUS_IP = IPAddress(0,0,0,0);
+}
+
+static void serviceNetworkReaddressRollback();
 
 static bool saveNetworkConfigFromHmi(const String &line, String &note){
   IPAddress next_w1p = LOCAL_IP;
@@ -125,7 +202,7 @@ static bool saveNetworkConfigFromHmi(const String &line, String &note){
   IPAddress next_subnet = SUBNET;
   IPAddress next_gateway = GATEWAY;
   String v;
-  v = hvGetPipeField(line, "w1p_ip"); if(!v.length()) v = hvGetPipeField(line, "ctrl_ip"); if(v.length() && !parseIpString(v, next_w1p)){ note = "Bad W1P IP"; return false; }
+  v = hvGetPipeField(line, "w1p_ip"); if(!v.length()) v = hvGetPipeField(line, "ctrl_ip"); if(v.length() && (!parseIpString(v, next_w1p) || !usableNodeIp(next_w1p))){ note = "Bad W1P IP"; return false; }
   v = hvGetPipeField(line, "srvr_ip"); if(v.length() && !parseIpString(v, next_srvr)){ note = "Bad SRVR IP"; return false; }
   v = hvGetPipeField(line, "subnet");  if(v.length() && !parseIpString(v, next_subnet)){ note = "Bad Subnet"; return false; }
   v = hvGetPipeField(line, "gateway"); if(v.length() && !parseIpString(v, next_gateway)){ note = "Bad Gateway"; return false; }
@@ -154,7 +231,7 @@ static const int LOCAL_ESTOP_HEALTHY_LEVEL = HIGH;
 static const int PIN_STATUS_LED = -1;
 
 // -------------------- Leadshine Servo Enable strategy --------------------
-// v26.08.31.06: EdgeBox W5500 + isolated native RS485; corrected EL7 SRV-ON configuration to PA4.00 / P04.00
+// v26.08.31.09: EdgeBox W5500 + isolated native RS485; corrected EL7 SRV-ON configuration to PA4.00 / P04.00
 // Input Selection DI1. MotionStudio confirmed the usable no-extra-wire setup
 // is DI1 = Servo ON Input (SRV-ON), Normally Closed, which reads/writes as
 // 0x83. Do not use the old DI5 / P04.04 path; do not use Normally Open
@@ -270,7 +347,7 @@ static const uint32_t MODBUS_FAULT_POLL_MS = 150;
 static const uint32_t MODBUS_REPLY_TIMEOUT_MS = 50;
 static const uint8_t  MODBUS_READ_RETRIES = 3;
 static const uint32_t MODBUS_INTERFRAME_GAP_US = 1500;
-// v26.08.31.06: EdgeBox W5500 + isolated native RS485; fail the physical link after two consecutive invalid/no-reply
+// v26.08.31.09: EdgeBox W5500 + isolated native RS485; fail the physical link after two consecutive invalid/no-reply
 // transactions, with a 250 ms stale-reply backstop. Require two valid replies
 // before recovering. The 50 ms reply timeout is still generous at 115200 baud,
 // while reducing the time for a removed CN3 lead to become a safety fault.
@@ -305,7 +382,7 @@ static const float MAX_PROFILE_ACCEL_MPS2 = 20.0f;
 static const float MOTION_ZERO_EPS_MPS = 0.005f;
 static const float DYNAMIC_LEAD_TIME_S = 0.50f;
 static const float DYNAMIC_MIN_LEAD_MPS = 0.05f;
-// v26.08.31.06: EdgeBox W5500 + isolated native RS485; Dynamic mode is a closed cable-speed hold. Joystick sets
+// v26.08.31.09: EdgeBox W5500 + isolated native RS485; Dynamic mode is a closed cable-speed hold. Joystick sets
 // target line speed; this PI trim lets the command nudge above/below the shaped
 // target to hold measured feedback speed more precisely under changing load.
 static const float DYNAMIC_SPEED_KP = 0.14f;
@@ -320,6 +397,10 @@ static float g_dynamic_feedback_mps = 0.0f;
 // W1P link-loss timing remains independent from display refresh timing.
 static const uint32_t W1P_STATUS_INTERVAL_MS = 50;
 static const uint32_t W1P_PEER_TIMEOUT_MS = 750;
+// Independent motion-command watchdog. SRVR refreshes an unchanged non-zero
+// VEL at least every 250 ms; generic STATUS/PING traffic must never keep motion
+// alive if the actual SRVR motion loop stops issuing VEL commands.
+static const uint32_t W1P_VEL_COMMAND_TIMEOUT_MS = 650;
 static const float    MAX_CMD_VEL_MPS = 20.0f;
 static const float    LIMIT_STOP_GUARD_BASE_M = 0.03f;
 static const float    LIMIT_STOP_GUARD_PER_MPS = 0.12f;
@@ -383,6 +464,8 @@ struct WinchState {
   bool servo_ready = false;
   bool drive_feedback_ok = false;      // strict: position read + output status + verified DO2/SRDY
   bool drive_writes_enabled = false;   // automatic motion-enable once SRVR/RS485/drive-ready safety gate is healthy
+  bool vel_watchdog_fault = false;      // latched when fresh VEL traffic stops during commanded motion
+  bool service_rearm_required = false;  // latched by web OTA/reboot/reset until SRVR STOP + neutral re-arm
   bool pr_estop_latched = false;
   bool communication_config_read_ok = false;
   bool communication_config_ok = false;
@@ -452,8 +535,9 @@ NetworkUDP udp;
 //
 // Safety model:
 //   - This updater deliberately does NOT overwrite bootloader or partition table.
-//   - File validation is role/filename based on both browser-side and ESP32-side checks.
-//   - Do not rename binaries to bypass the role check.
+//   - App firmware is checked by both filename and an embedded role signature in the binary contents.
+//   - W1P enters a verified stopped / Servo-Enable-inhibited state before OTA, reboot or NVS reset.
+//   - Filesystem images retain filename-based role/type checks because they do not contain the app identity marker.
 static WebServer hvWebOta(80);
 
 static const char* HV_UPDATE_NODE_NAME = "HV P2P W1P";
@@ -462,12 +546,36 @@ static const char* HV_UPDATE_APP_TOKEN = "HV_P2P_W1P";
 static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_W1P";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL,CTRL_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_W1P_v*.ino.bin firmware. CTRL/CTRL-TS files are rejected.";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=W1P;HV_P2P_FW_VERSION=v26.08.31.06";
+static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=W1P;";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=W1P;HV_P2P_FW_VERSION=v26.08.31.09";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
 static bool hvUploadFinished = false;
+static bool hvUploadRoleMatched = false;
+static size_t hvUploadRoleMatchLen = 0;
+static bool hvServiceOperationActive = false;
 static String hvUploadError;
+
+static bool hvPrepareSafeServiceState(String& reason);
+
+static void hvScanUploadRoleSignature(const uint8_t* data, size_t len) {
+  if (hvUploadRoleMatched || !data || len == 0) return;
+  const size_t tokenLen = strlen(HV_UPDATE_ROLE_SIGNATURE);
+  if (tokenLen == 0) return;
+  for (size_t i = 0; i < len && !hvUploadRoleMatched; ++i) {
+    const char c = (char)data[i];
+    if (c == HV_UPDATE_ROLE_SIGNATURE[hvUploadRoleMatchLen]) {
+      ++hvUploadRoleMatchLen;
+      if (hvUploadRoleMatchLen == tokenLen) {
+        hvUploadRoleMatched = true;
+        hvUploadRoleMatchLen = 0;
+      }
+    } else {
+      hvUploadRoleMatchLen = (c == HV_UPDATE_ROLE_SIGNATURE[0]) ? 1 : 0;
+    }
+  }
+}
 
 static String hvUpperName(String s) {
   s.replace("-", "_");
@@ -534,7 +642,7 @@ static String hvOtaIndexHtml(const char* nodeName, const char* version, const St
   html += "<p class='warn'>"; html += HV_UPDATE_WARNING; html += "</p>";
   html += "<span class='pill'>App token: "; html += HV_UPDATE_APP_TOKEN; html += "</span><span class='pill'>Filesystem token: "; html += HV_UPDATE_FS_TOKEN; html += "</span>";
   html += "</div>";
-  html += "<div class='card'><h2>Main App Firmware</h2><p class='muted'>Drag and drop the exported Arduino <code>.ino.bin</code> here. This updates the running application only.</p>";
+  html += "<div class='card'><h2>Main App Firmware</h2><p class='muted'>Drag and drop the exported Arduino <code>.ino.bin</code> here. Filename is checked first, then the ESP32 verifies an embedded W1P role signature in the binary before activating it.</p>";
   html += "<div id='appDrop' class='drop'>Drop app firmware here<br><span class='muted'>or click to select</span><input id='appFile' type='file' accept='.bin'></div>";
   html += "<div class='bar'><div id='appFill' class='fill'></div></div><p id='appMsg' class='muted'></p></div>";
   html += "<div class='card'><h2>Web/UI Filesystem Partition</h2><p class='muted'>Optional. Use only if this device build includes a LittleFS/SPIFFS web/UI partition. Filename should include <code>LITTLEFS</code>, <code>SPIFFS</code>, <code>FILESYSTEM</code>, or <code>_FS</code>.</p>";
@@ -569,10 +677,17 @@ static void hvHandleUpload(bool filesystem) {
     hvUploadIsFs = filesystem;
     hvUploadAllowed = false;
     hvUploadFinished = false;
+    hvUploadRoleMatched = filesystem;
+    hvUploadRoleMatchLen = 0;
+    hvServiceOperationActive = false;
     hvUploadError = "";
     Serial.printf("[OTA] %s upload start: %s\n", filesystem ? "FS" : "APP", upload.filename.c_str());
     if(!hvAllowedUploadFilename(upload.filename, filesystem, hvUploadError)) {
       Serial.printf("[OTA] Rejected: %s\n", hvUploadError.c_str());
+      return;
+    }
+    if(!hvPrepareSafeServiceState(hvUploadError)) {
+      Serial.printf("[OTA] Safety gate rejected update: %s\n", hvUploadError.c_str());
       return;
     }
     int command = filesystem ? U_SPIFFS : U_FLASH;
@@ -582,24 +697,35 @@ static void hvHandleUpload(bool filesystem) {
       return;
     }
     hvUploadAllowed = true;
+    hvServiceOperationActive = true;
   } else if(upload.status == UPLOAD_FILE_WRITE) {
     if(!hvUploadAllowed) return;
+    if(!filesystem) hvScanUploadRoleSignature(upload.buf, upload.currentSize);
     if(Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
       hvUploadError = "Update.write failed.";
       Update.printError(Serial);
     }
   } else if(upload.status == UPLOAD_FILE_END) {
     if(!hvUploadAllowed) return;
+    if(!filesystem && !hvUploadRoleMatched) {
+      hvUploadError = String("Rejected: firmware contents do not contain expected role signature ") + HV_UPDATE_ROLE_SIGNATURE;
+      Update.abort();
+      hvUploadAllowed = false;
+      hvServiceOperationActive = false;
+      Serial.printf("[OTA] Content identity rejected: %s\n", hvUploadError.c_str());
+      return;
+    }
     if(Update.end(true)) {
       hvUploadFinished = true;
-      Serial.printf("[OTA] %s update success: %u bytes\n", filesystem ? "FS" : "APP", upload.totalSize);
+      Serial.printf("[OTA] %s update success: %u bytes; content role=%s\n", filesystem ? "FS" : "APP", upload.totalSize, filesystem ? "FILESYSTEM" : HV_UPDATE_ROLE);
     } else {
       hvUploadError = "Update.end failed.";
       Update.printError(Serial);
     }
   } else if(upload.status == UPLOAD_FILE_ABORTED) {
     hvUploadError = "Upload aborted.";
-    Update.end();
+    Update.abort();
+    hvServiceOperationActive = false;
     Serial.println("[OTA] Aborted");
   }
 }
@@ -612,6 +738,7 @@ static void hvUpdatePostReply(bool filesystem) {
     delay(350);
     ESP.restart();
   } else {
+    hvServiceOperationActive = false;
     String msg = hvUploadError.length() ? hvUploadError : "Update failed or rejected.";
     hvWebOta.send(400, "text/plain", msg);
   }
@@ -627,12 +754,18 @@ static void hvBeginWebUpdater() {
   hvWebOta.on("/update/app", HTTP_POST, [](){ hvUpdatePostReply(false); }, [](){ hvHandleUpload(false); });
   hvWebOta.on("/update/fs", HTTP_POST, [](){ hvUpdatePostReply(true); }, [](){ hvHandleUpload(true); });
   hvWebOta.on("/reboot", HTTP_POST, [](){
-    hvWebOta.send(200, "text/plain", "Rebooting device...");
+    String reason;
+    if(!hvPrepareSafeServiceState(reason)) { hvWebOta.send(409, "text/plain", reason); return; }
+    hvServiceOperationActive = true;
+    hvWebOta.send(200, "text/plain", "Safe state verified - rebooting device...");
     delay(250);
     ESP.restart();
   });
   hvWebOta.on("/reset-nvs", HTTP_POST, [](){
-    hvWebOta.send(200, "text/plain", "Saved config/NVS erased - rebooting...");
+    String reason;
+    if(!hvPrepareSafeServiceState(reason)) { hvWebOta.send(409, "text/plain", reason); return; }
+    hvServiceOperationActive = true;
+    hvWebOta.send(200, "text/plain", "Safe state verified - saved config/NVS erased; rebooting...");
     delay(250);
     nvs_flash_erase();
     nvs_flash_init();
@@ -683,6 +816,7 @@ static String trimCopy(String s) {
 static bool modbusReadHoldingRegisters(uint8_t slave, uint16_t reg, uint16_t count, uint16_t* outRegs);
 static bool modbusReadU16(uint8_t slave, uint16_t reg, uint16_t& outVal);
 static bool modbusReadI32(uint8_t slave, uint16_t reg, int32_t& outVal);
+static bool modbusReadFeedbackBlock(uint8_t slave, int32_t& outPos, uint16_t& outInputIo, uint16_t& outOutputIo);
 static bool modbusWriteSingleRegister(uint8_t slave, uint16_t reg, uint16_t value);
 static bool modbusWriteMultipleRegisters(uint8_t slave, uint16_t reg, uint16_t count, const uint16_t* regs);
 static bool modbusWriteI32(uint8_t slave, uint16_t reg, int32_t value);
@@ -693,10 +827,129 @@ static bool driveWriteVelocityCommandMps(float vel_mps);
 static bool driveConfigureMotionProfile();
 static void serviceMotionProfile();
 static bool driveSendEmergencyStop();
+static void driveStopNow();
 static void updateLocalInputs();
 static void servicePeerTimeout();
+static void serviceVelocityCommandWatchdog();
 static void sendStatusLine(bool force = false);
 static void requestSoftwareSrvonInhibit(bool inhibit, const char* reason);
+
+static void serviceNetworkReaddressRollback(){
+  if(!NETWORK_READDRESS_PENDING || networkReaddressBootMs == 0) return;
+  if((millis() - networkReaddressBootMs) <= NETWORK_READDRESS_CONFIRM_TIMEOUT_MS) return;
+  if(!usableNodeIp(NETWORK_READDRESS_PREVIOUS_IP)) {
+    Serial.println("[NET] Provisional address confirmation timed out but previous IP is invalid; staying fail-closed");
+    networkReaddressBootMs = millis();
+    return;
+  }
+
+  const IPAddress rollbackIp = NETWORK_READDRESS_PREVIOUS_IP;
+  Serial.printf("[NET] SRVR did not confirm provisional address %s within %lu ms; rolling back to %s\n",
+                ipToString(LOCAL_IP).c_str(), (unsigned long)NETWORK_READDRESS_CONFIRM_TIMEOUT_MS,
+                ipToString(rollbackIp).c_str());
+  driveStopNow();
+  g.drive_writes_enabled = false;
+  requestSoftwareSrvonInhibit(true, "NETWORK_READDRESS_ROLLBACK");
+
+  Preferences np;
+  bool rollbackSaved = false;
+  if(np.begin("w1p-netcfg", false)) {
+    const bool ipSaved = np.putString("w1p_ip", ipToString(rollbackIp)) > 0;
+    const bool pendingCleared = np.putBool("ip_pending", false) > 0;
+    rollbackSaved = ipSaved && pendingCleared;
+    if(rollbackSaved) np.remove("ip_prev");
+    np.end();
+  }
+  if(!rollbackSaved) {
+    Serial.println("[NET] Failed persisting rollback address; remaining stopped and retrying rollback instead of rebooting ambiguously");
+    networkReaddressBootMs = millis();
+    return;
+  }
+  NETWORK_READDRESS_PENDING = false;
+  delay(150);
+  ESP.restart();
+}
+
+
+static bool hvPrepareSafeServiceState(String& reason) {
+  // Latch a W1P safety source before touching the drive. SRVR will respond with
+  // STOP + SW_SRVON 0 and, after the operation ends, require joystick neutral
+  // before restoring software Servo Enable.
+  g.service_rearm_required = true;
+  driveStopNow();
+  g.drive_writes_enabled = false;
+  requestSoftwareSrvonInhibit(true, "WEB_SERVICE");
+
+  if (g.drive_writes_enabled || fabsf(g.vel_request_mps) > MOTION_ZERO_EPS_MPS ||
+      fabsf(g.vel_profile_mps) > MOTION_ZERO_EPS_MPS || fabsf(g.vel_cmd_mps) > MOTION_ZERO_EPS_MPS) {
+    reason = "Refused: motion command path did not settle to zero.";
+    return false;
+  }
+  if (LEADSHINE_SOFTWARE_SRVON_ENABLED) {
+    if (!g.software_srvon_inhibit || g.di1_assignment != LEADSHINE_SRVON_DISABLED_VALUE) {
+      reason = "Refused: EL7 software Servo Enable could not be verified OFF (P04.00 must be 0x03).";
+      return false;
+    }
+  }
+  if (!g.do3_enabled_assignment_ok || !g.do4_brake_assignment_ok) {
+    reason = "Refused: EL7 SRV-ST/BRK-OFF output assignments are not verified, so stopped/braked state cannot be proved.";
+    return false;
+  }
+
+  // Do not rely on a cached velocity that may describe the instant before STOP.
+  // Take fresh post-inhibit feedback samples and require two consecutive quiet
+  // intervals with SRV-ST OFF and BRK-OFF OFF before flash/reboot/reset begins.
+  int32_t prevPos = 0;
+  uint16_t inputIo = 0, outputIo = 0;
+  if (!modbusReadFeedbackBlock(DRIVE_MODBUS_ID, prevPos, inputIo, outputIo)) {
+    reason = "Refused: cannot obtain fresh post-stop EL7 feedback. Restore RS485/drive feedback or use local USB service.";
+    return false;
+  }
+  unsigned long prevMs = millis();
+  unsigned int stableSamples = 0;
+  const unsigned long verifyStartMs = prevMs;
+  while ((millis() - verifyStartMs) <= 1200UL) {
+    delay(80);
+    updateLocalInputs();
+    int32_t pos = 0;
+    if (!modbusReadFeedbackBlock(DRIVE_MODBUS_ID, pos, inputIo, outputIo)) {
+      reason = "Refused: lost EL7 feedback while proving stopped/braked service state.";
+      return false;
+    }
+    const unsigned long now = millis();
+    const unsigned long dtMs = now - prevMs;
+    const float observedMps = dtMs > 0 ? rawUnitsDeltaToDisplayMps(int64_t(pos) - int64_t(prevPos), float(dtMs) / 1000.0f) : 999.0f;
+    const bool servoEnabled = (outputIo & OUTPUT_DO3_MASK) != 0;
+    const bool brakeReleased = (outputIo & OUTPUT_DO4_MASK) != 0;
+
+    g.raw_pos_units = pos;
+    g.pos_m = rawUnitsToDisplayPositionM(pos);
+    g.input_io_status = inputIo;
+    g.output_io_status = outputIo;
+    g.servo_enabled_output = servoEnabled;
+    g.brake_output_released = brakeReleased;
+    g.vel_actual_mps = isfinite(observedMps) ? observedMps : 0.0f;
+    lastDriveFeedbackMs = now;
+
+    if (isfinite(observedMps) && fabsf(observedMps) <= 0.05f && !servoEnabled && !brakeReleased) {
+      ++stableSamples;
+      if (stableSamples >= 2) {
+        g.vel_actual_mps = 0.0f;
+        reason = "Safe service state verified: stopped, Servo Enable OFF, brake release OFF";
+        return true;
+      }
+    } else {
+      stableSamples = 0;
+    }
+    prevPos = pos;
+    prevMs = now;
+  }
+
+  reason = String("Refused: EL7 did not prove stopped/braked state within 1.2 s (speed=") +
+           String(g.vel_actual_mps, 3) + " m/s, SRV-ST=" + String(g.servo_enabled_output ? 1 : 0) +
+           ", BRK-OFF=" + String(g.brake_output_released ? 1 : 0) + ").";
+  return false;
+}
 
 // Keep the W1P Ethernet/status heartbeat alive while a disconnected EL7 makes
 // a Modbus transaction wait for its reply timeout. This must not service UDP
@@ -1351,6 +1604,8 @@ static void setLeadshineSrvonOutput(bool enable) {
 
 static bool servoEnableCommonPreconditions() {
   if (g.local_estop) return false;
+  if (g.vel_watchdog_fault) return false;
+  if (g.service_rearm_required) return false;
   if (!g.client_connected) return false;
   if (!g.rs_link_ok) return false;
   if (!g.communication_config_read_ok) return false;
@@ -1648,6 +1903,8 @@ static bool driveAutoEnableReady() {
   const bool requestFresh = (lastNonZeroVelocityCommandMs > 0) && ((now - lastNonZeroVelocityCommandMs) <= AUTO_DRIVE_ARM_REQUEST_FRESH_MS);
 
   if (g.local_estop) return false;
+  if (g.vel_watchdog_fault) return false;
+  if (g.service_rearm_required || hvServiceOperationActive) return false;
   if (!g.client_connected) return false;
   if (!g.drive_feedback_ok) return false;
   if (!g.communication_config_ok) return false;
@@ -1657,7 +1914,7 @@ static bool driveAutoEnableReady() {
   if (g.no_motion_feedback_fault && requestingMotion) return false;
 
   if (!g.drive_writes_enabled) {
-    // v26.08.31.06: EdgeBox W5500 + isolated native RS485; only arm from WAIT on a fresh, non-zero joystick command.
+    // v26.08.31.09: EdgeBox W5500 + isolated native RS485; only arm from WAIT on a fresh, non-zero joystick command.
     // Do not re-arm from stale VEL state, and do not arm while the motor is still
     // coasting from a previous PR stop. Once armed, do not drop writes just because
     // feedback velocity becomes non-zero; that caused the observed step/pulse motion.
@@ -1692,6 +1949,8 @@ static void serviceNoMotionFeedbackFault() {
 static const char* driveAutoEnableBlockReason() {
   const unsigned long now = millis();
   if (g.local_estop) return "W1P_ESTOP";
+  if (g.vel_watchdog_fault) return "VEL_WATCHDOG";
+  if (g.service_rearm_required) return "SERVICE_REARM";
   if (!g.client_connected) return "SRVR_MISSING";
   if (!g.drive_feedback_ok) return "FEEDBACK_NOT_READY";
   if (!g.communication_config_ok) return "CONFIG_NOT_READY";
@@ -1744,7 +2003,7 @@ static void serviceAutomaticDriveEnable() {
       fabsf(g.vel_actual_mps) <= AUTO_DRIVE_MOVING_GATE_MPS &&
       (lastVelocityCommandMs > 0) && ((now - lastVelocityCommandMs) > 350);
     const bool safetyLost =
-      g.local_estop || !g.client_connected || !g.drive_feedback_ok || !g.communication_config_ok ||
+      g.local_estop || g.vel_watchdog_fault || g.service_rearm_required || !g.client_connected || !g.drive_feedback_ok || !g.communication_config_ok ||
       !g.rs_link_ok || !softwareServoEnableReady() ||
       (LEADSHINE_SRVON_OUTPUT_ENABLED && !g.srvon_output_ready) ||
       (g.no_motion_feedback_fault && fabsf(g.vel_request_mps) >= 0.02f);
@@ -1775,7 +2034,7 @@ static void serviceMotionProfile() {
     g.vel_request_mps = 0.0f;
   }
   float target = constrain(g.vel_request_mps, -MAX_CMD_VEL_MPS, MAX_CMD_VEL_MPS);
-  // v26.08.31.06: EdgeBox W5500 + isolated native RS485; predictive hard-limit guard.  SRVR also tapers before
+  // v26.08.31.09: EdgeBox W5500 + isolated native RS485; predictive hard-limit guard.  SRVR also tapers before
   // Near/Far, but W1P applies the same stopping-distance rule locally so a
   // delayed network packet cannot keep driving past an end limit.
   target = limitVelocityForSoftLimits(g.pos_m, target);
@@ -1953,20 +2212,25 @@ static String buildFallbackDisplayPacket(){
   const bool rs485_config_fault = !g.communication_config_ok;
   const bool rs485_feedback_fault = !g.drive_feedback_ok;
   const bool any_rs485_fault = rs485_link_fault || rs485_config_fault || rs485_feedback_fault;
-  const bool fallback_fault = g.local_estop || srvr_missing || any_rs485_fault;
+  const bool internal_motion_fault = g.vel_watchdog_fault || g.service_rearm_required;
+  const bool fallback_fault = g.local_estop || srvr_missing || any_rs485_fault || internal_motion_fault;
   // Keep the physical E-stop input distinct from derived fail-safe faults.
   // SAFETY remains asserted for RS485/SRVR faults so downstream diagnostics
   // can show that motion is inhibited without calling it E-Stop W1P.
   line += "|estop=" + String(g.local_estop ? 1 : 0);
   line += "|estop_src=" + String(g.local_estop ? "W1P" : "");
   line += "|safety=" + String(fallback_fault ? 1 : 0);
-  line += "|safety_src=" + String(g.local_estop ? "W1P" : (srvr_missing ? "SRVR" : (any_rs485_fault ? "RS485" : "")));
+  line += "|safety_src=" + String(g.local_estop ? "W1P" : (srvr_missing ? "SRVR" : (any_rs485_fault ? "RS485" : (g.vel_watchdog_fault ? "VEL_WATCHDOG" : (g.service_rearm_required ? "SERVICE" : "")))));
+  line += "|vel_wd=" + String(g.vel_watchdog_fault ? 1 : 0);
+  line += "|service_lock=" + String(g.service_rearm_required ? 1 : 0);
   if (g.local_estop) line += "|status=E-Stop W1P|status_level=red";
+  else if (g.vel_watchdog_fault) line += "|status=VEL Watchdog|status_level=red";
+  else if (g.service_rearm_required) line += "|status=Service Safety|status_level=red";
   else if (srvr_missing) line += "|status=E-Stop SRVR|status_level=red";
   else if (rs485_link_fault || rs485_config_fault) line += "|status=RS485 Fault|status_level=red";
   else if (rs485_feedback_fault) line += "|status=RS485 Feedback Fault|status_level=red";
   else line += "|status=Active|status_level=blue";
-  line += "|ctrl=0|srvr=" + String(g.client_connected ? 1 : 0) + "|w1p=1|w1p_state=" + String(any_rs485_fault ? "fault" : "ok") + "|service=" + String(g.service_mode ? 1 : 0);
+  line += "|ctrl=0|srvr=" + String(g.client_connected ? 1 : 0) + "|w1p=1|w1p_state=" + String((any_rs485_fault || internal_motion_fault) ? "fault" : "ok") + "|service=" + String(g.service_mode ? 1 : 0);
   line += "|flags=0";
   line += "|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4";
   line += "|max_mps=0.00|max_kmh=0.00|mode=Mode A";
@@ -2031,6 +2295,7 @@ static void sendStatusLine(bool force) {
   lastStatusMs = now;
 
   String line = "STATUS";
+  line += " FW=" + String(FW_VERSION);
   line += " POS_M=" + String(g.pos_m, 3);
   line += " SPAN_M=" + String(g.span_m, 3);
   line += " NL=" + String(g.limit_near_m, 3);
@@ -2049,12 +2314,17 @@ static void sendStatusLine(bool force) {
   const bool status_rs485_config_fault = !g.communication_config_ok;
   const bool status_rs485_feedback_fault = !g.drive_feedback_ok;
   const bool status_any_rs485_fault = status_rs485_link_fault || status_rs485_config_fault || status_rs485_feedback_fault;
-  const bool status_safety = g.local_estop || status_srvr_missing || status_any_rs485_fault;
+  const bool status_internal_motion_fault = g.vel_watchdog_fault || g.service_rearm_required;
+  const bool status_safety = g.local_estop || status_srvr_missing || status_any_rs485_fault || status_internal_motion_fault;
   line += " ESTOP=" + String(g.local_estop ? 1 : 0);
   line += " ESTOP_SRC=" + String(g.local_estop ? "W1P" : "NONE");
   line += " SAFETY=" + String(status_safety ? 1 : 0);
-  line += " SAFETY_SRC=" + String(g.local_estop ? "W1P" : (status_srvr_missing ? "SRVR" : (status_any_rs485_fault ? "RS485" : "NONE")));
+  line += " SAFETY_SRC=" + String(g.local_estop ? "W1P" : (status_srvr_missing ? "SRVR" : (status_any_rs485_fault ? "RS485" : (g.vel_watchdog_fault ? "VEL_WATCHDOG" : (g.service_rearm_required ? "SERVICE" : "NONE")))));
+  line += " VEL_WD=" + String(g.vel_watchdog_fault ? 1 : 0);
+  line += " SERVICE_LOCK=" + String(g.service_rearm_required ? 1 : 0);
+  line += " VEL_AGE_MS=" + String(lastVelocityCommandMs ? (unsigned long)(now - lastVelocityCommandMs) : 0UL);
   line += " ETH=" + String(g.ethernet_up ? 1 : 0);
+  line += " IP=" + ipToString(ETH.localIP());
   line += " READY=" + String(g.drive_ready ? 1 : 0);
   line += " FAULT=" + String(g.drive_fault ? 1 : 0);
   line += " SIM=" + String(g.simulation_enabled ? 1 : 0);
@@ -2162,8 +2432,14 @@ static void handleCommand(const String& rawLine) {
       fabsf(g.vel_profile_mps) < MOTION_ZERO_EPS_MPS &&
       fabsf(g.vel_cmd_mps) < MOTION_ZERO_EPS_MPS &&
       !g.drive_enabled;
+    const bool clearingLatchedSafety = g.vel_watchdog_fault || (g.service_rearm_required && !hvServiceOperationActive);
     driveStopNow();
     g.drive_writes_enabled = false;
+    if (clearingLatchedSafety) {
+      g.vel_watchdog_fault = false;
+      if (!hvServiceOperationActive) g.service_rearm_required = false;
+      requestSoftwareSrvonInhibit(true, "STOP_CLEAR_LATCH");
+    }
     sendLine("OK STOP");
     const unsigned long nowStop = millis();
     if (!wasAlreadyStopped || (nowStop - lastStopStatusMs) >= 1000) {
@@ -2183,11 +2459,50 @@ static void handleCommand(const String& rawLine) {
     return;
   }
 
+  if (line.startsWith("SET_NETWORK|")) {
+    String requested = hvGetPipeField(line, "w1p_ip");
+    IPAddress nextIp;
+    if(!requested.length() || !parseIpString(requested, nextIp) || !usableNodeIp(nextIp)) {
+      sendLine("ERR SET_NETWORK BAD_W1P_IP");
+      return;
+    }
+    if(nextIp == SRVR_IP) {
+      sendLine("ERR SET_NETWORK CONFLICTS_WITH_SRVR_IP");
+      return;
+    }
+    if(nextIp == LOCAL_IP) {
+      sendLine(String("OK SET_NETWORK W1P_IP=") + ipToString(LOCAL_IP) + " REBOOTING=0");
+      return;
+    }
+
+    // A network readdress is a service reboot, not merely a variable change.
+    // Reuse the exact OTA/reboot safety gate so the new address is never applied
+    // while motion, Servo Enable or brake-release state is unverified.
+    String reason;
+    if(!hvPrepareSafeServiceState(reason)) {
+      sendLine(String("ERR SET_NETWORK SAFETY ") + reason);
+      return;
+    }
+    if(!saveW1pLocalIpForReboot(nextIp, reason)) {
+      sendLine(String("ERR SET_NETWORK SAVE ") + reason);
+      return;
+    }
+    hvServiceOperationActive = true;
+    sendLine(String("OK SET_NETWORK W1P_IP=") + ipToString(nextIp) + " REBOOTING=1");
+    delay(350);
+    ESP.restart();
+    return;
+  }
+
   if (parseFloatArg(line, "SW_SRVON", val)) {
     if (val >= 0.5f) {
-      requestSoftwareSrvonInhibit(false, "REMOTE_SW_SRVON_ON");
-      serviceLeadshineSoftwareServoEnable();
-      sendLine("OK SW_SRVON REQUEST_ON");
+      if (g.vel_watchdog_fault || g.service_rearm_required || hvServiceOperationActive) {
+        sendLine("ERR SW_SRVON SAFETY_LATCH_ACTIVE");
+      } else {
+        requestSoftwareSrvonInhibit(false, "REMOTE_SW_SRVON_ON");
+        serviceLeadshineSoftwareServoEnable();
+        sendLine("OK SW_SRVON REQUEST_ON");
+      }
     } else {
       driveStopNow();
       g.drive_writes_enabled = false;
@@ -2394,6 +2709,9 @@ static void serviceUdp() {
     }
     return;
   }
+  // Any valid packet from the configured SRVR host on the provisional address
+  // proves end-to-end reachability. Commit the transaction before handling it.
+  if (NETWORK_READDRESS_PENDING) confirmNetworkReaddress();
   if (packetSize > 2048) {
     while (udp.available()) udp.read();
     Serial.printf("[UDP] Dropped oversized packet (%d bytes)\n", packetSize);
@@ -2450,6 +2768,26 @@ static void startDriveSerial() {
 }
 
 
+static void serviceVelocityCommandWatchdog() {
+  const unsigned long now = millis();
+  const bool commandPathActive = g.drive_writes_enabled ||
+    fabsf(g.vel_request_mps) > MOTION_ZERO_EPS_MPS ||
+    fabsf(g.vel_profile_mps) > MOTION_ZERO_EPS_MPS ||
+    fabsf(g.vel_cmd_mps) > MOTION_ZERO_EPS_MPS;
+  if (!commandPathActive || lastVelocityCommandMs == 0) return;
+  if ((now - lastVelocityCommandMs) <= W1P_VEL_COMMAND_TIMEOUT_MS) return;
+
+  if (!g.vel_watchdog_fault) {
+    Serial.printf("[SAFETY] VEL watchdog expired after %lu ms while command path active - emergency stop, lock writes, inhibit software Servo Enable\n",
+                  (unsigned long)(now - lastVelocityCommandMs));
+  }
+  g.vel_watchdog_fault = true;
+  driveStopNow();
+  g.drive_writes_enabled = false;
+  requestSoftwareSrvonInhibit(true, "VEL_WATCHDOG");
+  sendStatusLine(true);
+}
+
 static void servicePeerTimeout() {
   if (peerValid && (millis() - lastPeerPacketMs) > W1P_PEER_TIMEOUT_MS) {
     if (g.client_connected || g.drive_writes_enabled || !g.software_srvon_inhibit) {
@@ -2483,8 +2821,9 @@ void setup() {
   Serial.println();
   Serial.println("============================================================");
   Serial.printf("%s %s\n", FW_NAME, FW_VERSION);
+  Serial.printf("[OTA] Build identity: %s\n", HV_UPDATE_BUILD_TOKEN);
   Serial.println("Leadshine EL7-RS2000P command interface (auto-enable under SRVR safety gate)");
-  Serial.println("v26.08.31.06: EdgeBox W5500 + isolated native RS485; SRVR/safety fail-safe + joystick-neutral re-arm; EL7 DO2/DO3/DO4/DO5 map verification enabled");
+  Serial.println("v26.08.31.09: retains .07 motion/service/OTA safety and adds coordinated safe W1P IP readdress; existing SRVR/safety + joystick-neutral re-arm retained");
   Serial.println("============================================================");
 
   pinMode(PIN_LOCAL_ESTOP, INPUT);
@@ -2507,6 +2846,12 @@ void setup() {
   udp.begin(TCP_PORT);
   Serial.printf("[UDP] Listening on %s:%u\n", ETH.localIP().toString().c_str(), (unsigned)TCP_PORT);
   hvBeginWebUpdater();
+  if (NETWORK_READDRESS_PENDING) {
+    networkReaddressBootMs = millis();
+    Serial.printf("[NET] Provisional W1P IP %s awaiting SRVR confirmation; rollback=%s timeout=%lu ms\n",
+                  ipToString(LOCAL_IP).c_str(), ipToString(NETWORK_READDRESS_PREVIOUS_IP).c_str(),
+                  (unsigned long)NETWORK_READDRESS_CONFIRM_TIMEOUT_MS);
+  }
 
   Serial.printf("[CFG] IP=%s UDP=%u ETH=%s\n", ETH.localIP().toString().c_str(), (unsigned)TCP_PORT, eth_ok ? "OK" : "FAILED");
   Serial.printf("[CFG] ESTOP_DI0=%d RS485_RX=%d RS485_TX=%d RTS=%d ID=%u\n", PIN_LOCAL_ESTOP, RS485_RX_PIN, RS485_TX_PIN, RS485_RTS_PIN, (unsigned)DRIVE_MODBUS_ID);
@@ -2523,8 +2868,10 @@ void loop() {
   g.ethernet_up = (ETH.localIP() != IPAddress(0,0,0,0)) && ETH.linkUp();
   updateLocalInputs();
   servicePeerTimeout();
+  serviceVelocityCommandWatchdog();
   pollLeadshineFeedback();
   updateMotionModel();
+  serviceNetworkReaddressRollback();
   serviceUdp();
 #if ENABLE_W1P_TS
   serviceHmiUart();
@@ -2533,6 +2880,7 @@ void loop() {
 #endif
   hvHandleWebUpdater();
   servicePeerTimeout();
+  serviceVelocityCommandWatchdog();
   sendStatusLine(false);
 
   // No EdgeBox field DO is consumed for a heartbeat indicator.
