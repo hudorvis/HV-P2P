@@ -1,12 +1,12 @@
-name: HV P2P Firmware Build v26.08.31.04
+name: HV P2P Firmware Build v26.08.31.05
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - 'HV_P2P_CTRL_EDGEBOX_v26.08.31.04/**'
-      - 'HV_P2P_CTRL_TS_v26.08.31.04/**'
-      - 'HV_P2P_W1P_EDGEBOX_v26.08.31.04/**'
+      - 'HV_P2P_CTRL_EDGEBOX_v26.08.31.05/**'
+      - 'HV_P2P_CTRL_TS_v26.08.31.05/**'
+      - 'HV_P2P_W1P_EDGEBOX_v26.08.31.05/**'
       - 'tools/**'
       - '.github/workflows/firmware-build.yml'
 
@@ -46,6 +46,8 @@ jobs:
           arduino-cli lib install 'JPEGDEC@1.8.4'
           mkdir -p "$HOME/Arduino/libraries"
           git clone --depth 1 https://github.com/iamfaraz/Waveshare_ST7262_LVGL.git "$HOME/Arduino/libraries/Waveshare_ST7262_LVGL"
+          python3 tools/prepare_waveshare_library.py --libraries-dir "$HOME/Arduino/libraries"
+          grep -R -F 'ESP_IO_EXPANDER_I2C_CH422G_ADDRESS_000' "$HOME/Arduino/libraries/Waveshare_ST7262_LVGL/src/Waveshare_ST7262_LVGL.cpp"
           python3 tools/prepare_lvgl_config.py --libraries-dir "$HOME/Arduino/libraries"
           test -f "$HOME/Arduino/libraries/lv_conf.h"
           grep -F '#define LV_TICK_CUSTOM 1' "$HOME/Arduino/libraries/lv_conf.h"
@@ -60,12 +62,12 @@ jobs:
 
       - name: Check that source CTRL still contains build guard
         run: |
-          grep -F '#error "CTRL-TS firmware image has not been staged.' HV_P2P_CTRL_EDGEBOX_v26.08.31.04/HV_P2P_CTRL_TS_Firmware_Image.h
+          grep -F '#error "CTRL-TS firmware image has not been staged.' HV_P2P_CTRL_EDGEBOX_v26.08.31.05/HV_P2P_CTRL_TS_Firmware_Image.h
 
       - name: Upload functional-test firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HV-P2P-v26.08.31.04-Native-Firmware
+          name: HV-P2P-v26.08.31.05-Native-Firmware
           path: NATIVE_BUILD_ARTIFACTS/
           if-no-files-found: error
           retention-days: 30
