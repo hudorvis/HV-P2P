@@ -94,6 +94,7 @@ That workflow pins:
   Arduino CLI 1.5.1
   esp32:esp32 core 3.3.8
   lvgl 8.3.11
+  generated lv_conf.h beside the lvgl library (16-bit colour, Arduino millis tick, required Montserrat fonts)
   ESP32_Display_Panel 0.1.6
   ESP32_IO_Expander 0.0.3
   JPEGDEC 1.8.4

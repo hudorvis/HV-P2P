@@ -4,6 +4,8 @@ import re
 ROOT=Path(__file__).resolve().parents[1]
 wf=(ROOT/'.github/workflows/firmware-build.yml').read_text()
 builder=(ROOT/'tools/native_build_firmware.py').read_text()
+lvglprep=(ROOT/'tools/prepare_lvgl_config.py').read_text()
+hmi=(ROOT/'HV_P2P_CTRL_TS_v26.08.31.01/HV_P2P_CTRL_TS_v26.08.31.01.ino').read_text()
 embed=(ROOT/'tools/embed_ctrl_ts_firmware.py').read_text()
 guard=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.08.31.01/HV_P2P_CTRL_TS_Firmware_Image.h').read_text()
 w1pp=(ROOT/'HV_P2P_W1P_EDGEBOX_v26.08.31.01/partitions.csv').read_text()
@@ -14,6 +16,10 @@ checks={
  'display panel pinned': "ESP32_Display_Panel@0.1.6" in wf,
  'IO expander pinned': "ESP32_IO_Expander@0.0.3" in wf,
  'JPEGDEC pinned': "JPEGDEC@1.8.4" in wf,
+ 'LVGL config prepared beside library': 'prepare_lvgl_config.py --libraries-dir' in wf and 'lv_conf.h' in wf,
+ 'LVGL config enables Arduino tick': 'LV_TICK_CUSTOM 1' in lvglprep and 'LV_TICK_CUSTOM_SYS_TIME_EXPR (millis())' in lvglprep,
+ 'LVGL required fonts enabled': 'REQUIRED_FONTS = (8, 10, 12, 14, 16, 18, 24)' in lvglprep and 'LV_FONT_MONTSERRAT_{size}' in lvglprep,
+ 'HMI only uses available Montserrat sizes': 'lv_font_montserrat_9' not in hmi and 'lv_font_montserrat_11' not in hmi,
  'native builder HMI first': builder.find('hmi_app = compile_sketch') < builder.find('ctrl_app = compile_sketch'),
  'native builder embeds before CTRL': builder.find('embed_ctrl_ts_firmware.py') < builder.find('ctrl_app = compile_sketch'),
  'EdgeBox forces 16M': 'Edgebox-ESP-100' in builder and 'FlashSize=16M' in builder,

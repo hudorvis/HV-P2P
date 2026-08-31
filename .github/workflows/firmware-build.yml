@@ -46,6 +46,10 @@ jobs:
           arduino-cli lib install 'JPEGDEC@1.8.4'
           mkdir -p "$HOME/Arduino/libraries"
           git clone --depth 1 https://github.com/iamfaraz/Waveshare_ST7262_LVGL.git "$HOME/Arduino/libraries/Waveshare_ST7262_LVGL"
+          python3 tools/prepare_lvgl_config.py --libraries-dir "$HOME/Arduino/libraries"
+          test -f "$HOME/Arduino/libraries/lv_conf.h"
+          grep -F '#define LV_TICK_CUSTOM 1' "$HOME/Arduino/libraries/lv_conf.h"
+          grep -F '#define LV_FONT_MONTSERRAT_24 1' "$HOME/Arduino/libraries/lv_conf.h"
           arduino-cli lib list
 
       - name: Source/protocol regression suite

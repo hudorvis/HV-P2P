@@ -1696,18 +1696,18 @@ static void create_ui(){
     aux_btn[i]=make_button(frame,SX+i*(AUX_W+AUX_GAP),AUX_Y,AUX_W,AUX_H);
     lv_obj_add_event_cb(aux_btn[i],aux_event_cb,LV_EVENT_CLICKED,(void*)(intptr_t)i);
     make_label(aux_btn[i],aux_heads[i],8,8,&lv_font_montserrat_10,lv_color_hex(C_CYAN),AUX_W-16);
-    aux_text_lbl[i]=make_label(aux_btn[i],aux_action_part(g_aux_labels[i]).c_str(),8,32,&lv_font_montserrat_11,lv_color_hex(C_FG),AUX_W-16);
-    aux_state[i]=make_label(aux_btn[i],aux_value_part(g_aux_labels[i]).c_str(),8,52,&lv_font_montserrat_11,lv_color_hex(C_GREEN),AUX_W-16);
+    aux_text_lbl[i]=make_label(aux_btn[i],aux_action_part(g_aux_labels[i]).c_str(),8,32,&lv_font_montserrat_12,lv_color_hex(C_FG),AUX_W-16);
+    aux_state[i]=make_label(aux_btn[i],aux_value_part(g_aux_labels[i]).c_str(),8,52,&lv_font_montserrat_12,lv_color_hex(C_GREEN),AUX_W-16);
   }
 
   // Cable/travel panel. Presets green, Ref blue, current skate white/green.
   travel_panel=make_panel(frame,SX,TRAVEL_Y,SW,TRAVEL_H,C_PANEL,C_BORDER,4);
   lv_obj_add_event_cb(travel_panel,bg_event_cb,LV_EVENT_PRESSED,nullptr);
-  travel_near_lbl=make_label(travel_panel,"NEAR",8,8,&lv_font_montserrat_9,lv_color_hex(C_MUTED),48);
+  travel_near_lbl=make_label(travel_panel,"NEAR",8,8,&lv_font_montserrat_10,lv_color_hex(C_MUTED),48);
   lbl_near_value=make_label(travel_panel,"0.00 m",8,22,&lv_font_montserrat_10,lv_color_hex(C_FG),48);
-  travel_far_lbl=make_label(travel_panel,"FAR",724,8,&lv_font_montserrat_9,lv_color_hex(C_MUTED),48);
+  travel_far_lbl=make_label(travel_panel,"FAR",724,8,&lv_font_montserrat_10,lv_color_hex(C_MUTED),48);
   lbl_far_value=make_label(travel_panel,"100.00 m",716,22,&lv_font_montserrat_10,lv_color_hex(C_FG),58);
-  travel_ref_lbl=make_label(travel_panel,"REF",332,12,&lv_font_montserrat_9,lv_color_hex(C_GREEN),40);
+  travel_ref_lbl=make_label(travel_panel,"REF",332,12,&lv_font_montserrat_10,lv_color_hex(C_GREEN),40);
 
   // horizontal travel line
   lv_obj_t *track=lv_obj_create(travel_panel); lv_obj_set_pos(track,BAR_LIMIT_LEFT,43); lv_obj_set_size(track,BAR_LIMIT_WIDTH,1); lv_obj_set_style_bg_color(track,lv_color_hex(0xd7dad8),0); lv_obj_set_style_border_width(track,0,0); lv_obj_clear_flag(track,LV_OBJ_FLAG_SCROLLABLE);
@@ -1736,25 +1736,25 @@ static void create_ui(){
 
   lv_obj_t *speed=make_panel(frame,SX+DRIVE_W+GAP,INFO_Y,SPEED_W,INFO_H,C_PANEL,C_BORDER,4);
   make_label(speed,"◴  SPEED",10,10,&lv_font_montserrat_12,lv_color_hex(C_CYAN),90);
-  make_label(speed,"CURRENT SPEED",10,39,&lv_font_montserrat_9,lv_color_hex(C_MUTED),110);
+  make_label(speed,"CURRENT SPEED",10,39,&lv_font_montserrat_10,lv_color_hex(C_MUTED),110);
   lbl_speed_combo=make_label(speed,"0.0",8,55,&lv_font_montserrat_24,lv_color_hex(C_FG),92); make_label(speed,"m/s",88,68,&lv_font_montserrat_10,lv_color_hex(C_MUTED),36);
   lbl_current_kmh=make_label(speed,"0.0",8,92,&lv_font_montserrat_16,lv_color_hex(C_GREEN),75); make_label(speed,"km/h",80,97,&lv_font_montserrat_10,lv_color_hex(C_MUTED),42);
-  make_label(speed,"MAX SPEED",144,39,&lv_font_montserrat_9,lv_color_hex(C_MUTED),100);
+  make_label(speed,"MAX SPEED",144,39,&lv_font_montserrat_10,lv_color_hex(C_MUTED),100);
   lbl_max_speed=make_label(speed,"0.0",140,55,&lv_font_montserrat_24,lv_color_hex(C_FG),78); make_label(speed,"m/s",211,68,&lv_font_montserrat_10,lv_color_hex(C_MUTED),36);
   lbl_max_kmh=make_label(speed,"0.0",140,92,&lv_font_montserrat_16,lv_color_hex(C_GREEN),75); make_label(speed,"km/h",208,97,&lv_font_montserrat_10,lv_color_hex(C_MUTED),42);
 
   lv_obj_t *position=make_panel(frame,SX+DRIVE_W+GAP+SPEED_W+GAP,INFO_Y,POS_W,INFO_H,C_PANEL,C_BORDER,4);
   make_label(position,"⌖  POSITION",10,10,&lv_font_montserrat_12,lv_color_hex(C_CYAN),100);
-  make_label(position,"CURRENT POSITION",70,37,&lv_font_montserrat_9,lv_color_hex(C_MUTED),132);
+  make_label(position,"CURRENT POSITION",70,37,&lv_font_montserrat_10,lv_color_hex(C_MUTED),132);
   lbl_current_pos=make_label(position,"0.00",66,52,&lv_font_montserrat_24,lv_color_hex(C_GREEN),122); make_label(position,"m",190,67,&lv_font_montserrat_10,lv_color_hex(C_MUTED),24);
-  make_label(position,"TO NEAR",18,91,&lv_font_montserrat_9,lv_color_hex(C_MUTED),78); lbl_to_near=make_label(position,"0.00",14,105,&lv_font_montserrat_14,lv_color_hex(C_GREEN),74); make_label(position,"m",85,108,&lv_font_montserrat_9,lv_color_hex(C_MUTED),18);
-  make_label(position,"TO FAR",154,91,&lv_font_montserrat_9,lv_color_hex(C_MUTED),70); lbl_to_far=make_label(position,"0.00",150,105,&lv_font_montserrat_14,lv_color_hex(C_GREEN),70); make_label(position,"m",220,108,&lv_font_montserrat_9,lv_color_hex(C_MUTED),18);
+  make_label(position,"TO NEAR",18,91,&lv_font_montserrat_10,lv_color_hex(C_MUTED),78); lbl_to_near=make_label(position,"0.00",14,105,&lv_font_montserrat_14,lv_color_hex(C_GREEN),74); make_label(position,"m",85,108,&lv_font_montserrat_10,lv_color_hex(C_MUTED),18);
+  make_label(position,"TO FAR",154,91,&lv_font_montserrat_10,lv_color_hex(C_MUTED),70); lbl_to_far=make_label(position,"0.00",150,105,&lv_font_montserrat_14,lv_color_hex(C_GREEN),70); make_label(position,"m",220,108,&lv_font_montserrat_10,lv_color_hex(C_MUTED),18);
   middle_panel=position; cell_to_near=position; cell_speed=speed; cell_to_far=position;
 
   lv_obj_t *footer=make_panel(frame,SX,FOOT_Y,SW,FOOT_H,C_PANEL,C_BORDER,4);
-  make_label(footer,"SRVR TIME",12,9,&lv_font_montserrat_9,lv_color_hex(C_MUTED),66);
+  make_label(footer,"SRVR TIME",12,9,&lv_font_montserrat_10,lv_color_hex(C_MUTED),66);
   lbl_srvr_time=make_label(footer,g_srvr_time.c_str(),82,8,&lv_font_montserrat_10,lv_color_hex(C_FG),180);
-  make_label(footer,"UPTIME",648,9,&lv_font_montserrat_9,lv_color_hex(C_MUTED),55);
+  make_label(footer,"UPTIME",648,9,&lv_font_montserrat_10,lv_color_hex(C_MUTED),55);
   lbl_uptime=make_label(footer,g_uptime.c_str(),705,8,&lv_font_montserrat_10,lv_color_hex(C_FG),68);
 
   // Network settings code remains compiled for service builds, but the locked

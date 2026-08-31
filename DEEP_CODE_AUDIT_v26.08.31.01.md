@@ -119,3 +119,9 @@ bench-test:
 - soft limits and low-speed motion before full-speed testing
 
 Only after those gates pass should the release be described as hardware-tested/production.
+
+## GitHub native-build fix — 31 Aug 2026
+
+The first native CTRL-TS CI attempt stopped before compiling project code because Arduino LVGL 8.3.11 requires `lv_conf.h` beside the `lvgl` library directory. The workflow now generates this deterministically from the installed 8.3.11 template and verifies 16-bit colour, Arduino `millis()` tick source, and every Montserrat size used by CTRL-TS.
+
+The same audit found two invalid LVGL built-in font references (`lv_font_montserrat_9` and `_11`); LVGL 8.3.11 does not provide those standard sizes. They have been replaced by the nearest built-in sizes 10 and 12 respectively, and the pipeline validator now rejects recurrence of those invalid font symbols.
