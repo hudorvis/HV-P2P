@@ -5,10 +5,10 @@ ROOT=Path(__file__).resolve().parents[1]
 wf=(ROOT/'.github/workflows/firmware-build.yml').read_text()
 builder=(ROOT/'tools/native_build_firmware.py').read_text()
 lvglprep=(ROOT/'tools/prepare_lvgl_config.py').read_text()
-hmi=(ROOT/'HV_P2P_CTRL_TS_v26.08.31.01/HV_P2P_CTRL_TS_v26.08.31.01.ino').read_text()
+hmi=(ROOT/'HV_P2P_CTRL_TS_v26.08.31.03/HV_P2P_CTRL_TS_v26.08.31.03.ino').read_text()
 embed=(ROOT/'tools/embed_ctrl_ts_firmware.py').read_text()
-guard=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.08.31.01/HV_P2P_CTRL_TS_Firmware_Image.h').read_text()
-w1pp=(ROOT/'HV_P2P_W1P_EDGEBOX_v26.08.31.01/partitions.csv').read_text()
+guard=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.08.31.03/HV_P2P_CTRL_TS_Firmware_Image.h').read_text()
+w1pp=(ROOT/'HV_P2P_W1P_EDGEBOX_v26.08.31.03/partitions.csv').read_text()
 checks={
  'workflow core 3.3.8': 'esp32:esp32@3.3.8' in wf,
  'workflow Arduino CLI pinned': "version: '1.5.1'" in wf,
@@ -20,6 +20,9 @@ checks={
  'LVGL config enables Arduino tick': 'LV_TICK_CUSTOM 1' in lvglprep and 'LV_TICK_CUSTOM_SYS_TIME_EXPR (millis())' in lvglprep,
  'LVGL required fonts enabled': 'REQUIRED_FONTS = (8, 10, 12, 14, 16, 18, 24)' in lvglprep and 'LV_FONT_MONTSERRAT_{size}' in lvglprep,
  'HMI only uses available Montserrat sizes': 'lv_font_montserrat_9' not in hmi and 'lv_font_montserrat_11' not in hmi,
+ 'HMI avoids Arduino HEX macro collision': 'static const char HEX[]' not in hmi and 'HEX_DIGITS' in hmi,
+ 'HMI Update.write receives mutable frame payload': 'static void fw_handle_block(HVP2PRS485::Frame &frame)' in hmi and 'Update.write(frame.payload + 4, dataLen)' in hmi,
+ 'HMI LVGL 35 percent opacity is explicit': 'LV_OPA_35' not in hmi and 'HV_OPA_35 = (lv_opa_t)89' in hmi,
  'native builder HMI first': builder.find('hmi_app = compile_sketch') < builder.find('ctrl_app = compile_sketch'),
  'native builder embeds before CTRL': builder.find('embed_ctrl_ts_firmware.py') < builder.find('ctrl_app = compile_sketch'),
  'EdgeBox forces 16M': 'Edgebox-ESP-100' in builder and 'FlashSize=16M' in builder,
@@ -30,7 +33,7 @@ checks={
  'embed verifies ESP magic': 'ESP_IMAGE_MAGIC = 0xE9' in embed,
  'embed writes HW/proto/version/hash': all(x in embed for x in ('HV_CTRL_TS_REQUIRED_HW','HV_CTRL_TS_REQUIRED_PROTOCOL','HV_CTRL_TS_REQUIRED_VERSION','HV_CTRL_TS_REQUIRED_SHA256')),
  'W1P dual OTA added': all(x in w1pp for x in ('ota_0','ota_1','0x600000')),
- 'artifact upload present': 'HV-P2P-v26.08.31.01-Native-Firmware' in wf,
+ 'artifact upload present': 'HV-P2P-v26.08.31.03-Native-Firmware' in wf,
 }
 failed=[k for k,v in checks.items() if not v]
 for k,v in checks.items(): print(('OK  ' if v else 'FAIL')+k)

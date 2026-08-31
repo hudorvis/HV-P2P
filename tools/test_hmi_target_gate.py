@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 REQUIRED_HW = "WS-ESP32S3-7"
 REQUIRED_PROTO = 1
-REQUIRED_VERSION = "v26.08.31.01"
+REQUIRED_VERSION = "v26.08.31.03"
 REQUIRED_SHA = "a" * 64
 
 @dataclass(frozen=True)
