@@ -1,0 +1,20 @@
+{
+  "files": [
+    "main.py",
+    "backend.py",
+    "resources.qrc",
+    "qml/Main.qml",
+    "qml/pages/SetupPage.qml",
+    "qml/pages/LogPage.qml",
+    "qml/components/Panel.qml",
+    "qml/components/HVButton.qml",
+    "qml/components/HVTab.qml",
+    "qml/components/HVField.qml",
+    "qml/components/HVCombo.qml",
+    "qml/components/StatusDot.qml",
+    "qml/components/ConnectionCard.qml",
+    "qml/components/SpanDiagram.qml",
+    "qml/components/HVReadout.qml",
+    "qml/components/HVCheck.qml"
+  ]
+}
