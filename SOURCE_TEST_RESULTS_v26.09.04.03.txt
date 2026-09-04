@@ -1,29 +1,29 @@
 
-==> python3 /mnt/data/hv26090402_work/tools/validate_edgebox_integration.py
-HV P2P EdgeBox v26.09.04.02 source-level integration validation PASS
+==> python3 /mnt/data/hv26090403_work/tools/validate_edgebox_integration.py
+HV P2P EdgeBox v26.09.04.03 source-level integration validation PASS
 Checks passed: 316
-  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.09.04.02/HV_P2P_CTRL_EDGEBOX_v26.09.04.02.ino
-  OK: exists: HV_P2P_W1P_EDGEBOX_v26.09.04.02/HV_P2P_W1P_EDGEBOX_v26.09.04.02.ino
-  OK: exists: HV_P2P_CTRL_TS_v26.09.04.02/HV_P2P_CTRL_TS_v26.09.04.02.ino
-  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.09.04.02/HV_P2P_RS485_Frame.h
-  OK: exists: HV_P2P_CTRL_TS_v26.09.04.02/HV_P2P_RS485_Frame.h
-  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.09.04.02/HV_P2P_CTRL_TS_Firmware_Image.h
-  OK: exists: SRVR_GitHub_v26.09.04.02/backend.py
-  OK: exists: SRVR_GitHub_v26.09.04.02/main.py
-  OK: exists: SRVR_GitHub_v26.09.04.02/qml/pages/SetupPage.qml
-  OK: exists: SRVR_GitHub_v26.09.04.02/qml/components/SpanDiagram.qml
-  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.09.04.02/partitions.csv
-  OK: exists: HV_P2P_CTRL_TS_v26.09.04.02/partitions.csv
-  OK: exists: HV_P2P_W1P_EDGEBOX_v26.09.04.02/partitions.csv
-  OK: Arduino same-name sketch folder: HV_P2P_CTRL_EDGEBOX_v26.09.04.02
-  OK: Arduino same-name sketch folder: HV_P2P_W1P_EDGEBOX_v26.09.04.02
-  OK: Arduino same-name sketch folder: HV_P2P_CTRL_TS_v26.09.04.02
+  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.09.04.03/HV_P2P_CTRL_EDGEBOX_v26.09.04.03.ino
+  OK: exists: HV_P2P_W1P_EDGEBOX_v26.09.04.03/HV_P2P_W1P_EDGEBOX_v26.09.04.03.ino
+  OK: exists: HV_P2P_CTRL_TS_v26.09.04.03/HV_P2P_CTRL_TS_v26.09.04.03.ino
+  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.09.04.03/HV_P2P_RS485_Frame.h
+  OK: exists: HV_P2P_CTRL_TS_v26.09.04.03/HV_P2P_RS485_Frame.h
+  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.09.04.03/HV_P2P_CTRL_TS_Firmware_Image.h
+  OK: exists: SRVR_GitHub_v26.09.04.03/backend.py
+  OK: exists: SRVR_GitHub_v26.09.04.03/main.py
+  OK: exists: SRVR_GitHub_v26.09.04.03/qml/pages/SetupPage.qml
+  OK: exists: SRVR_GitHub_v26.09.04.03/qml/components/SpanDiagram.qml
+  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.09.04.03/partitions.csv
+  OK: exists: HV_P2P_CTRL_TS_v26.09.04.03/partitions.csv
+  OK: exists: HV_P2P_W1P_EDGEBOX_v26.09.04.03/partitions.csv
+  OK: Arduino same-name sketch folder: HV_P2P_CTRL_EDGEBOX_v26.09.04.03
+  OK: Arduino same-name sketch folder: HV_P2P_W1P_EDGEBOX_v26.09.04.03
+  OK: Arduino same-name sketch folder: HV_P2P_CTRL_TS_v26.09.04.03
   OK: CTRL: all (), [], {} balanced
-  OK: CTRL: release version v26.09.04.02
+  OK: CTRL: release version v26.09.04.03
   OK: W1P: all (), [], {} balanced
-  OK: W1P: release version v26.09.04.02
+  OK: W1P: release version v26.09.04.03
   OK: CTRL-TS: all (), [], {} balanced
-  OK: CTRL-TS: release version v26.09.04.02
+  OK: CTRL-TS: release version v26.09.04.03
   OK: CTRL and CTRL-TS use byte-identical RS485 framing header
   OK: W1P-TS remains excluded
   OK: CTRL EdgeBox Ethernet pin: EDGEBOX_ETH_CS   10
@@ -155,11 +155,11 @@ Checks passed: 316
   OK: W1P proven v26.08.19.01 logic preserved: driveStopNow
   OK: W1P proven v26.08.19.01 logic preserved: servicePeerTimeout
   OK: W1P proven v26.08.19.01 logic preserved: preserveDisplayedPositionForMotorDirectionChange
-  OK: W1P v26.09.04.02 reviewed safety extension hash locked: driveAutoEnableReady
-  OK: W1P v26.09.04.02 reviewed safety extension hash locked: handleCommand
-  OK: W1P v26.09.04.02 reviewed safety extension hash locked: sendStatusLine
-  OK: W1P v26.09.04.02 reviewed safety extension hash locked: serviceVelocityCommandWatchdog
-  OK: W1P v26.09.04.02 reviewed safety extension hash locked: hvPrepareSafeServiceState
+  OK: W1P v26.09.04.03 reviewed safety extension hash locked: driveAutoEnableReady
+  OK: W1P v26.09.04.03 reviewed safety extension hash locked: handleCommand
+  OK: W1P v26.09.04.03 reviewed safety extension hash locked: sendStatusLine
+  OK: W1P v26.09.04.03 reviewed safety extension hash locked: serviceVelocityCommandWatchdog
+  OK: W1P v26.09.04.03 reviewed safety extension hash locked: hvPrepareSafeServiceState
   OK: W1P Leadshine/safety contract: RS485_BAUD = 115200
   OK: W1P Leadshine/safety contract: DRIVE_MODBUS_ID = 1
   OK: W1P Leadshine/safety contract: SERIAL_8N1
@@ -271,7 +271,7 @@ Checks passed: 316
   OK: CTRL and W1P source identify the EdgeBox-ESP-100 hardware baseline
   OK: Setup preserves approved three-panel grid with locked CTRL-TS status panel
   OK: Free-D geometry markers are sampled from the exact rendered cable path
-  OK: exists: SRVR_GitHub_v26.09.04.02/qml/Main.qml
+  OK: exists: SRVR_GitHub_v26.09.04.03/qml/Main.qml
   OK: Run/Setup shared header uses locked two-line HV P2P / SRVR logo only
   OK: Run Save/Recall/Slip use one global five-second two-step confirmation state
   OK: Run confirmation action covered: preset:save:
@@ -319,36 +319,36 @@ Checks passed: 316
   OK: SRVR exposes CTRL-TS firmware diagnostic: def joystickInputConnected
   OK: A7 host sanity: 16-bit flags + big-endian float decode
 
-==> python3 /mnt/data/hv26090402_work/tools/test_rs485_frame_host.py
+==> python3 /mnt/data/hv26090403_work/tools/test_rs485_frame_host.py
 crc=7442b814
 RS485_FRAME_HOST_PASS
 PYTHON_CRC_CROSSCHECK_PASS 7442b814
 
-==> python3 /mnt/data/hv26090402_work/tools/test_hmi_fw_retry_contract.py
+==> python3 /mnt/data/hv26090403_work/tools/test_hmi_fw_retry_contract.py
 HMI_FW_RETRY_CONTRACT_PASS: lost block ACK, lost FW_RESULT, stale sequence, rollback guards
 
-==> python3 /mnt/data/hv26090402_work/tools/test_hmi_target_gate.py
+==> python3 /mnt/data/hv26090403_work/tools/test_hmi_target_gate.py
 HMI_TARGET_GATE_PASS
 wrong hardware/protocol can never enter automatic update
 correct target with mismatched version/hash enters automatic update
 
-==> python3 /mnt/data/hv26090402_work/tools/test_embed_tool.py
-Image:    /tmp/hvp2p_embed_test_sbj_i7kl/fixture.ino.bin
+==> python3 /mnt/data/hv26090403_work/tools/test_embed_tool.py
+Image:    /tmp/hvp2p_embed_test_fzi9yp2t/fixture.ino.bin
 Hardware: WS-ESP32S3-7
 Protocol: 1
-Version:  v26.09.04.02
+Version:  v26.09.04.03
 Size:     4096 bytes (0.004 MiB)
 SHA256:   120ca14d2ef4662d8f89da7e5a26a6e54cb6f59915e121c71a8f9a6a906b51c7
-Wrote:    /tmp/hvp2p_embed_test_sbj_i7kl/HV_P2P_CTRL_TS_Firmware_Image.h
+Wrote:    /tmp/hvp2p_embed_test_fzi9yp2t/HV_P2P_CTRL_TS_Firmware_Image.h
 STAGED_HMI_HEADER_PASS
 hardware=WS-ESP32S3-7
 protocol=1
-version=v26.09.04.02
+version=v26.09.04.03
 size=4096
 sha256=120ca14d2ef4662d8f89da7e5a26a6e54cb6f59915e121c71a8f9a6a906b51c7
 EMBED_TOOL_SELFTEST_PASS
 
-==> python3 /mnt/data/hv26090402_work/tools/validate_build_pipeline.py
+==> python3 /mnt/data/hv26090403_work/tools/validate_build_pipeline.py
 OK  workflow core 3.3.8
 OK  workflow Arduino CLI pinned
 OK  HMI LVGL pinned
@@ -381,6 +381,8 @@ OK  SRVR macOS Intel job present
 OK  SRVR macOS Apple Silicon job present
 OK  SRVR Windows x64 job present
 OK  Windows MSVC developer tools initialized
+OK  Windows dumpbin probe uses real PE image
+OK  Windows deploy steps re-resolve dumpbin
 OK  Windows Nuitka compiler pinned
 OK  Windows dependency-tool downloads are noninteractive
 OK  Windows deploy dry-run proves assume-yes flag
@@ -393,21 +395,21 @@ OK  Windows native config path regression present
 OK  Speed mode contract included in source suite
 OK  complete release internal SHA256 manifest
 OK  complete release external SHA256
-BUILD_PIPELINE_VALIDATION_PASS (44 checks)
+BUILD_PIPELINE_VALIDATION_PASS (46 checks)
 
-==> python3 /mnt/data/hv26090402_work/tools/test_modbus_contract_host.py
+==> python3 /mnt/data/hv26090403_work/tools/test_modbus_contract_host.py
 MODBUS_CRC_HOST_PASS q1=CDC5 q2=0B98
 
-==> python3 /mnt/data/hv26090402_work/tools/test_srvr_wire_contract.py
+==> python3 /mnt/data/hv26090403_work/tools/test_srvr_wire_contract.py
 SRVR_WIRE_CONTRACT_PASS: actual _parse_control_packet accepts EdgeBox A7 16-bit flags / network-order float
 
-==> python3 /mnt/data/hv26090402_work/tools/test_speed_mode_contract.py
+==> python3 /mnt/data/hv26090403_work/tools/test_speed_mode_contract.py
 SPEED_MODE_CONTRACT_PASS
 KP=0.140 KI=0.200 deadband=0.035 max_correction=0.850 m/s
 
-==> python3 -m py_compile /mnt/data/hv26090402_work/SRVR_GitHub_v26.09.04.02/backend.py /mnt/data/hv26090402_work/SRVR_GitHub_v26.09.04.02/main.py
+==> python3 -m py_compile /mnt/data/hv26090403_work/SRVR_GitHub_v26.09.04.03/backend.py /mnt/data/hv26090403_work/SRVR_GitHub_v26.09.04.03/main.py
 
-==> python3 /mnt/data/hv26090402_work/SRVR_GitHub_v26.09.04.02/tools/validate_project.py
+==> python3 /mnt/data/hv26090403_work/SRVR_GitHub_v26.09.04.03/tools/validate_project.py
 HV P2P SRVR preflight PASS
   Python syntax: OK
   Qt Quick only / no Tkinter: OK

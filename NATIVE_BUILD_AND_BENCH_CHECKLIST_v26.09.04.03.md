@@ -1,6 +1,6 @@
-# HV P2P v26.09.04.02 — Native Build & Functional Bench Checklist
+# HV P2P v26.09.04.03 — Native Build & Functional Bench Checklist
 
-## Windows CI dependency-tool gate (v26.09.04.02)
+## Windows CI dependency-tool gate (v26.09.04.03)
 
 Before `pyside6-deploy` runs on Windows x64, CI must prove all of the following:
 
@@ -24,27 +24,27 @@ This prevents the non-interactive Dependency Walker prompt that stopped v26.09.0
 - [ ] Confirm CTRL-TS native app is >32 KiB and <= `0x380000` bytes.
 - [ ] Confirm carrier verification prints `STAGED_HMI_HEADER_PASS`.
 - [ ] Confirm generated carrier hardware is `WS-ESP32S3-7`, protocol `1`, version
-      `v26.09.04.02`, and its SHA matches the native CTRL-TS `.ino.bin`.
+      `v26.09.04.03`, and its SHA matches the native CTRL-TS `.ino.bin`.
 - [ ] Confirm complete CTRL app including embedded CTRL-TS image is <= `0x600000`.
 - [ ] Confirm W1P app is <= `0x600000`.
-- [ ] Confirm the native builder verifies the compiled CTRL binary contains `HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_VERSION=v26.09.04.02`.
-- [ ] Confirm the native builder verifies the compiled W1P binary contains `HV_P2P_FW_ROLE=W1P;HV_P2P_FW_VERSION=v26.09.04.02`.
+- [ ] Confirm the native builder verifies the compiled CTRL binary contains `HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_VERSION=v26.09.04.03`.
+- [ ] Confirm the native builder verifies the compiled W1P binary contains `HV_P2P_FW_ROLE=W1P;HV_P2P_FW_VERSION=v26.09.04.03`.
 - [ ] Confirm `NATIVE_BUILD_MANIFEST.json` records the exact Waveshare git commit.
-- [ ] Confirm **macOS Intel** SRVR runs on `macos-15-intel`, reports `x86_64`, passes source/backend/QML/frozen-app smoke tests, and its Info.plist reports `CFBundleIdentifier=com.hvp2p.srvr`, `CFBundleShortVersionString=26.9.4`, `CFBundleVersion=2609.4.2`, and `HVP2PReleaseVersion=26.09.04.02`.
+- [ ] Confirm **macOS Intel** SRVR runs on `macos-15-intel`, reports `x86_64`, passes source/backend/QML/frozen-app smoke tests, and its Info.plist reports `CFBundleIdentifier=com.hvp2p.srvr`, `CFBundleShortVersionString=26.9.4`, `CFBundleVersion=2609.4.3`, and `HVP2PReleaseVersion=26.09.04.03`.
 - [ ] Confirm **macOS Apple Silicon** SRVR runs on `macos-15`, reports `arm64`, passes the same source/backend/QML/frozen-app smoke tests, and carries the same versioned bundle metadata.
 - [ ] Confirm **Windows x64** SRVR runs on `windows-2025`, the built PE machine is `0x8664` / AMD64, and source/backend/QML/frozen-exe smoke tests all pass.
 - [ ] Confirm Windows SRVR stores private config under `%LOCALAPPDATA%\HV P2P SRVR` (or documented fallback) and Save/Load Config handles `file:///C:/...` plus UNC paths.
 - [ ] Confirm the Complete Release `SRVR/` directory contains exactly the three original unextracted native ZIPs: macOS Intel, macOS Apple Silicon and Windows x64; no `.app` or `.exe` is extracted into the Complete Release.
-- [ ] Confirm `COMPLETE_RELEASE/SHA256SUMS.txt` exists and the external `HV P2P v26.09.04.02 Complete Release.zip.sha256` matches the exact combined ZIP.
-- [ ] Download `HV-P2P-v26.09.04.02-Native-Firmware` artifact and retain `NATIVE_BUILD_MANIFEST.json` + `SHA256SUMS.txt`.
+- [ ] Confirm `COMPLETE_RELEASE/SHA256SUMS.txt` exists and the external `HV P2P v26.09.04.03 Complete Release.zip.sha256` matches the exact combined ZIP.
+- [ ] Download `HV-P2P-v26.09.04.03-Native-Firmware` artifact and retain `NATIVE_BUILD_MANIFEST.json` + `SHA256SUMS.txt`.
 - [ ] Download and preserve the exact Complete Release ZIP byte-for-byte; do not extract/re-zip any of the three nested SRVR ZIPs before returning it for audit.
 
 ## B. Initial flashing
 
 - [ ] Verify EdgeBox serial-number/hardware revision before using its external USB port for
       programming; older EdgeBox revisions use the internal UART programming header.
-- [ ] One-time USB flash CTRL-TS v26.09.04.02 first.
-- [ ] Flash W1P EdgeBox with its matching v26.09.04.02 native build.
+- [ ] One-time USB flash CTRL-TS v26.09.04.03 first.
+- [ ] Flash W1P EdgeBox with its matching v26.09.04.03 native build.
 - [ ] Flash CTRL EdgeBox with the **staged/native CTRL build** that contains the real HMI image.
 - [ ] Never attempt to compile the clean CTRL source by deleting/bypassing the carrier `#error`.
 
@@ -158,7 +158,7 @@ Only after independent E-stop/STO/brake/power-isolation circuits are proven.
 - [ ] Verify Battery Change auto-cancels correctly on return inside limits.
 - [ ] Exercise E-stop from SRVR, CTRL and W1P and verify source/combinations display correctly.
 
-## K. v26.09.04.02 locked Run / Setup / Virtual acceptance
+## K. v26.09.04.03 locked Run / Setup / Virtual acceptance
 
 Perform Virtual-mode checks with the physical load safely isolated until its output-inhibit behavior is independently confirmed.
 
@@ -181,5 +181,5 @@ Perform Virtual-mode checks with the physical load safely isolated until its out
 
 ## Release label
 
-Do not label v26.09.04.02 “hardware-tested” until every applicable physical gate above is recorded.
+Do not label v26.09.04.03 “hardware-tested” until every applicable physical gate above is recorded.
 A successful GitHub native build means **compile-ready/test-firmware produced**, not powered-motion proof.

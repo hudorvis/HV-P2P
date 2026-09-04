@@ -1,0 +1,49 @@
+HV P2P v26.09.04.02 -> v26.09.04.03 CHANGE AUDIT
+========================================================================
+
+Purpose
+-------
+v26.09.04.03 is a Windows CI probe-correction revision. The v26.09.04.02 job successfully
+initialized the x64 MSVC environment and located dumpbin.exe, but then failed
+its own preflight because `dumpbin /?` returned a non-zero help-mode status.
+
+Corrective changes
+------------------
+1. The Windows preflight now runs `dumpbin /headers` against the runner's real
+   `cmd.exe` (`$env:ComSpec`) and captures the native exit code after dumpbin
+   completes.
+2. It requires exit code 0 plus recognizable PE/x64 header output.
+3. The obsolete `dumpbin /?` probe is forbidden by source/build validation.
+4. Both Windows deployment steps re-resolve dumpbin immediately before
+   `pyside6-deploy`, proving the MSVC PATH remains visible after Python setup.
+5. Existing Nuitka 4.2 pinning and `--assume-yes-for-downloads` handling are
+   retained unchanged.
+6. Apple bundle build identity advances from 2609.4.2 to 2609.4.3 to match the
+   new release revision.
+
+Normalized active-project comparison
+------------------------------------
+Files identical after normalizing only release identity: 61
+Files with intentional non-version changes: 3
+Missing/unpaired active files: 0
+
+Intentional non-version changes:
+  - .github/workflows/complete-build.yml
+  - SRVR_GitHub_vVERSION/tools/validate_project.py
+  - tools/validate_build_pipeline.py
+
+Locked QML comparison
+---------------------
+Exact byte-identical QML files: 13
+QML differences: 0
+
+Validation
+----------
+- Integrated source checks: 316 PASS
+- Build-pipeline checks: 46 PASS
+- Speed-mode contract: PASS
+- Full source suite: ALL_SOURCE_CHECKS_PASS
+- Workflow YAML parse: PASS
+
+No application motion logic, Power/Speed tuning, firmware control behaviour,
+or locked Run/Setup operator layout was intentionally changed in this revision.

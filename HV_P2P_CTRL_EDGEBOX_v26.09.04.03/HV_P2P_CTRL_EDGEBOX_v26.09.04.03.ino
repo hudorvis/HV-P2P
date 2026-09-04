@@ -15,7 +15,7 @@
 static bool g_ads_inited = false;
 static uint8_t ADS_ADDR = 0x48;
 
-#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.09.04.02"
+#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.09.04.03"
 #define CTRL_HMI_ARCH "EdgeBox ESP-100 + isolated RS485 Waveshare thin HMI"
 
 IPAddress local_IP(172,20,1,101);
@@ -199,7 +199,7 @@ static uint32_t lastHmiLayoutForward = 0;
 #define HMI_LAYOUT_MAX_LEN 2200
 static const char* HMI_LAYOUT_NVS_NS = "hmiui";
 static const char* HMI_LAYOUT_NVS_KEY = "layout";
-static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.09.04.02|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
+static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.09.04.03|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
 
 
 
@@ -224,7 +224,7 @@ static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_CTRL";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL_TS,W1P,W1P_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_CTRL_v*.ino.bin firmware. CTRL-TS and W1P files are rejected.";
 static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=CTRL;";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_VERSION=v26.09.04.02";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_VERSION=v26.09.04.03";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
@@ -483,7 +483,7 @@ static void hvLoadHmiLayoutConfig() {
     int nl = stored.indexOf('\n');
     if(nl >= 0) stored = stored.substring(0, nl);
     stored.trim();
-    // v26.09.04.02 migration: older CTRL NVS layouts were main4/aux1-aux4.
+    // v26.09.04.03 migration: older CTRL NVS layouts were main4/aux1-aux4.
     // Preserve the operator's stored labels/settings but expose the new AUX5 tile.
     if(stored.indexOf("|layout=main4") >= 0) stored.replace("|layout=main4", "|layout=main5");
     if(stored.indexOf("|aux5=") < 0) stored += "|aux5=AUX 5";
@@ -808,7 +808,7 @@ static void sendHmiStatusToSrvr()
   uint32_t age = g_lastHmiRxMs ? (now - g_lastHmiRxMs) : 999999;
   String line = "HMI_STATUS";
   line += "|ctrl_ts=" + String(hmiLinkConnected() ? 1 : 0);
-  line += "|ctrl_version=v26.09.04.02";
+  line += "|ctrl_version=v26.09.04.03";
   line += "|ads=" + String(g_ads_inited ? 1 : 0);
   line += "|age_ms=" + String((unsigned long)age);
   // Report the identity actually returned by the Waveshare rather than the CTRL
@@ -947,7 +947,7 @@ static void handleUdpRx()
     g_lastSrvrDisplayMs = millis();
     g_latestDisplayPacket = line;
     g_latestDisplayPacket.replace("DSP1|", "HMI1|");
-    // v26.09.04.02: store latest SRVR display packet only. The UART
+    // v26.09.04.03: store latest SRVR display packet only. The UART
     // forward is rate-limited in loop() so CTRL-TS is not flooded and the
     // left-side LVGL elements do not flicker from repeated redraw pressure.
   }
@@ -1355,7 +1355,7 @@ void loop()
     g_latestDisplayPacket = "";
   }
 
-  // v26.09.04.02: do not resend UIL1 layout on a timer.
+  // v26.09.04.03: do not resend UIL1 layout on a timer.
   // Some Waveshare/LVGL builds visibly flicker when the layout header/config
   // is resent periodically. Layout is now sent only at boot, upload/reset,
   // and in response to a CTRL-TS PING/reconnect request.
