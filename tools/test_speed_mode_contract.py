@@ -11,8 +11,8 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-SRVR = (ROOT / 'SRVR_GitHub_v26.09.04.01' / 'backend.py').read_text(encoding='utf-8')
-W1P = (ROOT / 'HV_P2P_W1P_EDGEBOX_v26.09.04.01' / 'HV_P2P_W1P_EDGEBOX_v26.09.04.01.ino').read_text(encoding='utf-8')
+SRVR = (ROOT / 'SRVR_GitHub_v26.09.04.02' / 'backend.py').read_text(encoding='utf-8')
+W1P = (ROOT / 'HV_P2P_W1P_EDGEBOX_v26.09.04.02' / 'HV_P2P_W1P_EDGEBOX_v26.09.04.02.ino').read_text(encoding='utf-8')
 
 
 def const(name: str) -> float:

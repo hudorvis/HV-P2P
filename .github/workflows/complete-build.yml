@@ -1,4 +1,4 @@
-name: HV P2P Complete Build v26.09.04.01
+name: HV P2P Complete Build v26.09.04.02
 
 on:
   workflow_dispatch:
@@ -69,12 +69,12 @@ jobs:
 
       - name: Check that source CTRL still contains build guard
         run: |
-          grep -F '#error "CTRL-TS firmware image has not been staged.' HV_P2P_CTRL_EDGEBOX_v26.09.04.01/HV_P2P_CTRL_TS_Firmware_Image.h
+          grep -F '#error "CTRL-TS firmware image has not been staged.' HV_P2P_CTRL_EDGEBOX_v26.09.04.02/HV_P2P_CTRL_TS_Firmware_Image.h
 
       - name: Upload functional-test firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HV-P2P-v26.09.04.01-Native-Firmware
+          name: HV-P2P-v26.09.04.02-Native-Firmware
           path: NATIVE_BUILD_ARTIFACTS/
           if-no-files-found: error
           retention-days: 30
@@ -96,12 +96,12 @@ jobs:
     timeout-minutes: 50
     defaults:
       run:
-        working-directory: SRVR_GitHub_v26.09.04.01
+        working-directory: SRVR_GitHub_v26.09.04.02
     env:
-      APP_VERSION: '26.09.04.01'
+      APP_VERSION: '26.09.04.02'
       BUNDLE_IDENTIFIER: 'com.hvp2p.srvr'
       BUNDLE_SHORT_VERSION: '26.9.4'
-      BUNDLE_BUILD_VERSION: '2609.4.1'
+      BUNDLE_BUILD_VERSION: '2609.4.2'
       QT_QUICK_CONTROLS_STYLE: Basic
       PYTHONUNBUFFERED: '1'
       EXPECTED_ARCH: ${{ matrix.expected_arch }}
@@ -123,7 +123,7 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
-          cache-dependency-path: SRVR_GitHub_v26.09.04.01/requirements.txt
+          cache-dependency-path: SRVR_GitHub_v26.09.04.02/requirements.txt
 
       - name: Static project preflight
         shell: bash
@@ -153,11 +153,11 @@ jobs:
           set -euxo pipefail
           # Explicitly prove CI can import the application backend before running
           # the larger regression suite. This catches path mistakes immediately.
-          PYTHONPATH="$GITHUB_WORKSPACE/SRVR_GitHub_v26.09.04.01${PYTHONPATH:+:$PYTHONPATH}" python - <<'PY'
+          PYTHONPATH="$GITHUB_WORKSPACE/SRVR_GitHub_v26.09.04.02${PYTHONPATH:+:$PYTHONPATH}" python - <<'PY'
           import backend
           print("backend import PASS:", backend.__file__)
           PY
-          PYTHONPATH="$GITHUB_WORKSPACE/SRVR_GitHub_v26.09.04.01${PYTHONPATH:+:$PYTHONPATH}" python -m tools.test_backend_logic
+          PYTHONPATH="$GITHUB_WORKSPACE/SRVR_GitHub_v26.09.04.02${PYTHONPATH:+:$PYTHONPATH}" python -m tools.test_backend_logic
 
       - name: Create isolated deployment source tree
         shell: bash
@@ -428,8 +428,8 @@ jobs:
       - name: Upload GitHub Actions artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HV-P2P-SRVR-v26.09.04.01-${{ matrix.artifact_suffix }}
-          path: HV P2P SRVR v26.09.04.01 ${{ matrix.platform_label }}.zip
+          name: HV-P2P-SRVR-v26.09.04.02-${{ matrix.artifact_suffix }}
+          path: HV P2P SRVR v26.09.04.02 ${{ matrix.platform_label }}.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -441,9 +441,9 @@ jobs:
     defaults:
       run:
         shell: pwsh
-        working-directory: SRVR_GitHub_v26.09.04.01
+        working-directory: SRVR_GitHub_v26.09.04.02
     env:
-      APP_VERSION: '26.09.04.01'
+      APP_VERSION: '26.09.04.02'
       QT_QUICK_CONTROLS_STYLE: Basic
       PYTHONUNBUFFERED: '1'
 
@@ -451,11 +451,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Confirm Windows x64 runner
+      - name: Initialize MSVC developer tools
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Confirm Windows x64 runner and dependency tools
         run: |
           Write-Host "OS: $([System.Environment]::OSVersion.VersionString)"
           Write-Host "PROCESSOR_ARCHITECTURE=$env:PROCESSOR_ARCHITECTURE"
           if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { throw "Expected Windows x64 runner" }
+          $dumpbin = (Get-Command dumpbin.exe -ErrorAction Stop).Source
+          Write-Host "dumpbin: $dumpbin"
+          & dumpbin.exe /? | Select-Object -First 3
+          if ($LASTEXITCODE -ne 0) { throw 'dumpbin is not usable from the MSVC developer environment' }
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -463,7 +472,7 @@ jobs:
           python-version: '3.12'
           architecture: 'x64'
           cache: 'pip'
-          cache-dependency-path: SRVR_GitHub_v26.09.04.01/requirements.txt
+          cache-dependency-path: SRVR_GitHub_v26.09.04.02/requirements.txt
 
       - name: Static project preflight
         run: |
@@ -472,10 +481,13 @@ jobs:
           python -m py_compile main.py backend.py tools/__init__.py tools/validate_project.py tools/test_backend_logic.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Install Qt for Python
+      - name: Install Qt for Python and pinned Windows deploy compiler
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+          python -m pip install "Nuitka==4.2" ordered-set zstandard
+          python -m nuitka --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           @'
           import platform
           import PySide6
@@ -488,7 +500,7 @@ jobs:
 
       - name: Backend safety motion and cross-platform regression tests
         run: |
-          $env:PYTHONPATH = "$env:GITHUB_WORKSPACE\SRVR_GitHub_v26.09.04.01" + $(if ($env:PYTHONPATH) { ";$env:PYTHONPATH" } else { "" })
+          $env:PYTHONPATH = "$env:GITHUB_WORKSPACE\SRVR_GitHub_v26.09.04.02" + $(if ($env:PYTHONPATH) { ";$env:PYTHONPATH" } else { "" })
           @'
           import backend
           print("backend import PASS:", backend.__file__)
@@ -539,20 +551,31 @@ jobs:
           from pathlib import Path
           spec = Path('pysidedeploy.spec')
           lines = spec.read_text(encoding='utf-8').splitlines()
-          in_app = False
-          changed = False
+          section = ''
+          icon_changed = False
+          nuitka_changed = False
           out = []
           for line in lines:
               stripped = line.strip()
               if stripped.startswith('[') and stripped.endswith(']'):
-                  in_app = stripped.lower() == '[app]'
-              if in_app and stripped.startswith('icon') and '=' in line:
+                  section = stripped.lower()
+              if section == '[app]' and stripped.startswith('icon') and '=' in line:
                   prefix = line.split('=', 1)[0]
                   line = prefix + '= HV_P2P_SRVR_icon.ico'
-                  changed = True
+                  icon_changed = True
+              elif section == '[nuitka]' and stripped.startswith('extra_args') and '=' in line:
+                  prefix, value = line.split('=', 1)
+                  args = value.strip()
+                  flag = '--assume-yes-for-downloads'
+                  if flag not in args.split():
+                      args = (args + ' ' + flag).strip()
+                  line = prefix + '= ' + args
+                  nuitka_changed = True
               out.append(line)
-          if not changed:
+          if not icon_changed:
               raise SystemExit('pysidedeploy.spec [app] icon field not found')
+          if not nuitka_changed:
+              raise SystemExit('pysidedeploy.spec [nuitka] extra_args field not found')
           assert Path('HV_P2P_SRVR_icon.ico').stat().st_size > 1024
           spec.write_text('\n'.join(out) + '\n', encoding='utf-8')
           '@ | python -
@@ -563,6 +586,12 @@ jobs:
           $workspaceGithub = "$env:GITHUB_WORKSPACE\.github"
           if (Select-String -Path deploy-dry-run.txt,pysidedeploy.spec -SimpleMatch $workspaceGithub -Quiet) {
             throw 'deployment references checked-out repository .github directory'
+          }
+          if (-not (Select-String -Path deploy-dry-run.txt -SimpleMatch '--assume-yes-for-downloads' -Quiet)) {
+            throw 'generated Nuitka command is missing --assume-yes-for-downloads; Windows CI would block on tool-download prompts'
+          }
+          if (-not (Select-String -Path pysidedeploy.spec -SimpleMatch '--assume-yes-for-downloads' -Quiet)) {
+            throw 'pysidedeploy.spec did not retain --assume-yes-for-downloads'
           }
           Get-Content pysidedeploy.spec
 
@@ -609,7 +638,7 @@ jobs:
           @'
           from pathlib import Path
           import zipfile
-          version = '26.09.04.01'
+          version = '26.09.04.02'
           exe = Path('release_windows/HV P2P SRVR.exe')
           assert exe.is_file() and exe.stat().st_size > 0
           out = Path(f'HV P2P SRVR v{version} Windows x64.zip')
@@ -626,8 +655,8 @@ jobs:
       - name: Upload Windows GitHub Actions artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HV-P2P-SRVR-v26.09.04.01-Windows-x64
-          path: HV P2P SRVR v26.09.04.01 Windows x64.zip
+          name: HV-P2P-SRVR-v26.09.04.02-Windows-x64
+          path: HV P2P SRVR v26.09.04.02 Windows x64.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -640,25 +669,25 @@ jobs:
       - name: Download native firmware artifact
         uses: actions/download-artifact@v4
         with:
-          name: HV-P2P-v26.09.04.01-Native-Firmware
+          name: HV-P2P-v26.09.04.02-Native-Firmware
           path: COMPLETE_RELEASE/FIRMWARE
 
       - name: Download macOS Intel SRVR artifact
         uses: actions/download-artifact@v4
         with:
-          name: HV-P2P-SRVR-v26.09.04.01-macOS-Intel
+          name: HV-P2P-SRVR-v26.09.04.02-macOS-Intel
           path: COMPLETE_RELEASE/SRVR
 
       - name: Download macOS Apple Silicon SRVR artifact
         uses: actions/download-artifact@v4
         with:
-          name: HV-P2P-SRVR-v26.09.04.01-macOS-Apple-Silicon
+          name: HV-P2P-SRVR-v26.09.04.02-macOS-Apple-Silicon
           path: COMPLETE_RELEASE/SRVR
 
       - name: Download Windows x64 SRVR artifact
         uses: actions/download-artifact@v4
         with:
-          name: HV-P2P-SRVR-v26.09.04.01-Windows-x64
+          name: HV-P2P-SRVR-v26.09.04.02-Windows-x64
           path: COMPLETE_RELEASE/SRVR
 
       - name: Create combined HV P2P release ZIP
@@ -666,7 +695,7 @@ jobs:
         run: |
           set -euxo pipefail
           cat > COMPLETE_RELEASE/README_FIRST.txt <<'EOF'
-          HV P2P v26.09.04.01 - COMPLETE GITHUB BUILD OUTPUT
+          HV P2P v26.09.04.02 - COMPLETE GITHUB BUILD OUTPUT
 
           FIRMWARE/ contains the native CTRL-TS, CTRL EdgeBox and W1P EdgeBox build
           products plus STAGED_SOURCE. For Arduino IDE programming, use the three
@@ -674,9 +703,9 @@ jobs:
           the exact compiled CTRL-TS carrier image and SHA-256 from this same build.
 
           SRVR/ contains the ORIGINAL, UNEXTRACTED native application archives:
-          - HV P2P SRVR v26.09.04.01 macOS Intel.zip
-          - HV P2P SRVR v26.09.04.01 macOS Apple Silicon.zip
-          - HV P2P SRVR v26.09.04.01 Windows x64.zip
+          - HV P2P SRVR v26.09.04.02 macOS Intel.zip
+          - HV P2P SRVR v26.09.04.02 macOS Apple Silicon.zip
+          - HV P2P SRVR v26.09.04.02 Windows x64.zip
 
           The macOS archives contain matching native HV P2P SRVR.app bundles; the
           Windows archive contains the matching native x64 HV P2P SRVR.exe.
@@ -694,9 +723,9 @@ jobs:
           import hashlib, zipfile
           root=Path('COMPLETE_RELEASE')
           expected_srvr={
-              root/'SRVR'/'HV P2P SRVR v26.09.04.01 macOS Intel.zip',
-              root/'SRVR'/'HV P2P SRVR v26.09.04.01 macOS Apple Silicon.zip',
-              root/'SRVR'/'HV P2P SRVR v26.09.04.01 Windows x64.zip',
+              root/'SRVR'/'HV P2P SRVR v26.09.04.02 macOS Intel.zip',
+              root/'SRVR'/'HV P2P SRVR v26.09.04.02 macOS Apple Silicon.zip',
+              root/'SRVR'/'HV P2P SRVR v26.09.04.02 Windows x64.zip',
           }
           srvr_entries={p for p in (root/'SRVR').iterdir() if p.is_file()}
           assert srvr_entries == expected_srvr, f'SRVR artifacts must remain three untouched native ZIPs: {sorted(map(str,srvr_entries))}'
@@ -713,7 +742,7 @@ jobs:
           files=[p for p in sorted(root.rglob('*')) if p.is_file() and p != manifest]
           manifest.write_text(''.join(f'{sha256(p)}  {p.relative_to(root).as_posix()}\n' for p in files), encoding='utf-8')
 
-          out=Path('HV P2P v26.09.04.01 Complete Release.zip')
+          out=Path('HV P2P v26.09.04.02 Complete Release.zip')
           with zipfile.ZipFile(out,'w',compression=zipfile.ZIP_DEFLATED) as z:
               for p in sorted(root.rglob('*')):
                   if p.is_file(): z.write(p, p.relative_to(root.parent))
@@ -733,10 +762,10 @@ jobs:
       - name: Upload complete matched release
         uses: actions/upload-artifact@v4
         with:
-          name: HV-P2P-v26.09.04.01-Complete-Release
+          name: HV-P2P-v26.09.04.02-Complete-Release
           path: |
-            HV P2P v26.09.04.01 Complete Release.zip
-            HV P2P v26.09.04.01 Complete Release.zip.sha256
+            HV P2P v26.09.04.02 Complete Release.zip
+            HV P2P v26.09.04.02 Complete Release.zip.sha256
           if-no-files-found: error
           compression-level: 0
           retention-days: 30

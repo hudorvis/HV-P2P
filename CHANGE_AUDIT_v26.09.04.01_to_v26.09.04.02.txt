@@ -1,0 +1,33 @@
+HV P2P v26.09.04.01 -> v26.09.04.02 change audit
+==============================================================
+
+Purpose: Windows GitHub CI build correction after v26.09.04.01 failed before producing the Windows executable.
+Application/firmware behaviour and locked operator UI are intentionally unchanged.
+
+Normalized-identical mapped files: 63
+Non-version content changes: 7
+New files: 0
+Missing mapped files: 0
+QML files changed: 0
+
+Non-version content changes:
+  - .github/workflows/complete-build.yml
+  - CHANGE_SUMMARY_v26.09.04.02.md
+  - NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.09.04.02.md
+  - README_FIRST_v26.09.04.02.txt
+  - REVISION_HISTORY.md
+  - SRVR_GitHub_v26.09.04.02/tools/validate_project.py
+  - tools/validate_build_pipeline.py
+
+Expected functional/build changes:
+  - .github/workflows/complete-build.yml: initialize MSVC x64 tools; prove dumpbin; pin Nuitka 4.2; add --assume-yes-for-downloads to generated deploy spec; assert dry-run includes the flag.
+  - tools/validate_build_pipeline.py: gate the Windows CI dependency-tool correction.
+  - SRVR_GitHub_v26.09.04.02/tools/validate_project.py: gate the Windows CI dependency-tool correction.
+  - release documentation/revision history/test output/checksums.
+
+UI preservation:
+  PASS: no QML content changes detected.
+
+Motion/firmware preservation:
+  v26.09.04.02 does not change Speed/Power motion logic, W1P control tuning, CTRL/CTRL-TS behaviour, firmware safety logic, or SRVR runtime control logic beyond release-version identity.
+

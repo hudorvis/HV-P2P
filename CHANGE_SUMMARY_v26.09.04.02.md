@@ -1,8 +1,17 @@
-# HV P2P v26.09.04.01 Change Summary
+# HV P2P v26.09.04.02 Change Summary
 
-This is the correctly dated release identity for the cross-platform revision that was initially packaged under the incorrect draft designation `v26.08.31.11`. There are **no functional code or UI changes** between that draft pack and v26.09.04.01; only the complete release/version identity has been corrected for 4 September 2026.
+v26.09.04.02 is the Windows CI build-correction revision for v26.09.04.01. The application behaviour, firmware behaviour, Power/Speed motion semantics, locked Run/Setup UI, and three-platform release intent are unchanged.
 
-v26.09.04.01 is the cross-platform SRVR/build-hardening revision based directly on the corrected v26.08.31.10 source. It preserves the locked v26.08.31.09 Run/Setup design, Virtual Position Source behavior, and all inherited safety/control fixes.
+The v26.09.04.01 Windows job reached `pyside6-deploy`/Nuitka but failed before producing an executable because Nuitka requires Dependency Walker for Windows standalone/onefile builds and the GitHub runner is non-interactive, so the download prompt defaulted to `No`. The same log also showed that `dumpbin` was not available on PATH for PySide6's dependency scan.
+
+## Windows CI build correction
+
+- The Windows job now initializes the x64 MSVC developer environment using `ilammy/msvc-dev-cmd@v1`.
+- CI explicitly resolves and exercises `dumpbin.exe` before deployment; if it is unavailable, the Windows job fails immediately with a clear error.
+- Nuitka is pinned to `4.2` in the Windows deploy job instead of being opportunistically installed during `pyside6-deploy`.
+- The generated `pysidedeploy.spec` `[nuitka] extra_args` is amended with `--assume-yes-for-downloads`. This is Nuitka's CI-safe option for automatically accepting required cached tool downloads such as Dependency Walker.
+- The `pyside6-deploy --dry-run` output is checked and the job fails unless the actual generated Nuitka command contains `--assume-yes-for-downloads`.
+- The existing PE/AMD64 architecture test, frozen `--smoke-test`, ZIP verification and Complete Release gating remain unchanged.
 
 ## Motion-control audit: Power / Speed acceleration modes
 
@@ -39,20 +48,20 @@ Each platform performs source preflight, pinned PySide6 installation, backend ru
 
 The Complete Release is created only after firmware + both macOS architectures + Windows x64 pass. `COMPLETE_RELEASE/SRVR/` preserves exactly these three original nested archives:
 
-- `HV P2P SRVR v26.09.04.01 macOS Intel.zip`
-- `HV P2P SRVR v26.09.04.01 macOS Apple Silicon.zip`
-- `HV P2P SRVR v26.09.04.01 Windows x64.zip`
+- `HV P2P SRVR v26.09.04.02 macOS Intel.zip`
+- `HV P2P SRVR v26.09.04.02 macOS Apple Silicon.zip`
+- `HV P2P SRVR v26.09.04.02 Windows x64.zip`
 
 The existing internal `SHA256SUMS.txt` and external Complete Release `.sha256` protection are retained.
 
 ## Locked operator design retained
 
-The approved Run and Setup pages are unchanged. No QML layout or control-semantic redesign is part of v26.09.04.01.
+The approved Run and Setup pages are unchanged. No QML layout or control-semantic redesign is part of v26.09.04.02.
 
 ## Validation status
 
 - EdgeBox/SRVR integrated source validation: 316 checks PASS.
-- Build-pipeline validation: 40 checks PASS.
+- Build-pipeline validation: 44 checks PASS.
 - Dedicated Speed-mode contract: PASS.
 - Full `tools/run_all_source_checks.py`: PASS.
 - Backend runtime regression: PASS under the local QtCore compatibility harness; the real pinned PySide6 regression remains mandatory on each native GitHub SRVR runner.

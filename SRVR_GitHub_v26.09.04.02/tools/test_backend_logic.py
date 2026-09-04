@@ -37,7 +37,7 @@ from backend import (
 )
 
 app = QCoreApplication.instance() or QCoreApplication([])
-b = HVP2PBackend(version="26.09.04.01", smoke_test=True)
+b = HVP2PBackend(version="26.09.04.02", smoke_test=True)
 
 try:
     # Per-user data locations must follow each desktop OS rather than hard-code
@@ -334,7 +334,7 @@ try:
     b.resetSetupSettings()
     assert b.setupDraft["drive_modes"][0]["name"] == "Run Saved Mode"
 
-    # v26.09.04.01 Virtual Position Source is a true SRVR demo mode. Setup must
+    # v26.09.04.02 Virtual Position Source is a true SRVR demo mode. Setup must
     # stage it, Apply must activate it, CTRL input may move the simulated position
     # without W1P/EL7 health, and physical W1P feedback must not overwrite it.
     assert b.positionSource == "Encoder"
@@ -364,7 +364,7 @@ try:
     b._virtual_motion_step()
     assert float(b.state.pos_m) > old_pos, "Virtual position did not integrate simulated speed"
     virtual_pos = float(b.state.pos_m); virtual_speed = float(b.current_speed_mps)
-    b._parse_w1p("STATUS POS_M=12.345 VEL_MPS=-4.5 IP=172.20.1.102 WRITE_EN=0 SW_SRVON=0 VEL_WD=0 SERVICE_LOCK=0 RS_STAT=CONNECTED LEAD_CFG=OK FW=v26.09.04.01")
+    b._parse_w1p("STATUS POS_M=12.345 VEL_MPS=-4.5 IP=172.20.1.102 WRITE_EN=0 SW_SRVON=0 VEL_WD=0 SERVICE_LOCK=0 RS_STAT=CONNECTED LEAD_CFG=OK FW=v26.09.04.02")
     assert abs(float(b.state.pos_m) - virtual_pos) < 1e-9 and abs(float(b.current_speed_mps) - virtual_speed) < 1e-9
     # Leaving Virtual is deliberately fail-safe: no physical motion is accepted
     # until the normal neutral/re-arm sequence has completed.
@@ -946,7 +946,7 @@ try:
     assert backup_cfg.is_file()
     expected_backup = json.loads(backup_cfg.read_text())
     b._config_path.write_text('{broken-json', encoding='utf-8')
-    b2 = HVP2PBackend(version="26.09.04.01", smoke_test=True)
+    b2 = HVP2PBackend(version="26.09.04.02", smoke_test=True)
     try:
         assert json.loads(b2._config_path.read_text()) == expected_backup
     finally:
