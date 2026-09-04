@@ -1,4 +1,4 @@
-# HV P2P 26.08.31 Native-Build Revision History
+# HV P2P Native-Build Revision History
 
 - **v26.08.31.01** — commissioning/native-build baseline.
 - **v26.08.31.02** — generated LVGL configuration and required font set for CI.
@@ -10,3 +10,5 @@
 - **v26.08.31.08** — completes remaining v26.08.31.06 audit recommendations: transactional safe W1P local-IP readdress from the existing SRVR Setup field, including lost-ACK verification and automatic previous-IP rollback; atomic/recoverable SRVR `config.json`; true Free-D `u24` lens output; incoming Free-D checksum validation; stable/versioned macOS bundle metadata; and exact Complete Release ZIP/SRVR-ZIP preservation with internal/external SHA-256 manifests.
 - **v26.08.31.09** — locked SRVR Run/Setup operator revision: two-line HV P2P/SRVR logo, five-second two-step confirmation for Run Save/Recall/Slip actions, corrected Run System/Position alignment, revised Setup diagnostics/CTRL-TS presentation and Motion Profiles spacing, plus fail-safe SRVR Virtual Position Source for CTRL/CTRL-TS demonstrations. The issued .09 source pack reached CI but did not produce an authoritative compiled release.
 - **v26.08.31.10** — build-correction revision for .09. Virtual mode now latches the local software Servo Enable inhibit independently of hardware-output suppression, and the Virtual backend regression establishes its own neutral joystick/calibration test state. Locked .09 Run/Setup visuals and control semantics are unchanged.
+- **v26.08.31.11** — numbering-only draft designation for the cross-platform revision; withdrawn before authoritative build because the release date had advanced to 2026-09-04. Superseded by v26.09.04.01 with no functional change.
+- **v26.09.04.01** — cross-platform SRVR/build-hardening revision: audited and regression-locked the existing Power/Speed semantics (Speed remains bounded measured-speed PI correction into EL7 velocity mode; Power remains traditional velocity-profile response), added native Windows config/FileDialog path handling, and expanded GitHub CI/Complete Release to macOS Intel, macOS Apple Silicon and Windows x64. Locked Run/Setup UI unchanged.

@@ -1,4 +1,4 @@
-name: HV P2P Complete Build v26.08.31.10
+name: HV P2P Complete Build v26.09.04.01
 
 on:
   workflow_dispatch:
@@ -69,47 +69,61 @@ jobs:
 
       - name: Check that source CTRL still contains build guard
         run: |
-          grep -F '#error "CTRL-TS firmware image has not been staged.' HV_P2P_CTRL_EDGEBOX_v26.08.31.10/HV_P2P_CTRL_TS_Firmware_Image.h
+          grep -F '#error "CTRL-TS firmware image has not been staged.' HV_P2P_CTRL_EDGEBOX_v26.09.04.01/HV_P2P_CTRL_TS_Firmware_Image.h
 
       - name: Upload functional-test firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HV-P2P-v26.08.31.10-Native-Firmware
+          name: HV-P2P-v26.09.04.01-Native-Firmware
           path: NATIVE_BUILD_ARTIFACTS/
           if-no-files-found: error
           retention-days: 30
 
-  build-srvr:
-    runs-on: macos-15-intel
+  build-srvr-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            expected_arch: x86_64
+            platform_label: macOS Intel
+            artifact_suffix: macOS-Intel
+          - runner: macos-15
+            expected_arch: arm64
+            platform_label: macOS Apple Silicon
+            artifact_suffix: macOS-Apple-Silicon
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 50
     defaults:
       run:
-        working-directory: SRVR_GitHub_v26.08.31.10
+        working-directory: SRVR_GitHub_v26.09.04.01
     env:
-      APP_VERSION: '26.08.31.10'
+      APP_VERSION: '26.09.04.01'
       BUNDLE_IDENTIFIER: 'com.hvp2p.srvr'
-      BUNDLE_SHORT_VERSION: '26.8.31'
-      BUNDLE_BUILD_VERSION: '2608.31.10'
+      BUNDLE_SHORT_VERSION: '26.9.4'
+      BUNDLE_BUILD_VERSION: '2609.4.1'
       QT_QUICK_CONTROLS_STYLE: Basic
       PYTHONUNBUFFERED: '1'
+      EXPECTED_ARCH: ${{ matrix.expected_arch }}
+      PLATFORM_LABEL: ${{ matrix.platform_label }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Confirm Intel runner
+      - name: Confirm macOS runner architecture
         shell: bash
         run: |
           set -euxo pipefail
           uname -a
-          test "$(uname -m)" = "x86_64"
+          test "$(uname -m)" = "$EXPECTED_ARCH"
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: 'pip'
-          cache-dependency-path: SRVR_GitHub_v26.08.31.10/requirements.txt
+          cache-dependency-path: SRVR_GitHub_v26.09.04.01/requirements.txt
 
       - name: Static project preflight
         shell: bash
@@ -125,12 +139,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python - <<'PY'
-          import platform
+          import os, platform
           import PySide6
           print('Python:', platform.python_version())
           print('PySide6:', PySide6.__version__)
           print('Machine:', platform.machine())
-          assert platform.machine() == 'x86_64'
+          assert platform.machine() == os.environ['EXPECTED_ARCH']
           PY
 
       - name: Backend safety and calibration regression tests
@@ -139,11 +153,11 @@ jobs:
           set -euxo pipefail
           # Explicitly prove CI can import the application backend before running
           # the larger regression suite. This catches path mistakes immediately.
-          PYTHONPATH="$GITHUB_WORKSPACE/SRVR_GitHub_v26.08.31.10${PYTHONPATH:+:$PYTHONPATH}" python - <<'PY'
+          PYTHONPATH="$GITHUB_WORKSPACE/SRVR_GitHub_v26.09.04.01${PYTHONPATH:+:$PYTHONPATH}" python - <<'PY'
           import backend
           print("backend import PASS:", backend.__file__)
           PY
-          PYTHONPATH="$GITHUB_WORKSPACE/SRVR_GitHub_v26.08.31.10${PYTHONPATH:+:$PYTHONPATH}" python -m tools.test_backend_logic
+          PYTHONPATH="$GITHUB_WORKSPACE/SRVR_GitHub_v26.09.04.01${PYTHONPATH:+:$PYTHONPATH}" python -m tools.test_backend_logic
 
       - name: Create isolated deployment source tree
         shell: bash
@@ -310,7 +324,7 @@ jobs:
           test -n "$EXE"
           file "$EXE"
           lipo -info "$EXE" || true
-          file "$EXE" | grep -q 'x86_64'
+          file "$EXE" | grep -q "$EXPECTED_ARCH"
 
           # Confirm Qt platform/QML runtime content exists before signing.
           find "$APP_PATH/Contents" -iname '*qcocoa*' -o -iname '*QtQuick*' | head -n 40 || true
@@ -349,7 +363,7 @@ jobs:
         run: |
           set -euxo pipefail
           cd "$GITHUB_WORKSPACE"
-          ZIP="HV P2P SRVR v${APP_VERSION} macOS Intel.zip"
+          ZIP="HV P2P SRVR v${APP_VERSION} ${PLATFORM_LABEL}.zip"
           rm -f "$ZIP"
           # IMPORTANT: Do not use --sequesterRsrc here. That option intentionally
           # creates a parallel __MACOSX hierarchy for AppleDouble metadata. It was
@@ -362,7 +376,8 @@ jobs:
           python - <<'PY'
           import os, zipfile
           version = os.environ['APP_VERSION']
-          z = f'HV P2P SRVR v{version} macOS Intel.zip'
+          label = os.environ['PLATFORM_LABEL']
+          z = f'HV P2P SRVR v{version} {label}.zip'
           with zipfile.ZipFile(z) as f:
               names = f.namelist()
               bad_crc = f.testzip()
@@ -405,7 +420,7 @@ jobs:
           ROUNDTRIP_APP="$VERIFY_DIR/HV P2P SRVR.app"
           ROUNDTRIP_EXE="$(find "$ROUNDTRIP_APP/Contents/MacOS" -maxdepth 1 -type f -perm +111 | head -n 1)"
           test -n "$ROUNDTRIP_EXE"
-          file "$ROUNDTRIP_EXE" | grep -q 'x86_64'
+          file "$ROUNDTRIP_EXE" | grep -q "$EXPECTED_ARCH"
           codesign --verify --deep --strict --verbose=2 "$ROUNDTRIP_APP"
           QT_QPA_PLATFORM=cocoa "$ROUNDTRIP_EXE" --smoke-test
           echo 'Round-trip ZIP extraction + signature + frozen-app smoke test PASS.'
@@ -413,28 +428,237 @@ jobs:
       - name: Upload GitHub Actions artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HV-P2P-SRVR-v26.08.31.10-macOS-Intel
-          path: HV P2P SRVR v26.08.31.10 macOS Intel.zip
+          name: HV-P2P-SRVR-v26.09.04.01-${{ matrix.artifact_suffix }}
+          path: HV P2P SRVR v26.09.04.01 ${{ matrix.platform_label }}.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
 
 
+  build-srvr-windows:
+    runs-on: windows-2025
+    timeout-minutes: 55
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: SRVR_GitHub_v26.09.04.01
+    env:
+      APP_VERSION: '26.09.04.01'
+      QT_QUICK_CONTROLS_STYLE: Basic
+      PYTHONUNBUFFERED: '1'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Confirm Windows x64 runner
+        run: |
+          Write-Host "OS: $([System.Environment]::OSVersion.VersionString)"
+          Write-Host "PROCESSOR_ARCHITECTURE=$env:PROCESSOR_ARCHITECTURE"
+          if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { throw "Expected Windows x64 runner" }
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: 'x64'
+          cache: 'pip'
+          cache-dependency-path: SRVR_GitHub_v26.09.04.01/requirements.txt
+
+      - name: Static project preflight
+        run: |
+          python tools/validate_project.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m py_compile main.py backend.py tools/__init__.py tools/validate_project.py tools/test_backend_logic.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Install Qt for Python
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          @'
+          import platform
+          import PySide6
+          print('Python:', platform.python_version())
+          print('PySide6:', PySide6.__version__)
+          print('Machine:', platform.machine())
+          assert platform.machine().lower() in ('amd64', 'x86_64')
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Backend safety motion and cross-platform regression tests
+        run: |
+          $env:PYTHONPATH = "$env:GITHUB_WORKSPACE\SRVR_GitHub_v26.09.04.01" + $(if ($env:PYTHONPATH) { ";$env:PYTHONPATH" } else { "" })
+          @'
+          import backend
+          print("backend import PASS:", backend.__file__)
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m tools.test_backend_logic
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Create isolated deployment source tree
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP 'hvp2p-stage-windows'
+          if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item main.py,backend.py,resources.qrc,HV_P2P_SRVR.pyproject -Destination $stage
+          Copy-Item qml -Destination $stage -Recurse
+          Copy-Item assets/HV_P2P_SRVR_icon.png -Destination (Join-Path $stage 'HV_P2P_SRVR_icon.png')
+          Copy-Item assets/HV_P2P_SRVR_icon.ico -Destination (Join-Path $stage 'HV_P2P_SRVR_icon.ico')
+          Get-ChildItem $stage -Recurse | Sort-Object FullName | ForEach-Object FullName
+          foreach ($forbidden in @('.github','.git','assets','release','tools')) {
+            if (Test-Path (Join-Path $stage $forbidden)) { throw "Forbidden deployment path present: $forbidden" }
+          }
+
+      - name: Generate resources validate QML and smoke-test source
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP 'hvp2p-stage-windows'
+          Set-Location $stage
+          pyside6-rcc resources.qrc -o rc_resources.py
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path rc_resources.py)) { throw 'pyside6-rcc failed' }
+          python -m py_compile main.py backend.py rc_resources.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $qmlFiles = @('qml/Main.qml') + @((Get-ChildItem qml/components/*.qml).FullName) + @((Get-ChildItem qml/pages/*.qml).FullName)
+          & pyside6-qmllint --max-warnings -1 @qmlFiles
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python main.py --smoke-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Initialize and audit Windows deployment command
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP 'hvp2p-stage-windows'
+          Set-Location $stage
+          if (Test-Path pysidedeploy.spec) { Remove-Item pysidedeploy.spec -Force }
+          pyside6-deploy main.py --init
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path pysidedeploy.spec)) { throw 'pyside6-deploy --init failed' }
+
+          # Point pyside6-deploy at the checked-in Windows ICO generated from
+          # the same approved SRVR icon artwork as the macOS bundle.
+          @'
+          from pathlib import Path
+          spec = Path('pysidedeploy.spec')
+          lines = spec.read_text(encoding='utf-8').splitlines()
+          in_app = False
+          changed = False
+          out = []
+          for line in lines:
+              stripped = line.strip()
+              if stripped.startswith('[') and stripped.endswith(']'):
+                  in_app = stripped.lower() == '[app]'
+              if in_app and stripped.startswith('icon') and '=' in line:
+                  prefix = line.split('=', 1)[0]
+                  line = prefix + '= HV_P2P_SRVR_icon.ico'
+                  changed = True
+              out.append(line)
+          if not changed:
+              raise SystemExit('pysidedeploy.spec [app] icon field not found')
+          assert Path('HV_P2P_SRVR_icon.ico').stat().st_size > 1024
+          spec.write_text('\n'.join(out) + '\n', encoding='utf-8')
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          pyside6-deploy main.py -f --dry-run --name "HV P2P SRVR" --extra-ignore-dirs=.git,.github,assets,build,release,__pycache__ --extra-modules=Quick,QuickControls2,Qml,Gui,Network | Tee-Object deploy-dry-run.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $workspaceGithub = "$env:GITHUB_WORKSPACE\.github"
+          if (Select-String -Path deploy-dry-run.txt,pysidedeploy.spec -SimpleMatch $workspaceGithub -Quiet) {
+            throw 'deployment references checked-out repository .github directory'
+          }
+          Get-Content pysidedeploy.spec
+
+      - name: Deploy and smoke-test Windows x64 executable
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP 'hvp2p-stage-windows'
+          Set-Location $stage
+          pyside6-deploy main.py -f --name "HV P2P SRVR" --extra-ignore-dirs=.git,.github,assets,build,release,__pycache__ --extra-modules=Quick,QuickControls2,Qml,Gui,Network
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $candidates = @(Get-ChildItem $stage -Recurse -File -Filter '*.exe' | Where-Object { $_.Name -in @('HV P2P SRVR.exe','main.exe') } | Sort-Object Length -Descending)
+          if ($candidates.Count -lt 1) {
+            Get-ChildItem $stage -Recurse -File -Filter '*.exe' | ForEach-Object FullName
+            throw 'No deployed SRVR executable found'
+          }
+          $exe = $candidates[0].FullName
+          Write-Host "Built executable: $exe"
+          $env:SRVR_EXE = $exe
+          @'
+          import os, struct
+          p = os.environ['SRVR_EXE']
+          with open(p, 'rb') as f:
+              if f.read(2) != b'MZ': raise SystemExit('not a PE executable')
+              f.seek(0x3c); peoff = struct.unpack('<I', f.read(4))[0]
+              f.seek(peoff)
+              if f.read(4) != b'PE\0\0': raise SystemExit('missing PE signature')
+              machine = struct.unpack('<H', f.read(2))[0]
+          print(f'PE machine: 0x{machine:04x}')
+          assert machine == 0x8664, 'expected AMD64/x64 executable'
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          & $exe --smoke-test
+          if ($LASTEXITCODE -ne 0) { throw "Frozen Windows smoke test failed: $LASTEXITCODE" }
+
+          $release = Join-Path $env:GITHUB_WORKSPACE 'release_windows'
+          if (Test-Path $release) { Remove-Item $release -Recurse -Force }
+          New-Item -ItemType Directory -Path $release | Out-Null
+          Copy-Item $exe -Destination (Join-Path $release 'HV P2P SRVR.exe')
+
+      - name: Package and verify Windows x64 ZIP
+        run: |
+          Set-Location $env:GITHUB_WORKSPACE
+          @'
+          from pathlib import Path
+          import zipfile
+          version = '26.09.04.01'
+          exe = Path('release_windows/HV P2P SRVR.exe')
+          assert exe.is_file() and exe.stat().st_size > 0
+          out = Path(f'HV P2P SRVR v{version} Windows x64.zip')
+          if out.exists(): out.unlink()
+          with zipfile.ZipFile(out, 'w', compression=zipfile.ZIP_DEFLATED) as z:
+              z.write(exe, 'HV P2P SRVR.exe')
+          with zipfile.ZipFile(out) as z:
+              assert z.testzip() is None
+              assert z.namelist() == ['HV P2P SRVR.exe']
+          print(out, out.stat().st_size)
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Windows GitHub Actions artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HV-P2P-SRVR-v26.09.04.01-Windows-x64
+          path: HV P2P SRVR v26.09.04.01 Windows x64.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
   package-complete-release:
-    needs: [build-firmware, build-srvr]
+    needs: [build-firmware, build-srvr-macos, build-srvr-windows]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Download native firmware artifact
         uses: actions/download-artifact@v4
         with:
-          name: HV-P2P-v26.08.31.10-Native-Firmware
+          name: HV-P2P-v26.09.04.01-Native-Firmware
           path: COMPLETE_RELEASE/FIRMWARE
 
-      - name: Download macOS SRVR artifact
+      - name: Download macOS Intel SRVR artifact
         uses: actions/download-artifact@v4
         with:
-          name: HV-P2P-SRVR-v26.08.31.10-macOS-Intel
+          name: HV-P2P-SRVR-v26.09.04.01-macOS-Intel
+          path: COMPLETE_RELEASE/SRVR
+
+      - name: Download macOS Apple Silicon SRVR artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: HV-P2P-SRVR-v26.09.04.01-macOS-Apple-Silicon
+          path: COMPLETE_RELEASE/SRVR
+
+      - name: Download Windows x64 SRVR artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: HV-P2P-SRVR-v26.09.04.01-Windows-x64
           path: COMPLETE_RELEASE/SRVR
 
       - name: Create combined HV P2P release ZIP
@@ -442,32 +666,41 @@ jobs:
         run: |
           set -euxo pipefail
           cat > COMPLETE_RELEASE/README_FIRST.txt <<'EOF'
-          HV P2P v26.08.31.10 - COMPLETE GITHUB BUILD OUTPUT
+          HV P2P v26.09.04.01 - COMPLETE GITHUB BUILD OUTPUT
 
           FIRMWARE/ contains the native CTRL-TS, CTRL EdgeBox and W1P EdgeBox build
           products plus STAGED_SOURCE. For Arduino IDE programming, use the three
           sketch folders under FIRMWARE/STAGED_SOURCE; the staged CTRL source contains
           the exact compiled CTRL-TS carrier image and SHA-256 from this same build.
 
-          SRVR/ contains the ORIGINAL, UNEXTRACTED file:
-          HV P2P SRVR v26.08.31.10 macOS Intel.zip
-          That ZIP contains the matching HV P2P SRVR.app for Intel Macs.
+          SRVR/ contains the ORIGINAL, UNEXTRACTED native application archives:
+          - HV P2P SRVR v26.09.04.01 macOS Intel.zip
+          - HV P2P SRVR v26.09.04.01 macOS Apple Silicon.zip
+          - HV P2P SRVR v26.09.04.01 Windows x64.zip
+
+          The macOS archives contain matching native HV P2P SRVR.app bundles; the
+          Windows archive contains the matching native x64 HV P2P SRVR.exe.
 
           SHA256SUMS.txt authenticates every file inside COMPLETE_RELEASE before this
-          combined ZIP is made. Do not extract/re-zip the SRVR ZIP when archiving or
+          combined ZIP is made. Do not extract/re-zip any SRVR ZIP when archiving or
           returning the build for source-vs-build audit. Preserve this Complete Release
-          ZIP byte-for-byte; its external .sha256 file identifies the authoritative ZIP.
+          ZIP byte-for-byte; its external .sha256 identifies the authoritative ZIP.
 
-          Both firmware and SRVR jobs must pass before this complete artifact is created.
+          Firmware, both macOS architectures and Windows x64 must all pass their native
+          runtime/build gates before this complete artifact can be created.
           EOF
           python3 - <<'PY'
           from pathlib import Path
           import hashlib, zipfile
           root=Path('COMPLETE_RELEASE')
-          expected_srvr=root/'SRVR'/'HV P2P SRVR v26.08.31.10 macOS Intel.zip'
-          srvr_entries=[p for p in (root/'SRVR').iterdir() if p.is_file()]
-          assert srvr_entries == [expected_srvr], f'SRVR artifact must remain one untouched ZIP: {srvr_entries}'
-          assert not any(p.suffix == '.app' or p.name.endswith('.app') for p in root.rglob('*')), 'SRVR .app must not be extracted into Complete Release'
+          expected_srvr={
+              root/'SRVR'/'HV P2P SRVR v26.09.04.01 macOS Intel.zip',
+              root/'SRVR'/'HV P2P SRVR v26.09.04.01 macOS Apple Silicon.zip',
+              root/'SRVR'/'HV P2P SRVR v26.09.04.01 Windows x64.zip',
+          }
+          srvr_entries={p for p in (root/'SRVR').iterdir() if p.is_file()}
+          assert srvr_entries == expected_srvr, f'SRVR artifacts must remain three untouched native ZIPs: {sorted(map(str,srvr_entries))}'
+          assert not any(p.name.endswith('.app') or p.suffix.lower()=='.exe' for p in root.rglob('*')), 'extracted SRVR app/exe must not leak into Complete Release'
 
           def sha256(p):
               h=hashlib.sha256()
@@ -480,18 +713,18 @@ jobs:
           files=[p for p in sorted(root.rglob('*')) if p.is_file() and p != manifest]
           manifest.write_text(''.join(f'{sha256(p)}  {p.relative_to(root).as_posix()}\n' for p in files), encoding='utf-8')
 
-          out=Path('HV P2P v26.08.31.10 Complete Release.zip')
+          out=Path('HV P2P v26.09.04.01 Complete Release.zip')
           with zipfile.ZipFile(out,'w',compression=zipfile.ZIP_DEFLATED) as z:
               for p in sorted(root.rglob('*')):
-                  if p.is_file():
-                      z.write(p, p.relative_to(root.parent))
+                  if p.is_file(): z.write(p, p.relative_to(root.parent))
           with zipfile.ZipFile(out) as z:
               assert z.testzip() is None
               names=z.namelist()
               assert any('FIRMWARE/STAGED_SOURCE/' in n for n in names)
-              assert 'COMPLETE_RELEASE/SRVR/HV P2P SRVR v26.08.31.10 macOS Intel.zip' in names
+              for p in expected_srvr:
+                  assert f'COMPLETE_RELEASE/{p.relative_to(root).as_posix()}' in names
               assert 'COMPLETE_RELEASE/SHA256SUMS.txt' in names
-              assert not any(n.endswith('.app/') or '.app/' in n for n in names), 'extracted .app leaked into Complete Release'
+              assert not any('.app/' in n or n.lower().endswith('.exe') for n in names), 'extracted SRVR payload leaked into Complete Release'
           outer_hash=sha256(out)
           Path(str(out)+'.sha256').write_text(f'{outer_hash}  {out.name}\n', encoding='utf-8')
           print(out, outer_hash)
@@ -500,10 +733,10 @@ jobs:
       - name: Upload complete matched release
         uses: actions/upload-artifact@v4
         with:
-          name: HV-P2P-v26.08.31.10-Complete-Release
+          name: HV-P2P-v26.09.04.01-Complete-Release
           path: |
-            HV P2P v26.08.31.10 Complete Release.zip
-            HV P2P v26.08.31.10 Complete Release.zip.sha256
+            HV P2P v26.09.04.01 Complete Release.zip
+            HV P2P v26.09.04.01 Complete Release.zip.sha256
           if-no-files-found: error
           compression-level: 0
           retention-days: 30

@@ -1,0 +1,43 @@
+HV P2P v26.08.31.11 -> v26.09.04.01 RELEASE-IDENTITY CORRECTION AUDIT
+================================================================================
+
+Reason for revision
+-------------------
+The cross-platform source pack was created on 2026-09-04, so continuing the
+2026-08-31 revision sequence was incorrect. The correct release identity is
+v26.09.04.01.
+
+Functional code changes from the previously issued v26.08.31.11 pack: NONE.
+
+Normalized equivalence check
+----------------------------
+After mapping the old release identity v26.08.31.11 to v26.09.04.01, including
+Apple bundle version metadata:
+  - 49 functional/build files compared: IDENTICAL
+  - functional/build mismatches: 0
+  - SRVR QML files compared byte-for-byte: 13/13 IDENTICAL
+  - SRVR backend.py after release-identity normalization: IDENTICAL
+
+Release-identity changes applied consistently to
+------------------------------------------------
+  - CTRL EdgeBox sketch/folder/version and OTA identity token
+  - W1P EdgeBox sketch/folder/version and OTA identity token
+  - CTRL-TS sketch/folder/version and required/carrier identity
+  - SRVR source folder/application version
+  - GitHub workflow working paths, artifact names and Complete Release names
+  - macOS CFBundleShortVersionString: 26.9.4
+  - macOS CFBundleVersion: 2609.4.1
+  - Windows/macOS package names and release documentation
+
+Validation
+----------
+  - Integrated source validation: 316 checks PASS
+  - Build-pipeline validation: 40 checks PASS
+  - Dedicated Speed-mode contract: PASS
+  - Full tools/run_all_source_checks.py: ALL_SOURCE_CHECKS_PASS
+  - Locked Run/Setup QML: unchanged
+  - Power/Speed controller behavior/tuning: unchanged
+  - Cross-platform macOS Intel / Apple Silicon / Windows x64 build scope: unchanged
+
+The withdrawn v26.08.31.11 designation did not become an authoritative compiled
+baseline. v26.09.04.01 is the correctly dated source revision to send to GitHub.

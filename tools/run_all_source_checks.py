@@ -11,8 +11,9 @@ checks=[
     ['python3',str(ROOT/'tools'/'validate_build_pipeline.py')],
     ['python3',str(ROOT/'tools'/'test_modbus_contract_host.py')],
     ['python3',str(ROOT/'tools'/'test_srvr_wire_contract.py')],
-    ['python3','-m','py_compile',str(ROOT/'SRVR_GitHub_v26.08.31.10'/'backend.py'),str(ROOT/'SRVR_GitHub_v26.08.31.10'/'main.py')],
-    ['python3',str(ROOT/'SRVR_GitHub_v26.08.31.10'/'tools'/'validate_project.py')],
+    ['python3',str(ROOT/'tools'/'test_speed_mode_contract.py')],
+    ['python3','-m','py_compile',str(ROOT/'SRVR_GitHub_v26.09.04.01'/'backend.py'),str(ROOT/'SRVR_GitHub_v26.09.04.01'/'main.py')],
+    ['python3',str(ROOT/'SRVR_GitHub_v26.09.04.01'/'tools'/'validate_project.py')],
 ]
 for cmd in checks:
     print('\n==>', ' '.join(cmd), flush=True)

@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "26.08.31.10"
+VERSION = "26.09.04.01"
 ERRORS: list[str] = []
 
 
@@ -350,7 +350,7 @@ require('width:parent.width*.22' in qml_main and
 require(qml_main.count('width:f(72)') >= 2 and 'parent.width-f(48+72+66)' in qml_main,
         "Free-D lens decoded percentage width fix is missing")
 
-# v26.08.31.10 locked Run/Setup revision. Keep the approved panel geometry and
+# v26.09.04.01 locked Run/Setup revision. Keep the approved panel geometry and
 # setting semantics while guarding only the requested presentation/interaction deltas.
 require('text:"HV P2P\\nSRVR"' in qml_main and 'HV P2P  |  SRVR' not in qml_main and 'P2P°\\nSRVR' not in qml_main,
         "locked two-line HV P2P/SRVR logo/header revision is missing")
@@ -526,7 +526,7 @@ require('profileValue(Number(gp.x), key)' in span_qml and
         'var gv=root.sideView ? Number(gp.y)' not in span_qml,
         "Free-D geometry markers are not pinned to the exact calculated cable profile")
 
-# v26.08.31.10 integration contract: fifth CTRL-TS AUX travels in the spare A7
+# v26.09.04.01 integration contract: fifth CTRL-TS AUX travels in the spare A7
 # 16-bit flag, and display packets expose all five state-aware labels.
 require("FLAG_AUX5 = 0x0400" in backend, "AUX5 controller flag missing")
 require('f"aux5={labels[4]}"' in backend, "DSP1 AUX5 field missing")
@@ -584,10 +584,20 @@ require('CFBundleDisplayName' in workflow and "HV P2P SRVR'" in workflow,
         "HV P2P SRVR bundle display metadata is not enforced")
 require(all(token in workflow for token in ('CFBundleIdentifier', 'com.hvp2p.srvr', 'CFBundleShortVersionString', 'CFBundleVersion', 'HVP2PReleaseVersion')),
         "HV P2P SRVR stable bundle identity/version metadata is not enforced")
-require('SRVR artifact must remain one untouched ZIP' in workflow and 'SHA256SUMS.txt' in workflow and 'Complete Release.zip.sha256' in workflow,
-        "complete release does not preserve/hash the original SRVR ZIP and authoritative release ZIP")
+require('three untouched native ZIPs' in workflow and 'SHA256SUMS.txt' in workflow and 'Complete Release.zip.sha256' in workflow,
+        "complete release does not preserve/hash all native SRVR ZIPs and authoritative release ZIP")
 require('QT_QPA_PLATFORM=cocoa "$ROUNDTRIP_EXE" --smoke-test' in workflow,
         "round-trip extracted app smoke test missing")
+require('runner: macos-15-intel' in workflow and 'runner: macos-15' in workflow and 'runs-on: windows-2025' in workflow,
+        "three-platform SRVR native CI matrix is missing")
+require('HV-P2P-SRVR-v26.09.04.01-macOS-Intel' in workflow and
+        'HV-P2P-SRVR-v26.09.04.01-macOS-Apple-Silicon' in workflow and
+        'HV-P2P-SRVR-v26.09.04.01-Windows-x64' in workflow,
+        "native SRVR artifact names are incomplete")
+require('def _app_data_dir' in backend and 'LOCALAPPDATA' in backend and 'XDG_CONFIG_HOME' in backend,
+        "cross-platform private config directory mapping is missing")
+require('path_text[2] == ":"' in backend and 'parsed.netloc' in backend,
+        "Windows drive-letter/UNC FileDialog path handling is missing")
 
 require('text: "Skate Weight:"' in qml_main, "Free-D must label the suspended package as Skate Weight")
 require('text: "Static Weight:"' not in qml_main, "obsolete Static Weight label remains in Free-D")

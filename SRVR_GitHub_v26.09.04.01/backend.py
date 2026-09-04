@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
-import copy, ipaddress, json, math, os, queue, socket, struct, threading, time
+import copy, ipaddress, json, math, os, queue, socket, struct, sys, threading, time
 from urllib.parse import unquote, urlparse
 
 from PySide6.QtCore import QObject, Property, Signal, Slot, QTimer
@@ -199,7 +199,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.08.31.10", smoke_test: bool = False):
+    def __init__(self, version="26.09.04.01", smoke_test: bool = False):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -424,10 +424,33 @@ class HVP2PBackend(QObject):
         self.timer.start()
         self._log("[SRVR] Qt Quick backend ready")
 
+    @staticmethod
+    def _app_data_dir(platform_name: str | None = None, env: dict | None = None, home: Path | None = None) -> Path:
+        """Return the native per-user SRVR data directory for the active desktop OS.
+
+        macOS intentionally retains the historical Application Support location.
+        Windows uses LOCALAPPDATA (falling back to APPDATA, then AppData/Local).
+        Linux/other Unix follows XDG_CONFIG_HOME when present.  Keeping this in a
+        deterministic helper also lets CI prove each platform mapping without
+        changing the runner's real profile.
+        """
+        platform_name = str(platform_name or sys.platform).lower()
+        env = os.environ if env is None else env
+        home = Path.home() if home is None else Path(home)
+        if platform_name.startswith("win"):
+            base = env.get("LOCALAPPDATA") or env.get("APPDATA")
+            return (Path(base) if base else home / "AppData" / "Local") / "HV P2P SRVR"
+        if platform_name == "darwin":
+            return home / "Library" / "Application Support" / "HV P2P SRVR"
+        xdg = env.get("XDG_CONFIG_HOME")
+        return (Path(xdg) if xdg else home / ".config") / "HV P2P SRVR"
+
     def _config_file_path(self):
-        home = Path.home() / "Library" / "Application Support" / "HV P2P SRVR"
-        try: home.mkdir(parents=True, exist_ok=True)
-        except Exception: home = Path.home()
+        home = self._app_data_dir()
+        try:
+            home.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            home = Path.home()
         return home / "config.json"
 
     @staticmethod
@@ -2210,10 +2233,22 @@ class HVP2PBackend(QObject):
 
     @staticmethod
     def _dialog_path(value) -> Path:
+        """Convert a Qt FileDialog URL/string into a native filesystem path.
+
+        Qt returns Windows local files as file:///C:/path. urlparse exposes that
+        as /C:/path, so the synthetic URI slash must be removed before Path sees
+        it. UNC file://server/share paths are retained as //server/share.
+        """
         text = str(value or "").strip()
         if text.startswith("file:"):
             parsed = urlparse(text)
-            text = unquote(parsed.path)
+            path_text = unquote(parsed.path)
+            if parsed.netloc and parsed.netloc.lower() != "localhost":
+                text = f"//{parsed.netloc}{path_text}"
+            else:
+                if len(path_text) >= 3 and path_text[0] == "/" and path_text[2] == ":" and path_text[1].isalpha():
+                    path_text = path_text[1:]
+                text = path_text
         return Path(text).expanduser()
 
     def _apply_imported_run_config(self, c: dict) -> None:
