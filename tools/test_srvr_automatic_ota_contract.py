@@ -4,7 +4,7 @@ from pathlib import Path
 import hashlib
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = "26.09.14.02"
+VER = "26.09.14.03"
 CTRL_DIR = ROOT / f"HV_P2P_CTRL_EDGEBOX_v{VER}"
 W1P_DIR = ROOT / f"HV_P2P_W1P_EDGEBOX_v{VER}"
 SRVR_DIR = ROOT / f"SRVR_GitHub_v{VER}"
@@ -60,6 +60,9 @@ ck("W1P heartbeat cannot clear Servo inhibit during hold", "!g.local_estop && !g
 ck("W1P independent 650ms VEL watchdog preserved", "W1P_VEL_COMMAND_TIMEOUT_MS = 650" in w1p and "lastVelocityCommandMs" in w1p)
 ck("W1P status exposes authority hold", "FW_MATCH=" in w1p and "FW_AUTH=" in w1p and "FW_AUTHORITY" in w1p)
 ck("SRVR treats missing/false W1P authority match fail-closed", 'fields.get("FW_MATCH", "0") != "1"' in backend and "self.winch_fw_authority_hold" in backend)
+ck("SRVR clears stale W1P session health on HELLO", 'self.winch_fw_authority_state = "awaiting_status"' in backend and 'self._w1p_status_last_seen = 0.0' in backend and 'self.winch_rs_status = "Disconnected"' in backend)
+ck("SRVR safety requires fresh full W1P STATUS", 'def _w1p_status_fresh(self)' in backend and 'or (not self._w1p_status_fresh())' in backend and 'def rs485Connected(self): return bool(self._w1p_status_fresh()' in backend)
+ck("SRVR malformed W1P STATUS stays fail-closed", 'self.winch_fw_authority_state = "invalid_status"' in backend and 'Rejected malformed STATUS; safety hold retained' in backend)
 
 # SRVR immutable authority runtime + locked UI preservation.
 ck("SRVR runtime starts authority before backend", main.find("firmware_service.start()") < main.find("backend = HVP2PBackend"))
@@ -71,8 +74,8 @@ ck("approved Run and Setup UI byte hashes unchanged", locked)
 failed = [name for name, ok in checks if not ok]
 for name, ok in checks:
     print(("OK  " if ok else "FAIL") + name)
-if len(checks) != 39:
-    raise SystemExit(f"OTA_CONTRACT_TEST_DEFINITION_ERROR expected 39 checks, got {len(checks)}")
+if len(checks) != 42:
+    raise SystemExit(f"OTA_CONTRACT_TEST_DEFINITION_ERROR expected 42 checks, got {len(checks)}")
 if failed:
     raise SystemExit("SRVR_AUTOMATIC_OTA_CONTRACT_FAIL: " + ", ".join(failed))
-print("SRVR_AUTOMATIC_OTA_CONTRACT_PASS (39/39)")
+print("SRVR_AUTOMATIC_OTA_CONTRACT_PASS (42/42)")
