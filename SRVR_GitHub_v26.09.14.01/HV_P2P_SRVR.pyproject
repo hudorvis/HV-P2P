@@ -2,6 +2,7 @@
   "files": [
     "main.py",
     "backend.py",
+    "firmware_authority.py",
     "resources.qrc",
     "qml/Main.qml",
     "qml/pages/SetupPage.qml",

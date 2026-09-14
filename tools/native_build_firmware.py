@@ -10,6 +10,7 @@ Order is important:
   3. Compile CTRL, which is impossible from the checked-in source build guard.
   4. Compile W1P.
   5. Package native build products and a SHA-256 manifest.
+  6. Create and verify the immutable SRVR CTRL/W1P firmware bundle.
 
 The checked-in source tree is never mutated by a successful build.
 """
@@ -26,7 +27,7 @@ import subprocess
 import sys
 import tempfile
 
-VER = "26.09.04.03"
+VER = "26.09.14.01"
 SEMVER = f"v{VER}"
 CTRL_SLOT = 0x600000
 HMI_SLOT = 0x380000
@@ -166,12 +167,14 @@ def main() -> int:
         if not 0 < ctrl_app.stat().st_size <= CTRL_SLOT:
             raise SystemExit(f"ERROR: CTRL app {ctrl_app.stat().st_size} exceeds 0x{CTRL_SLOT:X} app slot")
         require_binary_token(ctrl_app, f"HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_VERSION={SEMVER}", "CTRL")
+        require_binary_token(ctrl_app, "HV_P2P_FW_TARGET=EDGEBOX_ESP100;", "CTRL")
 
         # 4. W1P uses the same 16 MB dual-OTA partition map.
         w1p_app = compile_sketch(args.arduino_cli, stage / w1p_name, EDGEBOX_FQBN, build / "w1p", CTRL_SLOT)
         if not 0 < w1p_app.stat().st_size <= CTRL_SLOT:
             raise SystemExit(f"ERROR: W1P app {w1p_app.stat().st_size} exceeds 0x{CTRL_SLOT:X} app slot")
         require_binary_token(w1p_app, f"HV_P2P_FW_ROLE=W1P;HV_P2P_FW_VERSION={SEMVER}", "W1P")
+        require_binary_token(w1p_app, "HV_P2P_FW_TARGET=EDGEBOX_ESP100;", "W1P")
 
         # 5. Preserve the fully staged CTRL source used to produce the binary.
         staged_src = output / "STAGED_SOURCE"
@@ -221,10 +224,21 @@ def main() -> int:
         }
         (output / "NATIVE_BUILD_MANIFEST.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
+        # 6. Create the exact immutable CTRL/W1P authority bundle that every
+        # native SRVR package must carry.  The helper re-verifies release, role,
+        # target, ESP image identity, size and SHA-256 before copying anything.
+        bundle_dir = output / "SRVR_FIRMWARE_BUNDLE"
+        run([sys.executable, str(root / "tools" / "create_srvr_firmware_bundle.py"),
+             "--native-output", str(output), "--output", str(bundle_dir)])
+        run([sys.executable, str(root / "tools" / "verify_srvr_firmware_bundle.py"), str(bundle_dir)])
+
+        # Authenticate the complete native artifact tree (including staged source
+        # and the exact SRVR firmware bundle). Exclude only this checksum file.
+        sums_path = output / "SHA256SUMS.txt"
         manifest_lines = []
-        for p in sorted(set(products + [output / "NATIVE_BUILD_MANIFEST.json"])):
-            manifest_lines.append(f"{sha256(p)}  {p.relative_to(output)}")
-        (output / "SHA256SUMS.txt").write_text("\n".join(manifest_lines) + "\n")
+        for p in sorted(x for x in output.rglob("*") if x.is_file() and x != sums_path):
+            manifest_lines.append(f"{sha256(p)}  {p.relative_to(output).as_posix()}")
+        sums_path.write_text("\n".join(manifest_lines) + "\n")
 
         # Re-run source checks on the clean source tree. Staged-header byte-level
         # verification above is the native carrier gate for the staged copy.

@@ -1,52 +1,44 @@
-# HV P2P v26.09.04.03 — Native Build & Functional Bench Checklist
+# HV P2P v26.09.14.01 — Native Build & Functional Bench Checklist
 
-## Windows CI dependency-tool gate (v26.09.04.03)
+## Windows CI dependency-tool gate
 
-Before `pyside6-deploy` runs on Windows x64, CI must prove all of the following:
+Before `pyside6-deploy` runs on Windows x64, CI must prove the MSVC x64 developer environment and real `dumpbin.exe` PE-header probe work, Nuitka is exactly 4.2, `--assume-yes-for-downloads` survives into the generated command, and the final PE is AMD64. The frozen executable smoke test remains mandatory.
 
-- MSVC x64 developer environment initialized.
-- `dumpbin.exe` is present and runnable.
-- Nuitka is exactly `4.2`.
-- generated `pysidedeploy.spec` contains `--assume-yes-for-downloads`.
-- `pyside6-deploy --dry-run` produces an actual Nuitka command containing `--assume-yes-for-downloads`.
-
-This prevents the non-interactive Dependency Walker prompt that stopped v26.09.04.01 before an `.exe` was created.
-
-
-## A. Native build gate
+## A. Native build / firmware-authority gate
 
 - [ ] Run `.github/workflows/complete-build.yml` on GitHub.
-- [ ] Confirm `ALL_SOURCE_CHECKS_PASS` appears before compilation.
+- [ ] Confirm `ALL_SOURCE_CHECKS_PASS` before native compilation.
 - [ ] Confirm Arduino ESP32 core is exactly `3.3.8`.
-- [ ] Confirm `Waveshare_ST7262_LVGL` is fetched at exact commit `593775b89ebfd2d411df3eadba7bc382767ed4a4` and the workflow verifies `rev-parse HEAD`.
-- [ ] Confirm CTRL/W1P FQBN explicitly contains `FlashSize=16M`.
-- [ ] Confirm CTRL-TS build uses 16 MB flash, OPI PSRAM and local `partitions.csv`.
-- [ ] Confirm CTRL-TS native app is >32 KiB and <= `0x380000` bytes.
-- [ ] Confirm carrier verification prints `STAGED_HMI_HEADER_PASS`.
-- [ ] Confirm generated carrier hardware is `WS-ESP32S3-7`, protocol `1`, version
-      `v26.09.04.03`, and its SHA matches the native CTRL-TS `.ino.bin`.
-- [ ] Confirm complete CTRL app including embedded CTRL-TS image is <= `0x600000`.
-- [ ] Confirm W1P app is <= `0x600000`.
-- [ ] Confirm the native builder verifies the compiled CTRL binary contains `HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_VERSION=v26.09.04.03`.
-- [ ] Confirm the native builder verifies the compiled W1P binary contains `HV_P2P_FW_ROLE=W1P;HV_P2P_FW_VERSION=v26.09.04.03`.
-- [ ] Confirm `NATIVE_BUILD_MANIFEST.json` records the exact Waveshare git commit.
-- [ ] Confirm **macOS Intel** SRVR runs on `macos-15-intel`, reports `x86_64`, passes source/backend/QML/frozen-app smoke tests, and its Info.plist reports `CFBundleIdentifier=com.hvp2p.srvr`, `CFBundleShortVersionString=26.9.4`, `CFBundleVersion=2609.4.3`, and `HVP2PReleaseVersion=26.09.04.03`.
-- [ ] Confirm **macOS Apple Silicon** SRVR runs on `macos-15`, reports `arm64`, passes the same source/backend/QML/frozen-app smoke tests, and carries the same versioned bundle metadata.
-- [ ] Confirm **Windows x64** SRVR runs on `windows-2025`, the built PE machine is `0x8664` / AMD64, and source/backend/QML/frozen-exe smoke tests all pass.
-- [ ] Confirm Windows SRVR stores private config under `%LOCALAPPDATA%\HV P2P SRVR` (or documented fallback) and Save/Load Config handles `file:///C:/...` plus UNC paths.
-- [ ] Confirm the Complete Release `SRVR/` directory contains exactly the three original unextracted native ZIPs: macOS Intel, macOS Apple Silicon and Windows x64; no `.app` or `.exe` is extracted into the Complete Release.
-- [ ] Confirm `COMPLETE_RELEASE/SHA256SUMS.txt` exists and the external `HV P2P v26.09.04.03 Complete Release.zip.sha256` matches the exact combined ZIP.
-- [ ] Download `HV-P2P-v26.09.04.03-Native-Firmware` artifact and retain `NATIVE_BUILD_MANIFEST.json` + `SHA256SUMS.txt`.
-- [ ] Download and preserve the exact Complete Release ZIP byte-for-byte; do not extract/re-zip any of the three nested SRVR ZIPs before returning it for audit.
+- [ ] Confirm CTRL-TS is built first with pinned Waveshare/LVGL dependencies and its app is `>32 KiB` and `<=0x380000`.
+- [ ] Confirm `STAGED_HMI_HEADER_PASS` proves the exact native CTRL-TS image/version/SHA was embedded into staged CTRL.
+- [ ] Confirm final CTRL and W1P use EdgeBox `FlashSize=16M` and each app is `<=0x600000`.
+- [ ] Confirm compiled CTRL contains both `HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_VERSION=v26.09.14.01` and `HV_P2P_FW_TARGET=EDGEBOX_ESP100;`.
+- [ ] Confirm compiled W1P contains both `HV_P2P_FW_ROLE=W1P;HV_P2P_FW_VERSION=v26.09.14.01` and `HV_P2P_FW_TARGET=EDGEBOX_ESP100;`.
+- [ ] Confirm `NATIVE_BUILD_MANIFEST.json` records exact canonical CTRL-TS/CTRL/W1P application sizes and SHA-256 values.
+- [ ] Confirm `SRVR_FIRMWARE_BUNDLE` contains exactly `manifest.json`, `SHA256SUMS.txt`, `ctrl.bin`, `w1p.bin`.
+- [ ] Confirm `verify_srvr_firmware_bundle.py` passes and bundle CTRL/W1P hashes exactly match the canonical native applications.
+- [ ] Confirm macOS Intel (`x86_64`) and Apple Silicon (`arm64`) jobs both depend on `build-firmware`, verify the downloaded bundle, package it, and pass source/QML/frozen-app smoke tests.
+- [ ] Confirm Windows x64 job depends on `build-firmware`, verifies/packages the same bundle, reports PE machine `0x8664`, and passes source/QML/frozen-exe smoke tests.
+- [ ] Confirm each frozen SRVR smoke test succeeds with its bundled firmware resources present; absence/corruption must make SRVR firmware-authority startup fail closed.
+- [ ] Confirm Complete Release is created only after firmware + both macOS architectures + Windows x64 pass.
+- [ ] Confirm `COMPLETE_RELEASE/SHA256SUMS.txt` and the external Complete Release `.sha256` match.
+- [ ] Preserve the exact downloaded Native Firmware and Complete Release artifacts byte-for-byte for audit.
 
-## B. Initial flashing
+## B. One-time bootstrap / first convergence
 
-- [ ] Verify EdgeBox serial-number/hardware revision before using its external USB port for
-      programming; older EdgeBox revisions use the internal UART programming header.
-- [ ] One-time USB flash CTRL-TS v26.09.04.03 first.
-- [ ] Flash W1P EdgeBox with its matching v26.09.04.03 native build.
-- [ ] Flash CTRL EdgeBox with the **staged/native CTRL build** that contains the real HMI image.
-- [ ] Never attempt to compile the clean CTRL source by deleting/bypassing the carrier `#error`.
+Follow `INITIAL_BOOTSTRAP_v26.09.14.01.md`. Keep the physical winch unable to move throughout bootstrap.
+
+- [ ] One-time USB/full-device bootstrap CTRL-TS with v26.09.14.01 compatible firmware/partition map.
+- [ ] One-time USB/full-device bootstrap W1P with the authority-aware v26.09.14.01 firmware and 16 MB dual-OTA partition map.
+- [ ] One-time USB/full-device bootstrap **final staged CTRL** containing the real CTRL-TS image; never bypass the clean-source carrier `#error`.
+- [ ] Start the matching native SRVR and confirm the authority service is available on the isolated control LAN.
+- [ ] Reboot CTRL: verify it remains an E-stop source until exact release/running-SHA match, repairs older/same-version-mismatched image, and refuses automatic downgrade when device firmware is newer.
+- [ ] Reboot W1P: verify software Servo Enable and motion remain inhibited until exact authority match.
+- [ ] For a W1P update/repair, verify no flash write begins until the existing stopped/braked gate proves fresh near-zero EL7 speed, Servo Enable OFF and Brake Release OFF.
+- [ ] Confirm an interrupted/invalid CTRL or W1P download does not activate the inactive image.
+- [ ] Confirm CTRL does not start CTRL-TS update until CTRL reports its own SRVR match; then verify CTRL-TS reaches exact required version/hash.
+- [ ] Confirm an old/missing `FW_MATCH` W1P status is treated fail-closed by SRVR.
+- [ ] Confirm matched devices do not initiate surprise OTA during an active running session; future convergence occurs during planned stopped startup/reboot.
 
 ## C. CTRL <-> CTRL-TS RS485, no motion hardware
 
@@ -66,6 +58,12 @@ This prevents the non-interactive Dependency Walker prompt that stopped v26.09.0
 ## D. Automatic update recovery tests
 
 Perform these with motor power disabled.
+
+- [ ] Serve an older-than-installed SRVR release to a deliberately newer test CTRL/W1P: confirm warning/hold and **no automatic downgrade**.
+- [ ] Corrupt a role manifest/hash in a controlled test bundle: SRVR startup/validator or EdgeBox validation must fail closed and no invalid image may activate.
+- [ ] Interrupt CTRL Ethernet OTA mid-transfer: old partition remains bootable; retry can converge later.
+- [ ] Interrupt W1P Ethernet OTA mid-transfer behind the service gate: old partition remains bootable and Servo Enable remains inhibited.
+- [ ] Start W1P authority repair with EL7 feedback unavailable: update must remain at the stopped/braked safety gate rather than bypassing it.
 
 - [ ] Re-send a matching image: no unnecessary update once hash/version exactly match.
 - [ ] Build a later test HMI version, embed in matching CTRL, and verify mismatch triggers update.
@@ -158,7 +156,7 @@ Only after independent E-stop/STO/brake/power-isolation circuits are proven.
 - [ ] Verify Battery Change auto-cancels correctly on return inside limits.
 - [ ] Exercise E-stop from SRVR, CTRL and W1P and verify source/combinations display correctly.
 
-## K. v26.09.04.03 locked Run / Setup / Virtual acceptance
+## K. v26.09.14.01 locked Run / Setup / Virtual acceptance
 
 Perform Virtual-mode checks with the physical load safely isolated until its output-inhibit behavior is independently confirmed.
 
@@ -181,5 +179,5 @@ Perform Virtual-mode checks with the physical load safely isolated until its out
 
 ## Release label
 
-Do not label v26.09.04.03 “hardware-tested” until every applicable physical gate above is recorded.
+Do not label v26.09.14.01 “hardware-tested” until every applicable physical gate above is recorded.
 A successful GitHub native build means **compile-ready/test-firmware produced**, not powered-motion proof.

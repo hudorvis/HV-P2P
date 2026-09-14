@@ -4,14 +4,14 @@ from pathlib import Path
 import hashlib, re, struct, sys
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.09.04.03'
+VER = '26.09.14.01'
 CTRL = ROOT / f'HV_P2P_CTRL_EDGEBOX_v{VER}' / f'HV_P2P_CTRL_EDGEBOX_v{VER}.ino'
 W1P = ROOT / f'HV_P2P_W1P_EDGEBOX_v{VER}' / f'HV_P2P_W1P_EDGEBOX_v{VER}.ino'
 TS = ROOT / f'HV_P2P_CTRL_TS_v{VER}' / f'HV_P2P_CTRL_TS_v{VER}.ino'
 FRAME_CTRL = ROOT / f'HV_P2P_CTRL_EDGEBOX_v{VER}' / 'HV_P2P_RS485_Frame.h'
 FRAME_TS = ROOT / f'HV_P2P_CTRL_TS_v{VER}' / 'HV_P2P_RS485_Frame.h'
 IMG_HDR = ROOT / f'HV_P2P_CTRL_EDGEBOX_v{VER}' / 'HV_P2P_CTRL_TS_Firmware_Image.h'
-SRVR_DIR = ROOT / 'SRVR_GitHub_v26.09.04.03'
+SRVR_DIR = ROOT / 'SRVR_GitHub_v26.09.14.01'
 SRVR = SRVR_DIR / 'backend.py'
 MAIN = SRVR_DIR / 'main.py'
 SETUP_QML = SRVR_DIR / 'qml' / 'pages' / 'SetupPage.qml'
@@ -100,6 +100,11 @@ def normalized_func_hash(src: str, name: str) -> str:
     return hashlib.sha256(f.encode()).hexdigest()
 
 c=read(CTRL); w=read(W1P); t=read(TS); fc=read(FRAME_CTRL); ft=read(FRAME_TS); ih=read(IMG_HDR); s=read(SRVR); m=read(MAIN); q=read(SETUP_QML); span=read(SPAN_QML); ctrl_part=read(CTRL_PARTITIONS); ts_part=read(TS_PARTITIONS); w1p_part=read(W1P_PARTITIONS)
+
+# Run and Setup were explicitly approved/locked before this revision.  Hash their
+# exact QML bytes so firmware-authority work cannot accidentally redesign them.
+must(hashlib.sha256((SRVR_DIR/'qml'/'Main.qml').read_bytes()).hexdigest() == '60edb4348c98827902f21006ffa4e4aa274e65d0527f32782f5f3de97bead93e', 'locked Run/Main QML byte hash preserved')
+must(hashlib.sha256(SETUP_QML.read_bytes()).hexdigest() == '9cede2819a4c7d931247121711d2441e01537fdd05c804b0fc646caa5fded7fd', 'locked Setup QML byte hash preserved')
 
 # Basic sketch/package integrity.
 for p in (CTRL,W1P,TS):
@@ -211,7 +216,7 @@ must('Do NOT change g_fw_image_hash while the old application is still running' 
 must('MAX_IMAGE = 0x380000' in read(ROOT/'tools'/'embed_ctrl_ts_firmware.py'), 'CTRL-TS embed helper enforces the conservative 0x380000 target OTA slot')
 
 # Preserve unchanged W1P core control implementation from proven v26.08.19.01 via normalized function hashes.
-# Safety-facing functions intentionally extended in v26.09.04.03 are hash-locked separately below.
+# Safety-facing functions intentionally extended in v26.09.14.01 are hash-locked separately below.
 expected_w1p={
 'modbusCRC16':'2d54f956989bcfd6a5b539664c14228f13046f16daca4911cd6467fcafe6cd3e',
 'modbusWaitForSilentGap':'46cb53133b81b90bcc184ace784e64e1f807823485cd1ea29ad3b228a4b94cb8',
@@ -229,14 +234,20 @@ expected_w1p={
 }
 for fn,h in expected_w1p.items(): must(normalized_func_hash(w,fn)==h, f'W1P proven v26.08.19.01 logic preserved: {fn}')
 
-expected_w1p_v07_safety={
-'driveAutoEnableReady':'ce2cd73df1636f1ba2dd7ba23da9eca4f983ba3ee6a179dd9b5398ad831dc78f',
-'handleCommand':'6f6b14a0ba61bdb8ea20de54f6fa855c89f7d9644a7ac3886d3567592529d507',
-'sendStatusLine':'4770463812c84bc2351d04a58a84e912cd714fd8fc4512e11f7c872d35ca56f0',
+# v26.09.14.01 intentionally adds only the firmware-authority inhibit to the
+# reviewed W1P safety-facing functions below.  Re-lock their exact normalized
+# bodies rather than weakening/removing the preservation guard.  The independent
+# 650 ms watchdog and stopped/braked OTA gate remain byte-for-byte logic locks.
+expected_w1p_v14_safety={
+'driveAutoEnableReady':'b64f455a99106a6defce2955461b5c1e56c402a7bfda5352bbd90e9250989bd4',
+'driveAutoEnableBlockReason':'2c6ac2c23a69178fba0292dab36957e2a93775877e1ccd1ad6d510e58e087d3e',
+'serviceAutomaticDriveEnable':'df5bdc2fcb88fc78ce7a86ecdea32bd670f0dda42c8dea27815a27598406b035',
+'handleCommand':'81a6d98d3a7b3e21297bf415dd76b6e1f73eadd62d14c8cb884a4883a3d6d0c7',
+'sendStatusLine':'5f129e6401e1bf5bad179b75372adee39f6e4ea58d88b37919061115589826e5',
 'serviceVelocityCommandWatchdog':'a6dc0d9244bf1c7b64d28291c56c8fcd20abb21af5566a5bf396e1723fdd9111',
 'hvPrepareSafeServiceState':'92026ffa3126d53e57d9f111583d11f7ef52b19b16528af82b970108bf4eb8ab',
 }
-for fn,h in expected_w1p_v07_safety.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.09.04.03 reviewed safety extension hash locked: {fn}')
+for fn,h in expected_w1p_v14_safety.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.09.14.01 reviewed safety/authority hash locked: {fn}')
 
 # Leadshine contract.
 for tok in ['RS485_BAUD = 115200','DRIVE_MODBUS_ID = 1','SERIAL_8N1','MODBUS_REPLY_TIMEOUT_MS = 50','MODBUS_READ_RETRIES = 3','MODBUS_INTERFRAME_GAP_US = 1500','W1P_PEER_TIMEOUT_MS = 750']:
@@ -254,7 +265,7 @@ must('driveStopNow();' in extract_func(w,'servicePeerTimeout'), 'W1P peer-timeou
 must('if (line == "STOP")' in w and 'parseFloatArg(line, "SW_SRVON", val)' in w, 'W1P STOP and SW_SRVON command contract retained')
 must('Do not torque-enable the servo while the output map is still being migrated' in w and '!g.do4_brake_assignment_ok' in w, 'SW Servo Enable waits for verified BRK-OFF/output map')
 
-# v26.09.04.03 independent W1P command-deadman and service safety gate.
+# v26.09.14.01 independent W1P command-deadman and service safety gate.
 wd=extract_func(w,'serviceVelocityCommandWatchdog')
 must('W1P_VEL_COMMAND_TIMEOUT_MS = 650' in w, 'W1P independent VEL watchdog timeout is 650ms')
 must('lastVelocityCommandMs' in wd and 'lastPeerPacketMs' not in wd, 'W1P VEL watchdog keys only from VEL freshness, not generic peer traffic')
@@ -266,7 +277,16 @@ must(all(tok in service_gate for tok in ('driveStopNow();','g.drive_writes_enabl
 must(w.count('hvPrepareSafeServiceState(reason)') >= 2 and 'hvPrepareSafeServiceState(hvUploadError)' in w, 'W1P OTA/reboot/reset all enter the safe service gate')
 must('SERVICE_REARM' in w and 'STOP_CLEAR_LATCH' in w, 'W1P service/watchdog latch requires STOP re-arm path')
 
-# v26.09.04.03 closes the W1P Setup-IP semantic gap with a coordinated safe
+# v26.09.14.01 SRVR-authoritative startup/safe-idle firmware gate.  These are
+# additive checks; none replace the established motion/service safety guards.
+must('bool firmware_authority_hold = true' in w and 'bool software_srvon_inhibit = true' in w, 'W1P boots fail-closed for firmware authority and software Servo Enable')
+must('hvAuthorityFetchManifest(SRVR_IP, "W1P"' in w and 'automatic downgrade REFUSED' in w, 'W1P queries SRVR role manifest and refuses automatic downgrade')
+must('hvPrepareSafeServiceState(safeReason)' in w and 'hvAuthorityDownloadAndStage(SRVR_IP, manifest, reason)' in w, 'W1P authority OTA reuses exact stopped/braked service gate before flash')
+must('deferred_motion' in w and 'fabsf(g.vel_actual_mps) > 0.05f' in w, 'W1P authority update defers while motion is active')
+must('FW_MATCH=' in w and 'FW_AUTH=' in w and 'FW_AUTHORITY' in w, 'W1P status exposes firmware-authority hold as a safety source')
+must('fields.get("FW_MATCH", "0") != "1"' in s and 'self.winch_fw_authority_hold' in s, 'SRVR treats missing/false W1P firmware-authority match fail-closed in internal motion safety')
+
+# v26.09.14.01 closes the W1P Setup-IP semantic gap with a coordinated safe
 # readdress: the old address remains active until W1P proves stopped/braked,
 # persists the new local IP, acknowledges, then reboots.
 network_cmd=extract_func(w,'handleCommand')
@@ -295,10 +315,10 @@ for src,role in ((c,'CTRL'),(w,'W1P')):
     must('Build identity: %s' in src and 'HV_UPDATE_BUILD_TOKEN' in src, f'{role} compiled app retains role/version build identity token')
 
 # SRVR must promote new W1P internal safety states into the existing motion safety/re-arm path.
-must('fields.get("VEL_WD", "0") == "1"' in s and 'fields.get("SERVICE_LOCK", "0") == "1"' in s, 'SRVR parses W1P watchdog/service safety flags')
-must('self._w1p_internal_safety = self.winch_vel_watchdog_fault or self.winch_service_safety_lock' in s, 'SRVR consolidates W1P internal motion safety state')
-must('def _motion_tick(self):' in s and 'or self._w1p_internal_safety' in s, 'SRVR motion tick treats W1P watchdog/service lock as safety stop')
-must('or self._w1p_internal_safety' in s and 'w1p_fault = bool(' in s, 'SRVR operator/CTRL-TS status classifies W1P watchdog/service lock as W1P fault')
+must('fields.get("VEL_WD", "0") == "1"' in s and 'fields.get("SERVICE_LOCK", "0") == "1"' in s and 'fields.get("FW_MATCH", "0") != "1"' in s, 'SRVR parses W1P watchdog/service/firmware-authority safety flags')
+must('self._w1p_internal_safety = (self.winch_vel_watchdog_fault or self.winch_service_safety_lock or' in s and 'self.winch_fw_authority_hold)' in s, 'SRVR consolidates W1P internal motion and firmware-authority safety state')
+must('def _motion_tick(self):' in s and 'or self._w1p_internal_safety' in s, 'SRVR motion tick treats W1P internal safety locks as safety stop')
+must('or self._w1p_internal_safety' in s and 'w1p_fault = bool(' in s, 'SRVR operator/CTRL-TS status classifies W1P internal safety lock as W1P fault')
 
 # CTRL-TS is intentionally visually redesigned to the approved SRVR-family theme.
 must('#define AUX_COUNT 5' in t, 'CTRL-TS retains five AUX touch tiles')
@@ -329,7 +349,7 @@ must('▣  CTRL-TS' in q and 'CTRL-TS / FIRMWARE' not in q and 'ctrlTsFirmwareSt
 must('profileValue(Number(gp.x), key)' in span, 'Free-D geometry markers are sampled from the exact rendered cable path')
 
 
-# v26.09.04.03 locked Run/Setup revision and Virtual demo-source contract.
+# v26.09.14.01 locked Run/Setup revision and Virtual demo-source contract.
 main_qml = read(SRVR_DIR / 'qml' / 'Main.qml')
 must('text:"HV P2P\\nSRVR"' in main_qml and 'HV P2P  |  SRVR' not in main_qml and 'P2P°\\nSRVR' not in main_qml, 'Run/Setup shared header uses locked two-line HV P2P / SRVR logo only')
 must('pendingShortcutAction' in main_qml and 'shortcutConfirmRemaining = 5' in main_qml and 'Confirm? ' in main_qml and 'shortcutConfirmTimer' in main_qml, 'Run Save/Recall/Slip use one global five-second two-step confirmation state')
@@ -345,7 +365,7 @@ must('if self.position_source == "Virtual"' in virt_send and 'self._virtual_velo
 must('physical_winch_required = self.position_source != "Virtual"' in s, 'Virtual demo mode does not require W1P/EL7 health to exercise CTRL/CTRL-TS input')
 must('if "POS_M" in fields and self.position_source != "Virtual"' in s and 'if "VEL_MPS" in fields and self.position_source != "Virtual"' in s, 'Physical W1P feedback cannot overwrite Virtual demo position/speed')
 must('if not self.smoke_test and self.position_source != "Virtual"' in s and 'SYNC_POS' in s, 'Virtual Slip/re-reference does not rewrite physical W1P position')
-must('ctrl_version=v26.09.04.03' in c and 'FW=" + String(FW_VERSION)' in w, 'CTRL and W1P publish actual firmware identity for Setup')
+must('ctrl_version=v26.09.14.01' in c and 'FW=" + String(FW_VERSION)' in w, 'CTRL and W1P publish actual firmware identity for Setup')
 must('ctrlFirmwareVersion' in s and 'w1pFirmwareVersion' in s and 'ctrlEStopActive' in s and 'w1pEStopActive' in s, 'SRVR exposes locked CTRL/W1P Setup diagnostics')
 must('text:"CTRL-TS Link"' in q and 'backend.ctrlTsConnected?"Active":"Disconnected"' in q, 'CTRL-TS Link uses the same Active/Disconnected dot status model as node links')
 must('anchors.rightMargin:root.f(15)' in q and 'anchors.leftMargin:root.f(15)' in q and q.count('width:(parent.width-root.f(1))/2') >= 2, 'Motion Profiles centre divider has even Mode 1/Mode 2 spacing')

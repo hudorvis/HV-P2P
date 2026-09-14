@@ -199,7 +199,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.09.04.03", smoke_test: bool = False):
+    def __init__(self, version="26.09.14.01", smoke_test: bool = False):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -287,6 +287,8 @@ class HVP2PBackend(QObject):
         self._w1p_estop = False
         self.winch_vel_watchdog_fault = False
         self.winch_service_safety_lock = False
+        self.winch_fw_authority_hold = False
+        self.winch_fw_authority_state = "unknown"
         self._w1p_internal_safety = False
         self._ctrl_estop = False
         self._srvr_estop = False
@@ -716,7 +718,10 @@ class HVP2PBackend(QObject):
             self._w1p_estop = bool(estop and src in ("","W1P","LOCAL"))
             self.winch_vel_watchdog_fault = fields.get("VEL_WD", "0") == "1"
             self.winch_service_safety_lock = fields.get("SERVICE_LOCK", "0") == "1"
-            self._w1p_internal_safety = self.winch_vel_watchdog_fault or self.winch_service_safety_lock
+            self.winch_fw_authority_hold = fields.get("FW_MATCH", "0") != "1"
+            self.winch_fw_authority_state = str(fields.get("FW_AUTH", self.winch_fw_authority_state or "unknown"))
+            self._w1p_internal_safety = (self.winch_vel_watchdog_fault or self.winch_service_safety_lock or
+                                         self.winch_fw_authority_hold)
             rs = fields.get("RS_STAT", fields.get("MODBUS","0")).upper()
             cfg = fields.get("LEAD_CFG","MISMATCH").upper()
             fb_ok = fields.get("MODBUS","0").upper() in ("1","OK","CONNECTED","TRUE","ON")

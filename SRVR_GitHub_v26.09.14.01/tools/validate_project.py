@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "26.09.04.03"
+VERSION = "26.09.14.01"
 ERRORS: list[str] = []
 
 
@@ -31,6 +31,7 @@ def read(rel: str) -> str:
 
 main = read("main.py")
 backend = read("backend.py")
+firmware_authority = read("firmware_authority.py")
 qml_main = read("qml/Main.qml")
 qml_setup = read("qml/pages/SetupPage.qml")
 qml_log = read("qml/pages/LogPage.qml")
@@ -42,7 +43,7 @@ qrc_text = read("resources.qrc")
 requirements = read("requirements.txt")
 
 # Python syntax.
-for rel in ("main.py", "backend.py"):
+for rel in ("main.py", "backend.py", "firmware_authority.py"):
     try:
         ast.parse(read(rel), filename=rel)
     except SyntaxError as exc:
@@ -57,6 +58,12 @@ for rel, text in (("main.py", main), ("backend.py", backend)):
 require(f'APP_VERSION = "{VERSION}"' in main, "main.py version mismatch")
 require(f"APP_VERSION: '{VERSION}'" in workflow, "workflow version mismatch")
 require(f"v{VERSION}" in workflow, "artifact version mismatch")
+require('"firmware_authority.py"' in project_text, "SRVR project manifest must include firmware_authority.py")
+require('FirmwareAuthorityService' in main and 'firmware_service.start()' in main and 'return 4' in main,
+        "SRVR firmware authority must start fail-closed before normal runtime")
+require('validate_firmware_bundle' in firmware_authority and 'EDGEBOX_ESP100' in firmware_authority and
+        '/firmware/{role.lower()}' in firmware_authority,
+        "SRVR firmware authority immutable role/target validation is missing")
 
 # Pin the Qt/PySide toolchain so a later PyPI release cannot silently change deployment behaviour.
 require(requirements.strip() == "PySide6==6.11.1", "PySide6 must be pinned to 6.11.1 for reproducible CI")
@@ -350,7 +357,7 @@ require('width:parent.width*.22' in qml_main and
 require(qml_main.count('width:f(72)') >= 2 and 'parent.width-f(48+72+66)' in qml_main,
         "Free-D lens decoded percentage width fix is missing")
 
-# v26.09.04.03 locked Run/Setup revision. Keep the approved panel geometry and
+# v26.09.14.01 locked Run/Setup revision. Keep the approved panel geometry and
 # setting semantics while guarding only the requested presentation/interaction deltas.
 require('text:"HV P2P\\nSRVR"' in qml_main and 'HV P2P  |  SRVR' not in qml_main and 'P2P°\\nSRVR' not in qml_main,
         "locked two-line HV P2P/SRVR logo/header revision is missing")
@@ -526,7 +533,7 @@ require('profileValue(Number(gp.x), key)' in span_qml and
         'var gv=root.sideView ? Number(gp.y)' not in span_qml,
         "Free-D geometry markers are not pinned to the exact calculated cable profile")
 
-# v26.09.04.03 integration contract: fifth CTRL-TS AUX travels in the spare A7
+# v26.09.14.01 integration contract: fifth CTRL-TS AUX travels in the spare A7
 # 16-bit flag, and display packets expose all five state-aware labels.
 require("FLAG_AUX5 = 0x0400" in backend, "AUX5 controller flag missing")
 require('f"aux5={labels[4]}"' in backend, "DSP1 AUX5 field missing")
@@ -556,8 +563,10 @@ require("_not_calibrated\n            or self.battery_change_mode" in backend,
 # Exact v04 failure must be structurally impossible in v05: deploy from a clean
 # RUNNER_TEMP staging directory containing an explicit allow-list.
 require("$RUNNER_TEMP/hvp2p-stage" in workflow, "workflow is not deploying from isolated staging")
-require("cp main.py backend.py resources.qrc HV_P2P_SRVR.pyproject" in workflow,
+require("cp main.py backend.py firmware_authority.py resources.qrc HV_P2P_SRVR.pyproject" in workflow,
         "workflow staging allow-list missing core files")
+require('SRVR_FIRMWARE_BUNDLE' in workflow and 'firmware_bundle' in workflow,
+        "workflow staging allow-list missing immutable SRVR firmware bundle")
 require("cp -R qml \"$STAGE/\"" in workflow, "workflow staging allow-list missing qml directory")
 require("cd \"$STAGE\"" in workflow, "deployment does not cd into isolated staging")
 require("--smoke-test" in workflow, "CI frozen/source smoke tests missing")
@@ -582,7 +591,7 @@ require('cp assets/HV_P2P_SRVR_icon.png "$STAGE/HV_P2P_SRVR_icon.png"' in workfl
         "P2P SRVR bundle icon is not restored during packaging")
 require('CFBundleDisplayName' in workflow and "HV P2P SRVR'" in workflow,
         "HV P2P SRVR bundle display metadata is not enforced")
-require(all(token in workflow for token in ('CFBundleIdentifier', 'com.hvp2p.srvr', 'CFBundleShortVersionString', 'CFBundleVersion', 'HVP2PReleaseVersion', "BUNDLE_BUILD_VERSION: '2609.4.3'")),
+require(all(token in workflow for token in ('CFBundleIdentifier', 'com.hvp2p.srvr', 'CFBundleShortVersionString', 'CFBundleVersion', 'HVP2PReleaseVersion', "BUNDLE_BUILD_VERSION: '2609.14.1'")),
         "HV P2P SRVR stable bundle identity/version metadata is not enforced")
 require('three untouched native ZIPs' in workflow and 'SHA256SUMS.txt' in workflow and 'Complete Release.zip.sha256' in workflow,
         "complete release does not preserve/hash all native SRVR ZIPs and authoritative release ZIP")
@@ -601,9 +610,9 @@ require('Nuitka==4.2' in workflow and '--assume-yes-for-downloads' in workflow,
         "Windows CI does not pin Nuitka and permit required non-interactive dependency-tool downloads")
 require("Select-String -Path deploy-dry-run.txt -SimpleMatch '--assume-yes-for-downloads'" in workflow,
         "Windows deploy dry-run does not prove the actual Nuitka command is non-interactive")
-require('HV-P2P-SRVR-v26.09.04.03-macOS-Intel' in workflow and
-        'HV-P2P-SRVR-v26.09.04.03-macOS-Apple-Silicon' in workflow and
-        'HV-P2P-SRVR-v26.09.04.03-Windows-x64' in workflow,
+require('HV-P2P-SRVR-v26.09.14.01-macOS-Intel' in workflow and
+        'HV-P2P-SRVR-v26.09.14.01-macOS-Apple-Silicon' in workflow and
+        'HV-P2P-SRVR-v26.09.14.01-Windows-x64' in workflow,
         "native SRVR artifact names are incomplete")
 require('def _app_data_dir' in backend and 'LOCALAPPDATA' in backend and 'XDG_CONFIG_HOME' in backend,
         "cross-platform private config directory mapping is missing")

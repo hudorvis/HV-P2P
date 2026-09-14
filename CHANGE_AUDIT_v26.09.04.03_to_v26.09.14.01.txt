@@ -1,0 +1,48 @@
+HV P2P v26.09.04.03 -> v26.09.14.01 CHANGE AUDIT
+========================================================================
+
+Purpose
+-------
+v26.09.14.01 adds SRVR-authoritative automatic network firmware convergence for
+CTRL and W1P while preserving the approved UI, motion semantics and established
+safety/recovery paths from v26.09.04.03.
+
+Primary intentional changes
+---------------------------
+1. SRVR read-only firmware authority module and exact immutable bundle validator.
+2. Shared CTRL/W1P Ethernet OTA client with manifest, role, hardware target,
+   release, exact size, complete SHA-256 and embedded identity validation.
+3. CTRL startup authority/E-stop hold and sequencing gate preventing CTRL-TS OTA
+   until CTRL itself exactly matches SRVR.
+4. W1P startup authority hold integrated with existing Servo Enable/drive safety,
+   with OTA flash writes only after the unchanged stopped/braked service gate.
+5. SRVR W1P parser treats missing/false FW_MATCH fail-closed.
+6. Native firmware builder creates/verifies one exact SRVR_FIRMWARE_BUNDLE after
+   CTRL-TS -> staged CTRL -> final CTRL -> W1P compilation.
+7. All Mac Intel, Mac Apple Silicon and Windows x64 SRVR jobs depend on that
+   firmware job and package the exact same verified bundle.
+8. Firmware authority HTTP, immutable bundle-builder and automatic-OTA contracts
+   are integrated into the master source regression suite.
+9. One-time bootstrap/recovery documentation added.
+
+Preservation locks
+------------------
+- Run qml/Main.qml SHA-256 remains:
+  60edb4348c98827902f21006ffa4e4aa274e65d0527f32782f5f3de97bead93e
+- Setup qml/pages/SetupPage.qml SHA-256 remains:
+  9cede2819a4c7d931247121711d2441e01537fdd05c804b0fc646caa5fded7fd
+- W1P 650 ms VEL watchdog function remains regression-hash locked.
+- W1P hvPrepareSafeServiceState() remains regression-hash locked.
+- Speed-mode DYNAMIC PI contract remains unchanged.
+- Power-mode TRADITIONAL semantics remain unchanged.
+- Existing E-stop, RS485, Servo Enable, brake/service re-arm and network rollback
+  protections remain in place.
+- v26.09.04.03 Windows x64 MSVC/dumpbin/Nuitka/AMD64/frozen-smoke fixes remain.
+
+Release-integrity policy
+------------------------
+- No locally fabricated native ESP32 binaries or SRVR executables are included.
+- GitHub Actions remains the authoritative native compile/frozen-runtime gate.
+- Source packaging occurs only after the complete locally available master suite
+  passes; the ZIP is then independently extracted and every CHECKSUMS_SHA256.txt
+  entry is re-hashed before it is called GitHub-ready.

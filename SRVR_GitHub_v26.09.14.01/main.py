@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sys
+from firmware_authority import DEFAULT_FIRMWARE_PORT, FirmwareAuthorityService
 
 # Force Qt Quick Controls to use a deterministic non-native visual style.
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
@@ -31,7 +32,7 @@ import PySide6.QtQuickControls2  # noqa: F401
 
 from backend import HVP2PBackend
 
-APP_VERSION = "26.09.04.03"
+APP_VERSION = "26.09.14.01"
 
 
 def _exercise_qml(app: QGuiApplication, engine: QQmlApplicationEngine, backend: HVP2PBackend) -> bool:
@@ -242,6 +243,17 @@ def main() -> int:
     # Qt's project tooling expects this rc_<qrc-name>.py naming convention.
     import rc_resources  # noqa: F401
 
+    firmware_service = FirmwareAuthorityService(
+        APP_VERSION,
+        bind="127.0.0.1" if SMOKE_TEST else "0.0.0.0",
+        port=0 if SMOKE_TEST else DEFAULT_FIRMWARE_PORT,
+    )
+    try:
+        firmware_service.start()
+    except Exception as exc:
+        print(f"FIRMWARE AUTHORITY STARTUP FAIL: {exc}", file=sys.stderr)
+        return 4
+
     backend = HVP2PBackend(version=APP_VERSION, smoke_test=SMOKE_TEST)
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("backend", backend)
@@ -250,13 +262,16 @@ def main() -> int:
 
     if not engine.rootObjects():
         backend.shutdown()
+        firmware_service.stop()
         return 2
 
     app.aboutToQuit.connect(backend.shutdown)
+    app.aboutToQuit.connect(firmware_service.stop)
 
     if SMOKE_TEST:
         ok = _exercise_qml(app, engine, backend)
         backend.shutdown()
+        firmware_service.stop()
         # A short event-loop turn catches deferred QML/component errors while
         # still guaranteeing that the CI step terminates.
         QTimer.singleShot(80, app.quit)

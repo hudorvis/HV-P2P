@@ -1,8 +1,8 @@
-# HV P2P SRVR v26.09.04.03 — Qt Quick desktop build source
+# HV P2P SRVR v26.09.14.01 — Qt Quick desktop build source
 
-This SRVR source continues from the audited/hardened v26.08.31.08 control baseline. v26.09.04.03 locks the newly approved **Run** and **Setup** page revisions while retaining the existing Free-D, Log, communication, safety, calibration and configuration behavior unless explicitly noted below.
+This SRVR source continues from the audited/hardened v26.08.31.08 control baseline. v26.09.14.01 locks the newly approved **Run** and **Setup** page revisions while retaining the existing Free-D, Log, communication, safety, calibration and configuration behavior unless explicitly noted below.
 
-## v26.09.04.03 operator revisions
+## v26.09.14.01 operator revisions
 
 ### Run
 
@@ -20,6 +20,14 @@ This SRVR source continues from the audited/hardened v26.08.31.08 control baseli
 - The actual CTRL and W1P firmware versions are reported over their existing status protocols and exposed to QML.
 - Motion Profiles preserves the existing data/controls with even clearance around the Mode 1/Mode 2 centre divider.
 - The former `CTRL-TS / FIRMWARE` panel is now `CTRL-TS`, containing `CTRL-TS Link`, a divider, `Detected`, `Required`, and `Update`. Link uses the same green Active/red Disconnected model as the CTRL/W1P Link rows.
+
+## SRVR-authoritative CTRL/W1P firmware
+
+SRVR v26.09.14.01 carries one immutable firmware bundle built before any native desktop package. At application startup `firmware_authority.py` validates the exact bundle/release, CTRL/W1P role and EdgeBox target identities, image sizes, complete SHA-256 values and embedded binary tokens, then exposes read-only role-specific manifest/image endpoints on TCP 8088. SRVR fails closed if this packaged authority bundle is absent or invalid.
+
+CTRL and W1P perform authority convergence only from their startup safety hold. Equal versions require exact running-image SHA-256, older/mismatched images use the validated inactive-partition OTA path, and a device newer than SRVR is never automatically downgraded. W1P additionally reuses its existing stopped/braked service gate before any authority flash write. CTRL must match SRVR before its established CTRL-TS RS485 updater is permitted to start.
+
+See the repository-root `INITIAL_BOOTSTRAP_v26.09.14.01.md` for the one-time bootstrap and future release sequence.
 
 ## Virtual Position Source
 
@@ -63,18 +71,18 @@ The core on-wire/control behavior remains compatible:
 
 ## Validation
 
-The source-package preparation gates currently report:
+The source-package preparation gates report:
 
-- integrated EdgeBox/SRVR validation: **316 checks PASS**;
-- build-pipeline validation: **34 checks PASS**;
-- RS485 host framing/CRC: PASS;
-- CTRL-TS updater retry/target gating: PASS;
-- Modbus host contract: PASS;
-- SRVR A7 wire contract: PASS;
+- integrated EdgeBox/SRVR validation: **326 checks PASS**;
+- automatic SRVR OTA contract: **38/38 PASS**;
+- firmware authority HTTP test: PASS;
+- immutable firmware bundle builder/validator test: PASS;
+- build-pipeline validation: **54 checks PASS**;
+- RS485 framing, CTRL-TS retry/target, Modbus, SRVR wire and Speed-mode contracts: PASS;
 - Python syntax and static Qt/QML project preflight: PASS;
 - full `tools/run_all_source_checks.py`: **ALL_SOURCE_CHECKS_PASS**.
 
-The local preparation environment does not contain PySide6 or the native ESP32 Arduino toolchain. The GitHub macOS job therefore remains authoritative for the PySide6 runtime/backend regression (which includes Virtual-mode runtime assertions), `pyside6-qmllint`, app smoke tests and native firmware compilation.
+The local preparation environment does not contain PySide6, `pyside6-deploy`, `pyside6-qmllint` or `arduino-cli`. GitHub Actions therefore remains authoritative for the pinned PySide6 backend/runtime tests, QML lint, native ESP32 compilation, and the three frozen desktop smoke tests.
 
 ## Build output
 
@@ -82,10 +90,9 @@ Use the repository-root workflow:
 
 `.github/workflows/complete-build.yml`
 
-It builds the matched v26.09.04.03 CTRL-TS, CTRL and W1P firmware, freezes/smoke-tests the Intel (`x86_64`) macOS SRVR application, preserves the original SRVR distribution ZIP, and publishes the complete matched release.
+It first builds CTRL-TS -> staged/final CTRL -> W1P and creates/verifies `SRVR_FIRMWARE_BUNDLE`. Both macOS native jobs and the Windows x64 job depend on that exact firmware artifact and package the same bundle. The Complete Release is created only after firmware, macOS Intel (`x86_64`), macOS Apple Silicon (`arm64`) and Windows x64 (`AMD64`) all pass.
 
-A successful GitHub compile is not powered-motion commissioning approval. Complete the repository `NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.09.04.03.md` before hardware sign-off.
-
+A successful GitHub compile is not powered-motion commissioning approval. Complete the repository `NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.09.14.01.md` before hardware sign-off.
 
 ## Native desktop targets
 
