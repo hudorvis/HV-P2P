@@ -8,7 +8,7 @@ import tempfile
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-VER = "26.09.14.01"
+VER = "26.09.14.02"
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / f"SRVR_GitHub_v{VER}"))
 from firmware_authority import FirmwareAuthorityService, validate_firmware_bundle

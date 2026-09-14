@@ -4,7 +4,7 @@ from pathlib import Path
 import hashlib
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = "26.09.14.01"
+VER = "26.09.14.02"
 CTRL_DIR = ROOT / f"HV_P2P_CTRL_EDGEBOX_v{VER}"
 W1P_DIR = ROOT / f"HV_P2P_W1P_EDGEBOX_v{VER}"
 SRVR_DIR = ROOT / f"SRVR_GitHub_v{VER}"
@@ -22,6 +22,7 @@ def ck(name: str, cond: bool) -> None:
 
 # Shared transport/validation client.
 ck("CTRL/W1P authority headers byte-identical", hc == hw)
+ck("authority SHA helper avoids Arduino Print.h HEX macro collision", 'static const char* HEX =' not in hc and 'HEX_DIGITS' in hc)
 ck("authority port pinned 8088", "HV_SRVR_FIRMWARE_PORT = 8088" in hc)
 ck("manifest endpoint is role-specific", '"/firmware/" + roleLower + "/manifest"' in hc)
 ck("manifest enforces SRVR authority/schema and EdgeBox target", 'out.schema != 1' in hc and 'out.authority != "HV_P2P_SRVR"' in hc and 'out.target != "EDGEBOX_ESP100"' in hc)
@@ -70,8 +71,8 @@ ck("approved Run and Setup UI byte hashes unchanged", locked)
 failed = [name for name, ok in checks if not ok]
 for name, ok in checks:
     print(("OK  " if ok else "FAIL") + name)
-if len(checks) != 38:
-    raise SystemExit(f"OTA_CONTRACT_TEST_DEFINITION_ERROR expected 38 checks, got {len(checks)}")
+if len(checks) != 39:
+    raise SystemExit(f"OTA_CONTRACT_TEST_DEFINITION_ERROR expected 39 checks, got {len(checks)}")
 if failed:
     raise SystemExit("SRVR_AUTOMATIC_OTA_CONTRACT_FAIL: " + ", ".join(failed))
-print("SRVR_AUTOMATIC_OTA_CONTRACT_PASS (38/38)")
+print("SRVR_AUTOMATIC_OTA_CONTRACT_PASS (39/39)")

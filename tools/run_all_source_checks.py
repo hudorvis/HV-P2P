@@ -15,8 +15,8 @@ checks=[
     ['python3',str(ROOT/'tools'/'test_modbus_contract_host.py')],
     ['python3',str(ROOT/'tools'/'test_srvr_wire_contract.py')],
     ['python3',str(ROOT/'tools'/'test_speed_mode_contract.py')],
-    ['python3','-m','py_compile',str(ROOT/'SRVR_GitHub_v26.09.14.01'/'backend.py'),str(ROOT/'SRVR_GitHub_v26.09.14.01'/'main.py'),str(ROOT/'SRVR_GitHub_v26.09.14.01'/'firmware_authority.py'),str(ROOT/'tools'/'create_srvr_firmware_bundle.py'),str(ROOT/'tools'/'verify_srvr_firmware_bundle.py')],
-    ['python3',str(ROOT/'SRVR_GitHub_v26.09.14.01'/'tools'/'validate_project.py')],
+    ['python3','-m','py_compile',str(ROOT/'SRVR_GitHub_v26.09.14.02'/'backend.py'),str(ROOT/'SRVR_GitHub_v26.09.14.02'/'main.py'),str(ROOT/'SRVR_GitHub_v26.09.14.02'/'firmware_authority.py'),str(ROOT/'tools'/'create_srvr_firmware_bundle.py'),str(ROOT/'tools'/'verify_srvr_firmware_bundle.py')],
+    ['python3',str(ROOT/'SRVR_GitHub_v26.09.14.02'/'tools'/'validate_project.py')],
 ]
 for cmd in checks:
     print('\n==>', ' '.join(cmd), flush=True)
