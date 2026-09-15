@@ -1,4 +1,4 @@
-# HV P2P v26.09.15.01 — Native Build & Functional Bench Checklist
+# HV P2P v26.09.15.02 — Native Build & Functional Bench Checklist
 
 ## Windows CI dependency-tool gate
 
@@ -12,8 +12,8 @@ Before `pyside6-deploy` runs on Windows x64, CI must prove the MSVC x64 develope
 - [ ] Confirm CTRL-TS is built first with pinned Waveshare/LVGL dependencies and its app is `>32 KiB` and `<=0x380000`.
 - [ ] Confirm `STAGED_HMI_HEADER_PASS` proves the exact native CTRL-TS image/version/SHA was embedded into staged CTRL.
 - [ ] Confirm final CTRL and W1P use EdgeBox `FlashSize=16M` and each app is `<=0x600000`.
-- [ ] Confirm compiled CTRL contains both `HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_VERSION=v26.09.15.01` and `HV_P2P_FW_TARGET=EDGEBOX_ESP100;`.
-- [ ] Confirm compiled W1P contains both `HV_P2P_FW_ROLE=W1P;HV_P2P_FW_VERSION=v26.09.15.01` and `HV_P2P_FW_TARGET=EDGEBOX_ESP100;`.
+- [ ] Confirm compiled CTRL contains both `HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_VERSION=v26.09.15.02` and `HV_P2P_FW_TARGET=EDGEBOX_ESP100;`.
+- [ ] Confirm compiled W1P contains both `HV_P2P_FW_ROLE=W1P;HV_P2P_FW_VERSION=v26.09.15.02` and `HV_P2P_FW_TARGET=EDGEBOX_ESP100;`.
 - [ ] Confirm `NATIVE_BUILD_MANIFEST.json` records exact canonical CTRL-TS/CTRL/W1P application sizes and SHA-256 values.
 - [ ] Confirm `SRVR_FIRMWARE_BUNDLE` contains exactly `manifest.json`, `SHA256SUMS.txt`, `ctrl.bin`, `w1p.bin`.
 - [ ] Confirm `verify_srvr_firmware_bundle.py` passes and bundle CTRL/W1P hashes exactly match the canonical native applications.
@@ -26,10 +26,10 @@ Before `pyside6-deploy` runs on Windows x64, CI must prove the MSVC x64 develope
 
 ## B. One-time bootstrap / first convergence
 
-Follow `INITIAL_BOOTSTRAP_v26.09.15.01.md`. Keep the physical winch unable to move throughout bootstrap.
+Follow `INITIAL_BOOTSTRAP_v26.09.15.02.md`. Keep the physical winch unable to move throughout bootstrap.
 
-- [ ] One-time USB/full-device bootstrap CTRL-TS with v26.09.15.01 compatible firmware/partition map.
-- [ ] One-time USB/full-device bootstrap W1P with the authority-aware v26.09.15.01 firmware and 16 MB dual-OTA partition map.
+- [ ] One-time USB/full-device bootstrap CTRL-TS with v26.09.15.02 compatible firmware/partition map.
+- [ ] One-time USB/full-device bootstrap W1P with the authority-aware v26.09.15.02 firmware and 16 MB dual-OTA partition map.
 - [ ] One-time USB/full-device bootstrap **final staged CTRL** containing the real CTRL-TS image; never bypass the clean-source carrier `#error`.
 - [ ] Start the matching native SRVR and confirm the authority service is available on the isolated control LAN.
 - [ ] Reboot CTRL: verify it remains an E-stop source until exact release/running-SHA match, repairs older/same-version-mismatched image, and refuses automatic downgrade when device firmware is newer.
@@ -156,7 +156,7 @@ Only after independent E-stop/STO/brake/power-isolation circuits are proven.
 - [ ] Verify Battery Change auto-cancels correctly on return inside limits.
 - [ ] Exercise E-stop from SRVR, CTRL and W1P and verify source/combinations display correctly.
 
-## K. v26.09.15.01 locked Run / Setup / Virtual acceptance
+## K. v26.09.15.02 locked Run / Setup / Virtual acceptance
 
 Perform Virtual-mode checks with the physical load safely isolated until its output-inhibit behavior is independently confirmed.
 
@@ -179,5 +179,5 @@ Perform Virtual-mode checks with the physical load safely isolated until its out
 
 ## Release label
 
-Do not label v26.09.15.01 “hardware-tested” until every applicable physical gate above is recorded.
+Do not label v26.09.15.02 “hardware-tested” until every applicable physical gate above is recorded.
 A successful GitHub native build means **compile-ready/test-firmware produced**, not powered-motion proof.

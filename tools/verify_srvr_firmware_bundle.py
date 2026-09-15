@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 import sys
 
-VER = "26.09.15.01"
+VER = "26.09.15.02"
 
 
 def main() -> int:

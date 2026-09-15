@@ -27,7 +27,7 @@ import subprocess
 import sys
 import tempfile
 
-VER = "26.09.15.01"
+VER = "26.09.15.02"
 SEMVER = f"v{VER}"
 CTRL_SLOT = 0x600000
 HMI_SLOT = 0x380000
@@ -55,7 +55,9 @@ HMI_FQBN = (
 
 def run(cmd: list[str], *, cwd: Path | None = None) -> None:
     print("+", " ".join(str(x) for x in cmd), flush=True)
-    subprocess.run(cmd, cwd=cwd, check=True)
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    subprocess.run(cmd, cwd=cwd, check=True, env=env)
 
 
 def sha256(path: Path) -> str:
@@ -64,6 +66,28 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def snapshot_checkout(root: Path, output: Path) -> dict[str, str]:
+    """Hash every checked-out file except .git and the explicit generated output tree."""
+    snap: dict[str, str] = {}
+    output_in_root = output == root or root in output.parents
+    for p in sorted(x for x in root.rglob("*") if x.is_file()):
+        if ".git" in p.relative_to(root).parts:
+            continue
+        if output_in_root and (p == output or output in p.parents):
+            continue
+        snap[p.relative_to(root).as_posix()] = sha256(p)
+    return snap
+
+
+def remove_generated_stage_outputs(stage_dir: Path) -> None:
+    # arduino-cli --export-binaries may leave build/<fqbn>/... inside the staged
+    # sketch directory. Those are generated duplicates, not staged source.
+    for name in ("build", "__pycache__"):
+        for p in list(stage_dir.rglob(name)):
+            if p.is_dir():
+                shutil.rmtree(p)
 
 
 def require_binary_token(path: Path, token: str, role: str) -> None:
@@ -124,12 +148,24 @@ def main() -> int:
     ap.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     ap.add_argument("--output", type=Path, default=None)
     ap.add_argument("--arduino-cli", default=os.environ.get("ARDUINO_CLI", "arduino-cli"))
+    ap.add_argument("--skip-source-preflight", action="store_true",
+                    help="Skip source checks only when CI has already run tools/run_all_source_checks.py on this checkout")
     args = ap.parse_args()
 
     root = args.root.resolve()
     output = (args.output or (root / "NATIVE_BUILD_ARTIFACTS")).resolve()
     if shutil.which(args.arduino_cli) is None:
         raise SystemExit("ERROR: arduino-cli is not installed or not on PATH")
+
+    # Source/package hygiene is a PRE-BUILD gate. Never run it after native
+    # compilation, because successful Arduino/Python work legitimately creates
+    # generated artifacts that are not part of the pristine source package.
+    if not args.skip_source_preflight:
+        env = os.environ.copy()
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        print("+", sys.executable, str(root / "tools" / "run_all_source_checks.py"), flush=True)
+        subprocess.run([sys.executable, str(root / "tools" / "run_all_source_checks.py")],
+                       cwd=root, check=True, env=env)
 
     ctrl_name = f"HV_P2P_CTRL_EDGEBOX_v{VER}"
     hmi_name = f"HV_P2P_CTRL_TS_v{VER}"
@@ -141,6 +177,9 @@ def main() -> int:
     guard = (root / ctrl_name / "HV_P2P_CTRL_TS_Firmware_Image.h").read_text(errors="replace")
     if '#error "CTRL-TS firmware image has not been staged.' not in guard:
         raise SystemExit("ERROR: source CTRL carrier is not the expected clean build-guard state")
+
+    source_names = (ctrl_name, hmi_name, w1p_name)
+    checkout_before = snapshot_checkout(root, output)
 
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="hvp2p_native_") as td:
@@ -176,7 +215,10 @@ def main() -> int:
         require_binary_token(w1p_app, f"HV_P2P_FW_ROLE=W1P;HV_P2P_FW_VERSION={SEMVER}", "W1P")
         require_binary_token(w1p_app, "HV_P2P_FW_TARGET=EDGEBOX_ESP100;", "W1P")
 
-        # 5. Preserve the fully staged CTRL source used to produce the binary.
+        # 5. Preserve the staged source used to produce the binaries, but strip
+        # Arduino's generated export/build directories so the artifact remains
+        # source-only rather than duplicating BINARIES payloads.
+        remove_generated_stage_outputs(stage)
         staged_src = output / "STAGED_SOURCE"
         if staged_src.exists():
             shutil.rmtree(staged_src)
@@ -240,9 +282,15 @@ def main() -> int:
             manifest_lines.append(f"{sha256(p)}  {p.relative_to(output).as_posix()}")
         sums_path.write_text("\n".join(manifest_lines) + "\n")
 
-        # Re-run source checks on the clean source tree. Staged-header byte-level
-        # verification above is the native carrier gate for the staged copy.
-        run([sys.executable, str(root / "tools" / "run_all_source_checks.py")], cwd=root)
+        # Do not re-run source-package hygiene after generated native outputs exist.
+        # Instead prove the three authoritative firmware source trees remained
+        # byte-for-byte unchanged throughout staging/compilation.
+        checkout_after = snapshot_checkout(root, output)
+        if checkout_after != checkout_before:
+            changed = sorted(set(checkout_before) | set(checkout_after))
+            changed = [k for k in changed if checkout_before.get(k) != checkout_after.get(k)]
+            raise SystemExit(f"ERROR: native build mutated checked-out source tree: {changed}")
+        print("SOURCE_IMMUTABILITY_PASS")
 
     print("NATIVE_FIRMWARE_BUILD_PASS")
     print(f"Artifacts: {output}")

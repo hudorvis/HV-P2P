@@ -1,4 +1,4 @@
-# HV P2P v26.09.15.01 Change Summary
+# HV P2P v26.09.15.02 Change Summary
 
 This is the corrective packaging revision following the v26.09.14.03 GitHub native build.
 
@@ -10,7 +10,7 @@ The v26.09.14.03 firmware job completed sufficiently for all three SRVR native j
 
 The staged `SRVR_FIRMWARE_BUNDLE` was valid before deployment. The defect was in Nuitka data-file classification: `.bin` is treated as a binary/executable suffix and is skipped when firmware is carried only by `--include-data-dir`. Therefore `manifest.json` and `SHA256SUMS.txt` were packaged, but `ctrl.bin` and `w1p.bin` were not.
 
-v26.09.15.01 fixes this without weakening firmware validation:
+v26.09.15.02 fixes this without weakening firmware validation:
 
 - one shared `tools/patch_pyside_deploy_spec.py` now patches both macOS and Windows deployment specs;
 - the ineffective custom `--include-data-dir=firmware_bundle=firmware_bundle` rule is removed;
@@ -49,3 +49,16 @@ No operator/control behavior was changed for this packaging correction. In parti
 - CTRL must match SRVR before CTRL-TS convergence.
 
 Native ESP32 binaries and frozen SRVR applications remain GitHub Actions outputs and are not fabricated in this source ZIP.
+
+
+## v26.09.15.02 CI hygiene/order correction
+
+- Source-package hygiene remains a strict pristine-source pre-build gate.
+- Native firmware output now lives under `RUNNER_TEMP`, outside the repository checkout.
+- `native_build_firmware.py` no longer re-runs source-package hygiene after compilation has legitimately created native artifacts.
+- The native builder proves CTRL/CTRL-TS/W1P authoritative source trees are byte-for-byte unchanged after compilation.
+- Generated Arduino `build/` directories are removed from `STAGED_SOURCE` before artifact preservation to avoid duplicate `.bin` payloads.
+- The master source runner sets `PYTHONDONTWRITEBYTECODE=1` and uses `test_python_syntax.py`, so repeated source checks do not create `__pycache__`/`.pyc` contamination.
+
+- Added `test_native_build_orchestration.py` to permanently exercise pre/post build phase separation, staged-source cleanup, immutable bundle creation, and checkout immutability using temporary synthetic fixtures only.
+- Repeated master-source runs are now idempotent and leave no `__pycache__` or `.pyc` files.

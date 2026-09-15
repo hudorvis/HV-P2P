@@ -14,7 +14,7 @@ import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SRVR = ROOT / "SRVR_GitHub_v26.09.15.01"
+SRVR = ROOT / "SRVR_GitHub_v26.09.15.02"
 TEST = SRVR / "tools" / "test_backend_logic.py"
 
 

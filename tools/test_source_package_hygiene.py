@@ -4,10 +4,10 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = "26.09.15.01"
+VER = "26.09.15.02"
 
 failures: list[str] = []
-for d in ("PREVIEWS", "REFERENCE_ONLY", "__pycache__", ".pytest_cache", ".mypy_cache"):
+for d in ("PREVIEWS", "REFERENCE_ONLY", "NATIVE_BUILD_ARTIFACTS", "HVP2P_NATIVE_BUILD_ARTIFACTS", "__pycache__", ".pytest_cache", ".mypy_cache"):
     hits = [p.relative_to(ROOT).as_posix() for p in ROOT.rglob(d)]
     if hits:
         failures.append(f"redundant/generated directory present {d}: {hits}")

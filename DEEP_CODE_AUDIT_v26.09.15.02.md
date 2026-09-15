@@ -1,4 +1,4 @@
-# HV P2P v26.09.15.01 Deep Code Audit
+# HV P2P v26.09.15.02 Deep Code Audit
 
 ## Evidence from v26.09.14.03 GitHub build
 
@@ -55,3 +55,16 @@ Preservation checks still lock:
 The complete source suite passes locally, including EdgeBox integration, OTA authority contracts, backend regression, native-build pipeline contracts, frozen-firmware packaging contract, protocol tests, release consistency, source-package hygiene, Python compilation, SRVR preflight and workflow YAML parsing.
 
 The local environment cannot perform the authoritative ESP32/macOS/Windows native builds. GitHub Actions remains the required compile/frozen-runtime gate, followed by physical bench commissioning.
+
+
+## v26.09.15.02 CI hygiene/order correction
+
+- Source-package hygiene remains a strict pristine-source pre-build gate.
+- Native firmware output now lives under `RUNNER_TEMP`, outside the repository checkout.
+- `native_build_firmware.py` no longer re-runs source-package hygiene after compilation has legitimately created native artifacts.
+- The native builder proves CTRL/CTRL-TS/W1P authoritative source trees are byte-for-byte unchanged after compilation.
+- Generated Arduino `build/` directories are removed from `STAGED_SOURCE` before artifact preservation to avoid duplicate `.bin` payloads.
+- The master source runner sets `PYTHONDONTWRITEBYTECODE=1` and uses `test_python_syntax.py`, so repeated source checks do not create `__pycache__`/`.pyc` contamination.
+
+- Added `test_native_build_orchestration.py` to permanently exercise pre/post build phase separation, staged-source cleanup, immutable bundle creation, and checkout immutability using temporary synthetic fixtures only.
+- Repeated master-source runs are now idempotent and leave no `__pycache__` or `.pyc` files.
