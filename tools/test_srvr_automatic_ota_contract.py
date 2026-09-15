@@ -4,7 +4,7 @@ from pathlib import Path
 import hashlib
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = "26.09.14.03"
+VER = "26.09.15.01"
 CTRL_DIR = ROOT / f"HV_P2P_CTRL_EDGEBOX_v{VER}"
 W1P_DIR = ROOT / f"HV_P2P_W1P_EDGEBOX_v{VER}"
 SRVR_DIR = ROOT / f"SRVR_GitHub_v{VER}"

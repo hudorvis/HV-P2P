@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import shutil
 
-VER = "26.09.14.03"
+VER = "26.09.15.01"
 SEMVER = f"v{VER}"
 
 
