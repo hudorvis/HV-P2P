@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "26.09.15.02"
+VERSION = "26.09.17.02"
 ERRORS: list[str] = []
 
 
@@ -357,7 +357,7 @@ require('width:parent.width*.22' in qml_main and
 require(qml_main.count('width:f(72)') >= 2 and 'parent.width-f(48+72+66)' in qml_main,
         "Free-D lens decoded percentage width fix is missing")
 
-# v26.09.15.02 locked Run/Setup revision. Keep the approved panel geometry and
+# v26.09.17.02 locked Run/Setup revision. Keep the approved panel geometry and
 # setting semantics while guarding only the requested presentation/interaction deltas.
 require('text:"HV P2P\\nSRVR"' in qml_main and 'HV P2P  |  SRVR' not in qml_main and 'P2P°\\nSRVR' not in qml_main,
         "locked two-line HV P2P/SRVR logo/header revision is missing")
@@ -533,7 +533,7 @@ require('profileValue(Number(gp.x), key)' in span_qml and
         'var gv=root.sideView ? Number(gp.y)' not in span_qml,
         "Free-D geometry markers are not pinned to the exact calculated cable profile")
 
-# v26.09.15.02 integration contract: fifth CTRL-TS AUX travels in the spare A7
+# v26.09.17.02 integration contract: fifth CTRL-TS AUX travels in the spare A7
 # 16-bit flag, and display packets expose all five state-aware labels.
 require("FLAG_AUX5 = 0x0400" in backend, "AUX5 controller flag missing")
 require('f"aux5={labels[4]}"' in backend, "DSP1 AUX5 field missing")
@@ -616,9 +616,9 @@ require('--include-data-files=firmware_bundle/ctrl.bin=firmware_bundle/ctrl.bin'
         "frozen deployment does not force both ESP .bin images into the runtime payload")
 require('PACKAGED_CTRL' in workflow and 'PACKAGED_W1P' in workflow and 'missing packaged firmware data' in workflow,
         "macOS packaged app/ZIP does not independently assert embedded firmware images")
-require('HV-P2P-SRVR-v26.09.15.02-macOS-Intel' in workflow and
-        'HV-P2P-SRVR-v26.09.15.02-macOS-Apple-Silicon' in workflow and
-        'HV-P2P-SRVR-v26.09.15.02-Windows-x64' in workflow,
+require('HV-P2P-SRVR-v26.09.17.02-macOS-Intel' in workflow and
+        'HV-P2P-SRVR-v26.09.17.02-macOS-Apple-Silicon' in workflow and
+        'HV-P2P-SRVR-v26.09.17.02-Windows-x64' in workflow,
         "native SRVR artifact names are incomplete")
 require('def _app_data_dir' in backend and 'LOCALAPPDATA' in backend and 'XDG_CONFIG_HOME' in backend,
         "cross-platform private config directory mapping is missing")

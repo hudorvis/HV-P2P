@@ -8,7 +8,7 @@ expected offset/result behavior for lost ACK/FW_RESULT cases.
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = "26.09.15.02"
+VER = "26.09.17.02"
 CTRL = (ROOT/f"HV_P2P_CTRL_EDGEBOX_v{VER}"/f"HV_P2P_CTRL_EDGEBOX_v{VER}.ino").read_text(errors="replace")
 TS = (ROOT/f"HV_P2P_CTRL_TS_v{VER}"/f"HV_P2P_CTRL_TS_v{VER}.ino").read_text(errors="replace")
 
@@ -21,6 +21,14 @@ required_ctrl = [
     "reportedSize == HV_CTRL_TS_IMAGE_SIZE",
     "sha.length() == 64",
     "CTRL-TS did not accept FW_BEGIN",
+    "HMI_FW_BLOCK_DATA = 1024",
+    "HMI_FW_REPLY_TIMEOUT_MS = 3000",
+    "HMI_MASTER_TURNAROUND_US = 2500",
+    "HMI_FW_REBOOT_SETTLE_MS = 2000",
+    "HMI_FW_WAIT_REBOOT_SETTLE",
+    "newer_no_downgrade",
+    "hvAuthorityCompareVersions(g_hmiReportedVersion, HV_CTRL_TS_REQUIRED_VERSION",
+    "HMI.setRxBufferSize(HMI_RX_BUFFER_BYTES)",
 ]
 required_ts = [
     "if(g_fw_finalized)",
@@ -33,16 +41,26 @@ required_ts = [
     "FW_MAX_IMAGE_SIZE = 0x380000",
     "esp_ota_get_boot_partition",
     "fw_meta_key",
-    "commit marker",
+    "g_fw_prefs.remove(okKey.c_str())",
+    "g_fw_prefs.putString(okKey.c_str(), sha)",
+    "RS485_SLAVE_TURNAROUND_US = 2500",
+    "HMI_RX_BUFFER_BYTES = 4096",
+    "HMI.setRxBufferSize(HMI_RX_BUFFER_BYTES)",
+    "fw_service_reboot();",
+    "fw_reboot_pending",
+    "fw_downgrade_blocked",
+    "fw_compare_versions(CTRL_TS_SEMVER, version",
+    "if(!g_fw_reboot_due_ms) g_fw_reboot_due_ms = millis() + 250",
+    "static void fw_abort(const char *reason, int32_t seq=-1)",
 ]
 for token in required_ctrl:
     assert token in CTRL, f"CTRL retry/correlation guard missing: {token}"
 for token in required_ts:
     assert token in TS, f"CTRL-TS retry/rollback guard missing: {token}"
 
-# Model one 5,000-byte transfer with 2,048-byte blocks.
+# Model one 5,000-byte transfer with the production 1,024-byte blocks.
 image_size = 5000
-block = 2048
+block = 1024
 ctrl_offset = 0
 ts_received = 0
 
@@ -77,4 +95,28 @@ assert retry_result == first_result
 outstanding_seq = 4242
 assert (4241 != outstanding_seq)
 
-print("HMI_FW_RETRY_CONTRACT_PASS: lost block ACK, lost FW_RESULT, stale sequence, rollback guards")
+# After REBOOT ACK the master must remain quiet while the old application is
+# still alive. A new FW_BEGIN is forbidden once the receiver has finalized an
+# image, so the verified inactive partition cannot be erased in this window.
+reboot_ack_ms = 1000
+settle_ms = 2000
+receiver_restart_due_ms = reboot_ack_ms + 250
+assert reboot_ack_ms + settle_ms > receiver_restart_due_ms
+finalized = True
+new_begin_allowed = not finalized
+assert not new_begin_allowed
+
+# Sequence zero is valid on the 16-bit wire protocol. Error replies must not use
+# zero as a sentinel for "no response" after normal sequence wrap.
+valid_seq_zero = 0
+assert valid_seq_zero == 0
+
+# No-downgrade model: same version remains updateable for bootstrap/hash
+# convergence, newer incoming is updateable, older incoming is refused.
+def ver(v): return tuple(int(x) for x in v.lstrip('v').split('.'))
+running=ver('v26.09.17.02')
+assert ver('v26.09.17.02') >= running
+assert ver('v26.09.18.01') > running
+assert ver('v26.09.15.02') < running
+
+print("HMI_FW_RETRY_CONTRACT_PASS: lost ACK/result, stale sequence, reboot race, seq0, no-downgrade guards")

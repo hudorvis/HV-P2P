@@ -8,7 +8,7 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = "26.09.15.02"
+VER = "26.09.17.02"
 SEMVER = f"v{VER}"
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / f"SRVR_GitHub_v{VER}"))

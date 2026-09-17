@@ -16,7 +16,7 @@
 static bool g_ads_inited = false;
 static uint8_t ADS_ADDR = 0x48;
 
-#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.09.15.02"
+#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.09.17.02"
 #define CTRL_HMI_ARCH "EdgeBox ESP-100 + isolated RS485 Waveshare thin HMI"
 
 IPAddress local_IP(172,20,1,101);
@@ -48,6 +48,11 @@ IPAddress server_IP(172,20,1,100);
 #define HMI_UART_RX EDGEBOX_RS485_RX
 #define HMI_UART_TX EDGEBOX_RS485_TX
 #define HMI_UART_RTS EDGEBOX_RS485_RTS
+static const size_t HMI_RX_BUFFER_BYTES = 4096;
+// After receiving a CTRL-TS response, leave a deterministic quiet slot before
+// CTRL drives the half-duplex pair again. This complements the slave-side guard
+// and prevents the next block/request clipping the Waveshare auto-direction tail.
+static const uint32_t HMI_MASTER_TURNAROUND_US = 2500;
 
 #define CTRL_ESTOP_PIN 4  // EdgeBox isolated DI0
 // EdgeBox DI optocoupler output is HIGH when the 24 V field input is asserted.
@@ -89,7 +94,7 @@ static uint32_t g_lastHmiPollTxMs = 0;
 // HV_P2P_CTRL_TS_Firmware_Image.h embeds the exact exported .bin, version and
 // SHA-256. When identity differs, CTRL keeps motion fail-safe stopped and
 // performs a deterministic request/response transfer over the same RS485 link.
-enum HmiFwTxState : uint8_t { HMI_FW_IDLE=0, HMI_FW_WAIT_READY, HMI_FW_WAIT_BLOCK_ACK, HMI_FW_WAIT_RESULT, HMI_FW_WAIT_REBOOT_ACK };
+enum HmiFwTxState : uint8_t { HMI_FW_IDLE=0, HMI_FW_WAIT_READY, HMI_FW_WAIT_BLOCK_ACK, HMI_FW_WAIT_RESULT, HMI_FW_WAIT_REBOOT_ACK, HMI_FW_WAIT_REBOOT_SETTLE };
 static HmiFwTxState g_hmiFwState = HMI_FW_IDLE;
 static size_t g_hmiFwOffset = 0;
 static size_t g_hmiFwLastBlockLen = 0;
@@ -97,8 +102,13 @@ static uint16_t g_hmiFwSeq = 0;
 static uint32_t g_hmiFwLastTxMs = 0;
 static uint8_t g_hmiFwRetries = 0;
 static int g_hmiFwLastPct = -1;
-static const size_t HMI_FW_BLOCK_DATA = 2048;
-static const uint32_t HMI_FW_REPLY_TIMEOUT_MS = 1200;
+static const size_t HMI_FW_BLOCK_DATA = 1024;
+static const uint32_t HMI_FW_REPLY_TIMEOUT_MS = 3000;
+// After CTRL-TS ACKs REBOOT it is still the old application for ~250 ms. Keep
+// the master silent long enough for restart + boot identity hashing so it cannot
+// see the old hash and accidentally begin a second update against the verified
+// inactive partition before the reboot actually happens.
+static const uint32_t HMI_FW_REBOOT_SETTLE_MS = 2000;
 static const uint8_t HMI_FW_MAX_RETRIES = 5;
 
 static bool hmiSendText(const String &line);
@@ -200,7 +210,7 @@ static uint32_t lastHmiLayoutForward = 0;
 #define HMI_LAYOUT_MAX_LEN 2200
 static const char* HMI_LAYOUT_NVS_NS = "hmiui";
 static const char* HMI_LAYOUT_NVS_KEY = "layout";
-static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.09.15.02|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
+static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.09.17.02|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
 
 
 
@@ -225,9 +235,9 @@ static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_CTRL";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL_TS,W1P,W1P_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_CTRL_v*.ino.bin firmware. CTRL-TS and W1P files are rejected.";
 static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=CTRL;";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_VERSION=v26.09.15.02";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_VERSION=v26.09.17.02";
 static const char* HV_UPDATE_TARGET_SIGNATURE = "HV_P2P_FW_TARGET=EDGEBOX_ESP100;";
-static const char* HV_CTRL_SEMVER = "v26.09.15.02";
+static const char* HV_CTRL_SEMVER = "v26.09.17.02";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
@@ -559,7 +569,7 @@ static void hvLoadHmiLayoutConfig() {
     int nl = stored.indexOf('\n');
     if(nl >= 0) stored = stored.substring(0, nl);
     stored.trim();
-    // v26.09.15.02 migration: older CTRL NVS layouts were main4/aux1-aux4.
+    // v26.09.17.02 migration: older CTRL NVS layouts were main4/aux1-aux4.
     // Preserve the operator's stored labels/settings but expose the new AUX5 tile.
     if(stored.indexOf("|layout=main4") >= 0) stored.replace("|layout=main4", "|layout=main5");
     if(stored.indexOf("|aux5=") < 0) stored += "|aux5=AUX 5";
@@ -868,12 +878,19 @@ static bool hmiLinkConnected()
 static const char* hmiFwStateText()
 {
   switch(g_hmiFwState) {
-    case HMI_FW_WAIT_READY:      return "starting";
-    case HMI_FW_WAIT_BLOCK_ACK:  return "transferring";
-    case HMI_FW_WAIT_RESULT:     return "verifying";
-    case HMI_FW_WAIT_REBOOT_ACK: return "rebooting";
+    case HMI_FW_WAIT_READY:         return "starting";
+    case HMI_FW_WAIT_BLOCK_ACK:     return "transferring";
+    case HMI_FW_WAIT_RESULT:        return "verifying";
+    case HMI_FW_WAIT_REBOOT_ACK:    return "rebooting";
+    case HMI_FW_WAIT_REBOOT_SETTLE: return "rebooting";
     default:
-      if(!g_hmiCompatible && g_hmiReportedVersion.length() && !HV_CTRL_TS_IMAGE_AVAILABLE) return "image_missing";
+      if(!g_hmiCompatible && g_hmiReportedVersion.length()) {
+        bool versionValid = false;
+        const int relation = hvAuthorityCompareVersions(g_hmiReportedVersion, HV_CTRL_TS_REQUIRED_VERSION, versionValid);
+        if(!versionValid) return "invalid_version";
+        if(relation > 0) return "newer_no_downgrade";
+        if(!HV_CTRL_TS_IMAGE_AVAILABLE) return "image_missing";
+      }
       return "idle";
   }
 }
@@ -884,7 +901,7 @@ static void sendHmiStatusToSrvr()
   uint32_t age = g_lastHmiRxMs ? (now - g_lastHmiRxMs) : 999999;
   String line = "HMI_STATUS";
   line += "|ctrl_ts=" + String(hmiLinkConnected() ? 1 : 0);
-  line += "|ctrl_version=v26.09.15.02";
+  line += "|ctrl_version=v26.09.17.02";
   line += "|ads=" + String(g_ads_inited ? 1 : 0);
   line += "|age_ms=" + String((unsigned long)age);
   // Report the identity actually returned by the Waveshare rather than the CTRL
@@ -924,10 +941,10 @@ static void sendControl(float axis, uint16_t flags)
   udp.endPacket();
 }
 
-static void forwardDisplayPacketToHmi(const String &line)
+static bool forwardDisplayPacketToHmi(const String &line)
 {
-  if(!line.length()) return;
-  hmiSendText(line);
+  if(!line.length()) return false;
+  return hmiSendText(line);
 }
 
 static String buildFallbackDisplayPacket(uint16_t flags_now)
@@ -1025,7 +1042,7 @@ static void handleUdpRx()
     g_lastSrvrDisplayMs = millis();
     g_latestDisplayPacket = line;
     g_latestDisplayPacket.replace("DSP1|", "HMI1|");
-    // v26.09.15.02: store latest SRVR display packet only. The UART
+    // v26.09.17.02: store latest SRVR display packet only. The UART
     // forward is rate-limited in loop() so CTRL-TS is not flooded and the
     // left-side LVGL elements do not flicker from repeated redraw pressure.
   }
@@ -1081,6 +1098,10 @@ static String hmiFwField(const String &line, const char *key){
 }
 
 static bool hmiFwActive(){ return g_hmiFwState != HMI_FW_IDLE; }
+
+static inline void hmiMasterTurnaroundGuard(){
+  delayMicroseconds(HMI_MASTER_TURNAROUND_US);
+}
 
 static void hmiFwReset(const char *reason){
   if(reason && *reason) Serial.printf("[HMI FW] %s\n", reason);
@@ -1178,6 +1199,7 @@ static bool hmiFwHandleFrame(const HVP2PRS485::Frame &frame){
     return true;
   }
   if(g_hmiFwState == HMI_FW_WAIT_READY && frame.type == HVP2PRS485::FW_READY){
+    Serial.printf("[HMI FW] FW_READY rx seq=%u payload=%s\n", unsigned(frame.seq), text.c_str());
     if(hmiFwField(text,"ok") != "1"){ hmiFwReset("CTRL-TS did not accept FW_BEGIN"); return true; }
     String next = hmiFwField(text,"next");
     size_t reported = next.length() ? (size_t)strtoull(next.c_str(),nullptr,10) : 0;
@@ -1186,6 +1208,7 @@ static bool hmiFwHandleFrame(const HVP2PRS485::Frame &frame){
     if(reported != 0){ hmiFwReset("invalid FW_READY offset"); return true; }
     g_hmiFwOffset = 0;
     g_hmiFwRetries = 0;
+    hmiMasterTurnaroundGuard();
     hmiFwSendBlock(false);
     return true;
   }
@@ -1201,10 +1224,12 @@ static bool hmiFwHandleFrame(const HVP2PRS485::Frame &frame){
     g_hmiFwRetries = 0;
     int pct = HV_CTRL_TS_IMAGE_SIZE ? int((100ULL*g_hmiFwOffset)/HV_CTRL_TS_IMAGE_SIZE) : 0;
     if(pct/5 != g_hmiFwLastPct/5){ g_hmiFwLastPct=pct; Serial.printf("[HMI FW] %d%% (%u/%u)\n",pct,(unsigned)g_hmiFwOffset,(unsigned)HV_CTRL_TS_IMAGE_SIZE); }
+    hmiMasterTurnaroundGuard();
     if(g_hmiFwOffset >= HV_CTRL_TS_IMAGE_SIZE) hmiFwSendEnd(false); else hmiFwSendBlock(false);
     return true;
   }
   if(g_hmiFwState == HMI_FW_WAIT_RESULT && frame.type == HVP2PRS485::FW_RESULT){
+    Serial.printf("[HMI FW] FW_RESULT rx seq=%u payload=%s\n", unsigned(frame.seq), text.c_str());
     String ok = hmiFwField(text,"ok");
     String sha = hmiFwField(text,"sha256"); sha.toLowerCase();
     String sizeText = hmiFwField(text,"size");
@@ -1216,14 +1241,16 @@ static bool hmiFwHandleFrame(const HVP2PRS485::Frame &frame){
     if(ok == "1" && reportedSize == HV_CTRL_TS_IMAGE_SIZE && sha.length() == 64 && sha == requiredSha){
       Serial.println("[HMI FW] image verified by CTRL-TS; rebooting into new image");
       g_hmiFwRetries = 0;
+      hmiMasterTurnaroundGuard();
       hmiFwSendReboot(false);
     } else hmiFwReset("CTRL-TS rejected final image identity");
     return true;
   }
   if(g_hmiFwState == HMI_FW_WAIT_REBOOT_ACK && frame.type == HVP2PRS485::ACK){
-    Serial.println("[HMI FW] reboot acknowledged; waiting for new HELLO identity");
-    hmiFwReset(nullptr);
-    g_lastHmiHelloTxMs = 0;
+    Serial.println("[HMI FW] reboot acknowledged; holding RS485 quiet for CTRL-TS restart");
+    g_hmiFwState = HMI_FW_WAIT_REBOOT_SETTLE;
+    g_hmiFwLastTxMs = millis();
+    g_hmiFwRetries = 0;
     return true;
   }
   return false;
@@ -1232,6 +1259,13 @@ static bool hmiFwHandleFrame(const HVP2PRS485::Frame &frame){
 static void hmiFwServiceTimeout(){
   if(!hmiFwActive()) return;
   const uint32_t now=millis();
+  if(g_hmiFwState == HMI_FW_WAIT_REBOOT_SETTLE){
+    if((now - g_hmiFwLastTxMs) < HMI_FW_REBOOT_SETTLE_MS) return;
+    Serial.println("[HMI FW] reboot settle complete; requesting fresh CTRL-TS identity");
+    hmiFwReset(nullptr);
+    g_lastHmiHelloTxMs = 0;
+    return;
+  }
   if((now-g_hmiFwLastTxMs) < HMI_FW_REPLY_TIMEOUT_MS) return;
   if(++g_hmiFwRetries > HMI_FW_MAX_RETRIES){ hmiFwReset("RS485 firmware update timed out"); return; }
   Serial.printf("[HMI FW] response timeout; retry %u/%u\n",g_hmiFwRetries,HMI_FW_MAX_RETRIES);
@@ -1277,18 +1311,33 @@ static void handleHmiFrame(const HVP2PRS485::Frame &frame)
     if(match && !g_hmiCompatible) {
       g_hmiCompatible = true;
       Serial.printf("[HMI] Compatible CTRL-TS %s proto=%u hash=%s\n", g_hmiReportedVersion.c_str(), unsigned(g_hmiReportedProto), g_hmiReportedHash.c_str());
+      hmiMasterTurnaroundGuard();
       HVP2PRS485::sendText(HMI, HVP2PRS485::COMPATIBLE, g_hmiSeq++, String("version=") + HV_CTRL_TS_REQUIRED_VERSION + "|hash=" + HV_CTRL_TS_REQUIRED_SHA256);
       sendHmiLayout();
       sendNetworkConfigToHmi();
+      // Force the current full HMI status packet to be sent immediately after
+      // compatibility is restored. Packets attempted while incompatible are not
+      // considered delivered and must never suppress this reconnect refresh.
+      g_lastForwardedDisplayPacket = "";
+      g_lastHmiDisplayKeepaliveMs = 0;
+      lastDisplayForward = 0;
     } else if(!match) {
       g_hmiCompatible = false;
       Serial.printf("[HMI] INCOMPATIBLE hw=%s proto=%u version=%s hash=%s; required=%s\n",
                     g_hmiReportedHw.c_str(), unsigned(g_hmiReportedProto), g_hmiReportedVersion.c_str(),
                     g_hmiReportedHash.c_str(), HV_CTRL_TS_REQUIRED_VERSION);
+      bool versionValid = false;
+      const int versionRelation = hvAuthorityCompareVersions(g_hmiReportedVersion, HV_CTRL_TS_REQUIRED_VERSION, versionValid);
       if(!hmiTransportCompatible()) {
         Serial.println("[HMI] Automatic update BLOCKED: peer hardware/protocol is not the approved CTRL-TS target.");
+      } else if(!versionValid) {
+        Serial.println("[HMI] Automatic update BLOCKED: CTRL-TS reported an invalid firmware version string.");
+      } else if(versionRelation > 0) {
+        Serial.printf("[HMI] CTRL-TS firmware %s is newer than required %s; automatic downgrade is blocked.\n",
+                      g_hmiReportedVersion.c_str(), HV_CTRL_TS_REQUIRED_VERSION);
       } else if(HV_CTRL_TS_IMAGE_AVAILABLE && g_srvrFirmwareMatched) {
         Serial.println("[HMI] Approved target detected and CTRL matches SRVR; starting automatic RS485 CTRL-TS update.");
+        hmiMasterTurnaroundGuard();
         hmiFwStart();
       } else if(HV_CTRL_TS_IMAGE_AVAILABLE) {
         Serial.println("[HMI] CTRL-TS update deferred: CTRL must first match the SRVR-authoritative release/hash.");
@@ -1364,8 +1413,12 @@ void setup()
   hvLoadHmiLayoutConfig();
   hvLoadNetworkConfig();
 
+  if(HMI.setRxBufferSize(HMI_RX_BUFFER_BYTES) < HMI_RX_BUFFER_BYTES)
+    Serial.println("[HMI] ERROR allocating RS485 RX buffer");
   HMI.begin(HMI_BAUD, SERIAL_8N1, HMI_UART_RX, HMI_UART_TX);
-  HMI.setPins(HMI_UART_RX, HMI_UART_TX, -1, HMI_UART_RTS);
+  // RX/TX were already bound by begin(); add only the EdgeBox direction/RTS pin,
+  // matching Espressif's supported half-duplex setup pattern.
+  if(!HMI.setPins(-1, -1, -1, HMI_UART_RTS)) Serial.println("[HMI] ERROR setting EdgeBox RS485 RTS pin");
   if(!HMI.setMode(UART_MODE_RS485_HALF_DUPLEX)) Serial.println("[HMI] ERROR setting EdgeBox RS485 half-duplex mode");
   Serial.printf("[HMI] EdgeBox isolated RS485 RX=%d TX=%d RTS=%d @ %d\n", HMI_UART_RX, HMI_UART_TX, HMI_UART_RTS, HMI_BAUD);
 
@@ -1441,7 +1494,7 @@ void loop()
     g_latestDisplayPacket = "";
   }
 
-  // v26.09.15.02: do not resend UIL1 layout on a timer.
+  // v26.09.17.02: do not resend UIL1 layout on a timer.
   // Some Waveshare/LVGL builds visibly flicker when the layout header/config
   // is resent periodically. Layout is now sent only at boot, upload/reset,
   // and in response to a CTRL-TS PING/reconnect request.
@@ -1460,9 +1513,14 @@ void loop()
     const bool keepalive_due = ((now - g_lastHmiDisplayKeepaliveMs) >= DISPLAY_KEEPALIVE_MS);
     if(changed || keepalive_due) {
       lastDisplayForward = now;
-      g_lastHmiDisplayKeepaliveMs = now;
-      g_lastForwardedDisplayPacket = nextDisplay;
-      forwardDisplayPacketToHmi(nextDisplay);
+      // Only advance the delivery cache when the framed UART send actually
+      // succeeds. During incompatibility hmiSendText() intentionally refuses
+      // normal display traffic; caching that refused packet would delay the
+      // first full refresh after CTRL-TS reconnects.
+      if(forwardDisplayPacketToHmi(nextDisplay)) {
+        g_lastHmiDisplayKeepaliveMs = now;
+        g_lastForwardedDisplayPacket = nextDisplay;
+      }
     } else {
       // Event-driven HMI path: unchanged packets are not re-sent on every CTRL
       // loop pass. This keeps the touchscreen/LVGL side stable during 10-12 hour days.

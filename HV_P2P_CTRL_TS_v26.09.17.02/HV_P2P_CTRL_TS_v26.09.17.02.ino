@@ -11,14 +11,21 @@
 #include <Preferences.h>
 #include <mbedtls/sha256.h>
 #include <esp_ota_ops.h>
+#include <esp_partition.h>
 
-#define CTRL_TS_SEMVER "v26.09.15.02"
+#define CTRL_TS_SEMVER "v26.09.17.02"
 #define CTRL_TS_VERSION "HV P2P CTRL-TS " CTRL_TS_SEMVER
 #define CTRL_TS_HW_ID "WS-ESP32S3-7"
 #define HMI_BAUD 115200
 // Waveshare ESP32-S3-Touch-LCD-7 onboard automatic-direction RS485.
 #define HMI_UART_RX 15
 #define HMI_UART_TX 16
+// Real EdgeBox<->Waveshare bench testing showed the auto-direction transceiver
+// needs substantially more than the original 150 us master-release gap during
+// firmware-update handshakes. 2.5 ms is still negligible at 115200 baud / 20 Hz
+// HMI polling, while giving both isolated transceivers a deterministic quiet slot.
+static const uint32_t RS485_SLAVE_TURNAROUND_US = 2500;
+static const size_t HMI_RX_BUFFER_BYTES = 4096;
 #define HMI_TIMEOUT_MS 30000
 #define AUX_LATCH_MS 180
 #define AUX_PHYSICAL_DEBOUNCE_MS 250
@@ -85,6 +92,13 @@ static lv_color_t *boot_canvas_buf = nullptr;
 static int boot_w = 0;
 static int boot_h = 0;
 static JPEGDEC boot_jpeg;
+// Splash transform is computed after the JPEG header is opened. The decoder can
+// therefore accept the existing SD-card artwork at arbitrary resolution without
+// cropping it at (0,0). Portrait source art is rotated clockwise automatically
+// for the native 800x480 landscape panel, and aspect ratio is always preserved.
+static int boot_src_w = 0, boot_src_h = 0;
+static int boot_draw_x = 0, boot_draw_y = 0, boot_draw_w = 0, boot_draw_h = 0;
+static bool boot_rotate_90 = false;
 static bool g_boot_ctrl_confirmed = false;
 static bool g_boot_srvr_confirmed = false;
 static uint32_t g_boot_last_ping_ms = 0;
@@ -172,7 +186,7 @@ static float g_last_ramp_near_draw = -999999.0f;
 static float g_last_ramp_far_draw = -999999.0f;
 
 // -------------------- CTRL-TS Settings page --------------------
-// Safe v26.09.15.02 approach: no backlight/brightness writes. This page only
+// Safe v26.09.17.02 approach: no backlight/brightness writes. This page only
 // edits CTRL network settings over UART and therefore should preserve the known
 // Keep the proven splash/boot path; do not write to the backlight controller.
 static lv_obj_t *settings_overlay = nullptr;
@@ -221,7 +235,7 @@ static void force_screen_refresh(){
 }
 
 static void screen_keepalive(){
-  // v26.09.15.02: no periodic full-screen or left-strip invalidation or brightness writes.
+  // v26.09.17.02: no periodic full-screen or left-strip invalidation or brightness writes.
   // The Waveshare/LVGL port refreshes changed objects itself; forcing a full
   // screen refresh every second caused the visible 1-second flicker/glitch.
   if(!g_ui_ready) return;
@@ -232,7 +246,7 @@ static void set_label_text_if_changed(lv_obj_t *lbl, const char *txt){
   const char *cur = lv_label_get_text(lbl);
   if(cur && strcmp(cur, txt) == 0) return;
   lv_label_set_text(lbl, txt);
-  // v26.09.15.02: label-only invalidation. Parent/full-strip invalidation can
+  // v26.09.17.02: label-only invalidation. Parent/full-strip invalidation can
   // cause the known vertical tear on the left AUX area of this panel.
   lv_obj_invalidate(lbl);
 }
@@ -330,51 +344,86 @@ static String fw_meta_key(const char *prefix, const char *partitionLabel){
   return key;
 }
 
+static bool running_fw_sha(size_t imageSize, String &shaOut){
+  const esp_partition_t *running = esp_ota_get_running_partition();
+  if(!running || imageSize < 32768 || imageSize > running->size || imageSize > FW_MAX_IMAGE_SIZE) return false;
+  mbedtls_sha256_context ctx;
+  mbedtls_sha256_init(&ctx);
+  if(mbedtls_sha256_starts(&ctx, 0) != 0){ mbedtls_sha256_free(&ctx); return false; }
+  uint8_t buf[1024];
+  size_t off = 0;
+  bool ok = true;
+  while(off < imageSize){
+    size_t n = min(sizeof(buf), imageSize - off);
+    if(esp_partition_read(running, off, buf, n) != ESP_OK || mbedtls_sha256_update(&ctx, buf, n) != 0){ ok=false; break; }
+    off += n;
+  }
+  uint8_t digest[32];
+  if(ok && mbedtls_sha256_finish(&ctx, digest) != 0) ok=false;
+  mbedtls_sha256_free(&ctx);
+  if(!ok) return false;
+  static const char HEX_DIGITS[] = "0123456789abcdef";
+  char out[65];
+  for(size_t i=0;i<32;i++){ out[i*2]=HEX_DIGITS[digest[i]>>4]; out[i*2+1]=HEX_DIGITS[digest[i]&0x0F]; }
+  out[64]='\0';
+  shaOut = String(out);
+  return true;
+}
+
 static void load_fw_identity(){
   g_fw_image_hash = "bootstrap";
   const esp_partition_t *running = esp_ota_get_running_partition();
   if(!running) return;
   String verKey = fw_meta_key("ver", running->label);
   String shaKey = fw_meta_key("sha", running->label);
+  String sizeKey = fw_meta_key("sz", running->label);
   String okKey  = fw_meta_key("ok",  running->label);
-  if(!verKey.length() || !shaKey.length() || !okKey.length()) return;
+  if(!verKey.length() || !shaKey.length() || !sizeKey.length() || !okKey.length()) return;
   if(!g_fw_prefs.begin("hvfw", true)) return;
   String storedVersion = g_fw_prefs.getString(verKey.c_str(), "");
   String storedHash = g_fw_prefs.getString(shaKey.c_str(), "");
+  uint32_t storedSize = g_fw_prefs.getULong(sizeKey.c_str(), 0);
   String committedHash = g_fw_prefs.getString(okKey.c_str(), "");
   g_fw_prefs.end();
-  // Identity is trusted only for the partition that is actually running and only
-  // after the commit marker was written last. This prevents a partial NVS write
-  // from making an older app falsely claim a newly staged hash.
-  if(storedVersion == CTRL_TS_SEMVER && storedHash.length() == 64 && committedHash == storedHash)
-    g_fw_image_hash = storedHash;
+  // Metadata alone is not enough: a manual Arduino re-flash can preserve NVS.
+  // Re-hash the bytes of the partition that is actually running before claiming
+  // the GitHub-staged identity, preventing stale NVS from authenticating a
+  // different manually flashed image that happens to have the same version.
+  if(storedVersion == CTRL_TS_SEMVER && storedHash.length() == 64 && committedHash == storedHash &&
+     storedSize >= 32768 && storedSize <= FW_MAX_IMAGE_SIZE){
+    String actual;
+    if(running_fw_sha(storedSize, actual) && actual == storedHash) g_fw_image_hash = storedHash;
+    else Serial.println("[FW RX] stored identity rejected: running image SHA mismatch");
+  }
 }
 
-static bool save_fw_identity(const String &version, const String &sha){
-  if(version.length() < 2 || sha.length() != 64) return false;
+static bool save_fw_identity(const String &version, const String &sha, size_t imageSize){
+  if(version.length() < 2 || sha.length() != 64 || imageSize < 32768 || imageSize > FW_MAX_IMAGE_SIZE) return false;
   // Update.end(true) selects the new inactive OTA partition as the next boot target.
   // Store identity against that partition, not globally. The commit key is removed
-  // first and written LAST, giving the three-field metadata update transactional
-  // semantics even if power or NVS write failure interrupts this routine.
+  // first and written LAST, giving the metadata update transactional semantics even
+  // if power or NVS write failure interrupts this routine.
   const esp_partition_t *target = esp_ota_get_boot_partition();
   if(!target) return false;
   String verKey = fw_meta_key("ver", target->label);
   String shaKey = fw_meta_key("sha", target->label);
+  String sizeKey = fw_meta_key("sz", target->label);
   String okKey  = fw_meta_key("ok",  target->label);
-  if(!verKey.length() || !shaKey.length() || !okKey.length()) return false;
+  if(!verKey.length() || !shaKey.length() || !sizeKey.length() || !okKey.length()) return false;
   if(!g_fw_prefs.begin("hvfw", false)) return false;
   g_fw_prefs.remove(okKey.c_str());
   bool ok1 = g_fw_prefs.putString(verKey.c_str(), version) > 0;
   bool ok2 = g_fw_prefs.putString(shaKey.c_str(), sha) > 0;
-  bool ok3 = ok1 && ok2 && (g_fw_prefs.putString(okKey.c_str(), sha) > 0);
-  bool verify = ok3 && g_fw_prefs.getString(verKey.c_str(), "") == version
+  bool ok3 = g_fw_prefs.putULong(sizeKey.c_str(), (uint32_t)imageSize) == sizeof(uint32_t);
+  bool ok4 = ok1 && ok2 && ok3 && (g_fw_prefs.putString(okKey.c_str(), sha) > 0);
+  bool verify = ok4 && g_fw_prefs.getString(verKey.c_str(), "") == version
                      && g_fw_prefs.getString(shaKey.c_str(), "") == sha
+                     && g_fw_prefs.getULong(sizeKey.c_str(), 0) == (uint32_t)imageSize
                      && g_fw_prefs.getString(okKey.c_str(), "") == sha;
   g_fw_prefs.end();
   // Do NOT change g_fw_image_hash while the old application is still running.
   // The transferred hash belongs to the newly selected OTA partition. The new
-  // application loads it only after reboot, from metadata keyed to its own running
-  // partition and protected by the commit marker above.
+  // application re-hashes that partition at boot before reporting compatibility.
   return verify;
 }
 
@@ -426,6 +475,11 @@ static void boot_service_uart(){
   poll_rs485(true);
 }
 
+// Initial firmware convergence occurs while setup() is still inside the splash
+// loop, so updater timeout/reboot service must be available before loop() starts.
+static void fw_service_timeout();
+static void fw_service_reboot();
+
 static bool boot_prepare_splash_canvas(){
   boot_w = SPLASH_CANVAS_W;
   boot_h = SPLASH_CANVAS_H;
@@ -449,19 +503,68 @@ static bool boot_prepare_splash_canvas(){
 }
 
 static int boot_jpeg_draw(JPEGDRAW *pDraw){
-  if(!boot_canvas_buf || boot_w <= 0 || boot_h <= 0) return 0;
-  int y0 = pDraw->y;
-  int x0 = pDraw->x;
-  for(int y=0; y<pDraw->iHeight; y++){
-    int dy = y0 + y;
-    if(dy < 0 || dy >= boot_h) continue;
-    int sx = 0;
-    int dx = x0;
-    int w = pDraw->iWidth;
-    if(dx < 0){ sx = -dx; w -= sx; dx = 0; }
-    if(dx + w > boot_w) w = boot_w - dx;
-    if(w <= 0) continue;
-    memcpy(&boot_canvas_buf[dy * boot_w + dx], &pDraw->pPixels[y * pDraw->iWidth + sx], w * sizeof(lv_color_t));
+  if(!boot_canvas_buf || boot_w <= 0 || boot_h <= 0 || boot_src_w <= 0 || boot_src_h <= 0) return 0;
+
+  // Fast path for the native 800x480 artwork used by earlier approved builds.
+  if(!boot_rotate_90 && boot_draw_x == 0 && boot_draw_y == 0 &&
+     boot_draw_w == boot_src_w && boot_draw_h == boot_src_h &&
+     boot_src_w == boot_w && boot_src_h == boot_h){
+    int y0 = pDraw->y;
+    int x0 = pDraw->x;
+    for(int y=0; y<pDraw->iHeight; y++){
+      int dy = y0 + y;
+      if(dy < 0 || dy >= boot_h) continue;
+      int sx = 0;
+      int dx = x0;
+      int w = pDraw->iWidth;
+      if(dx < 0){ sx = -dx; w -= sx; dx = 0; }
+      if(dx + w > boot_w) w = boot_w - dx;
+      if(w <= 0) continue;
+      memcpy(&boot_canvas_buf[dy * boot_w + dx], &pDraw->pPixels[y * pDraw->iWidth + sx], w * sizeof(lv_color_t));
+    }
+    return 1;
+  }
+
+  const int logical_w = boot_rotate_90 ? boot_src_h : boot_src_w;
+  const int logical_h = boot_rotate_90 ? boot_src_w : boot_src_h;
+  if(logical_w <= 0 || logical_h <= 0 || boot_draw_w <= 0 || boot_draw_h <= 0) return 0;
+
+  // Map each decoded source pixel to its exact destination rectangle. This works
+  // for both down-scaling and up-scaling and avoids the clipping/distortion of
+  // decoding a large JPEG directly into a fixed 800x480 canvas.
+  for(int by=0; by<pDraw->iHeight; ++by){
+    const int sy = pDraw->y + by;
+    if(sy < 0 || sy >= boot_src_h) continue;
+    for(int bx=0; bx<pDraw->iWidth; ++bx){
+      const int sx = pDraw->x + bx;
+      if(sx < 0 || sx >= boot_src_w) continue;
+
+      int lx = sx, ly = sy;
+      if(boot_rotate_90){
+        lx = boot_src_h - 1 - sy; // clockwise rotation
+        ly = sx;
+      }
+
+      int dx0 = boot_draw_x + int((int64_t(lx) * boot_draw_w) / logical_w);
+      int dx1 = boot_draw_x + int((int64_t(lx + 1) * boot_draw_w) / logical_w);
+      int dy0 = boot_draw_y + int((int64_t(ly) * boot_draw_h) / logical_h);
+      int dy1 = boot_draw_y + int((int64_t(ly + 1) * boot_draw_h) / logical_h);
+      if(dx1 <= dx0 || dy1 <= dy0) continue;
+      if(dx0 < 0) dx0 = 0;
+      if(dy0 < 0) dy0 = 0;
+      if(dx1 > boot_w) dx1 = boot_w;
+      if(dy1 > boot_h) dy1 = boot_h;
+      if(dx1 <= dx0 || dy1 <= dy0) continue;
+
+      lv_color_t color;
+      static_assert(sizeof(lv_color_t) == sizeof(uint16_t), "CTRL-TS splash expects LVGL RGB565");
+      const uint16_t raw = pDraw->pPixels[by * pDraw->iWidth + bx];
+      memcpy(&color, &raw, sizeof(raw));
+      for(int dy=dy0; dy<dy1; ++dy){
+        lv_color_t *row = &boot_canvas_buf[dy * boot_w];
+        for(int dx=dx0; dx<dx1; ++dx) row[dx] = color;
+      }
+    }
   }
   return 1;
 }
@@ -497,7 +600,31 @@ static bool boot_load_splash_jpg(){
     jf.close();
     return false;
   }
-  Serial.printf("[BOOT] JPEG opened %dx%d, target canvas %dx%d\n", boot_jpeg.getWidth(), boot_jpeg.getHeight(), boot_w, boot_h);
+  boot_src_w = boot_jpeg.getWidth();
+  boot_src_h = boot_jpeg.getHeight();
+  boot_rotate_90 = (boot_src_h > boot_src_w) && (boot_w > boot_h);
+  const int logical_w = boot_rotate_90 ? boot_src_h : boot_src_w;
+  const int logical_h = boot_rotate_90 ? boot_src_w : boot_src_h;
+  if(logical_w <= 0 || logical_h <= 0){
+    Serial.println("[BOOT] invalid JPEG dimensions");
+    boot_jpeg.close();
+    jf.close();
+    return false;
+  }
+  // Aspect-preserving contain fit. The status bar remains an overlay, matching
+  // the established boot UI, but no source pixels are cropped off-screen.
+  if((int64_t)logical_w * boot_h >= (int64_t)logical_h * boot_w){
+    boot_draw_w = boot_w;
+    boot_draw_h = max(1, int((int64_t)logical_h * boot_w / logical_w));
+  } else {
+    boot_draw_h = boot_h;
+    boot_draw_w = max(1, int((int64_t)logical_w * boot_h / logical_h));
+  }
+  boot_draw_x = (boot_w - boot_draw_w) / 2;
+  boot_draw_y = (boot_h - boot_draw_h) / 2;
+  Serial.printf("[BOOT] JPEG opened %dx%d -> fit %dx%d at %d,%d%s\n",
+                boot_src_w, boot_src_h, boot_draw_w, boot_draw_h, boot_draw_x, boot_draw_y,
+                boot_rotate_90 ? " rotated90" : "");
   boot_jpeg.setPixelType(RGB565_LITTLE_ENDIAN);
   int ok = boot_jpeg.decode(0, 0, 0);
   boot_jpeg.close();
@@ -570,8 +697,13 @@ static void show_boot_splash(){
   while(true){
     uint32_t now = millis();
     boot_service_uart();
+    fw_service_timeout();
+    fw_service_reboot();
     bool min_hold_done = (now - t0) >= SPLASH_HOLD_MS;
-    if(g_boot_ctrl_confirmed && g_boot_srvr_confirmed){
+    if(g_fw_update_active || g_fw_finalized){
+      // Firmware receiver owns the boot status while convergence is active.
+      // Do not overwrite its progress with the generic "Waiting for CTRL" text.
+    } else if(g_boot_ctrl_confirmed && g_boot_srvr_confirmed){
       if(min_hold_done) break;
       uint32_t remain = (SPLASH_HOLD_MS - (now - t0) + 999) / 1000;
       char msg[96];
@@ -705,7 +837,7 @@ static void confirm_aux_idx(int idx, bool send_command){
   selected_aux = -1;
   g_selected_aux_ms = 0;
   confirmed_aux = idx;
-  clear_confirm_at = now_ms + 2000;  // v26.09.15.02: confirmed AUX tile stays lit for 2 seconds
+  clear_confirm_at = now_ms + 2000;  // v26.09.17.02: confirmed AUX tile stays lit for 2 seconds
   g_aux_suppress_until_ms[idx] = now_ms + 400;
   style_aux(idx,false,true);
   snprintf(msg,sizeof(msg),"AUX %d Confirmed", idx+1);
@@ -767,7 +899,7 @@ static void style_w1p_status_pill(int state){
 }
 
 static void style_estop_pill(bool active){
-  // v26.09.15.02: the middle status banner follows the SRVR-resolved state.
+  // v26.09.17.02: the middle status banner follows the SRVR-resolved state.
   // A local CTRL-TS UART/display gap must not invent "E-Stop CTRL" while SRVR
   // is still sending Status | Active. Real CTRL/W1P E-Stops are still shown
   // immediately when SRVR sends status=E-Stop... / status_level=red.
@@ -812,7 +944,7 @@ static void refresh_status_ui(){
   style_status_pill_cached(0,pill_ctrl,lbl_ctrl,"CTRL",g_ctrl_ok);
   if(pill_srvr && lbl_srvr) style_status_pill_cached(1,pill_srvr,lbl_srvr,"SRVR",g_srvr_ok);
   style_w1p_status_pill(g_w1p_health);
-  // v26.09.15.02: do not turn the main middle box red purely because the
+  // v26.09.17.02: do not turn the main middle box red purely because the
   // CTRL-TS local UART/display link hiccuped. The SRVR status packet is the
   // authoritative source for Active / Un-Calibrated / E-Stop display state.
   bool stopped_visual = (g_status_level >= 2) || g_estop_active;
@@ -1268,7 +1400,7 @@ static void apply_hmi_packet(const String &line){
     else g_status_level = 0;
   }
 
-  // v26.09.15.02: if SRVR sends explicit status/status_level, trust it as
+  // v26.09.17.02: if SRVR sends explicit status/status_level, trust it as
   // the authoritative display state. Do not override it locally with a CTRL
   // error just because the touchscreen/CTRL UART side saw a transient gap.
   g_estop_active = packet_estop;
@@ -1375,7 +1507,7 @@ static void apply_hmi_packet(const String &line){
   if(mode_changed || (prev_status_text != g_status_text) || (prev_status_level != g_status_level) || (prev_estop != g_estop_active) || (prev_estop_source != g_estop_source) || (prev_ctrl != g_ctrl_ok) || (prev_srvr != g_srvr_ok) || (prev_w1p != g_w1p_ok) || (prev_w1p_health != g_w1p_health)) {
     refresh_status_ui();
   }
-  // v26.09.15.02: no left-strip/full-screen invalidation on packets; progress marker animates locally.
+  // v26.09.17.02: no left-strip/full-screen invalidation on packets; progress marker animates locally.
 }
 
 
@@ -1384,7 +1516,7 @@ static void apply_layout_packet(const String &line){
   // on CTRL cannot overwrite the screen title/version or trigger header redraws.
   String hint = getField(line, "hint");
   if(lbl_title) set_label_text_if_changed(lbl_title, "HV P2P\nCTRL-TS");
-  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.09.15.02");
+  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.09.17.02");
   if(hint.length() && hint.startsWith("ERROR")) set_touch_debug(hint.c_str());
   for(int i=0;i<AUX_COUNT;i++){
     String key = String("aux") + String(i+1);
@@ -1431,7 +1563,45 @@ static uint32_t read_be32(const uint8_t *p){
 
 static void fw_send_text(uint8_t type, uint16_t seq, const String &text){
   rs485_slave_turnaround_guard();
-  HVP2PRS485::sendText(HMI, type, seq, text);
+  const bool sent = HVP2PRS485::sendText(HMI, type, seq, text);
+  if(type == HVP2PRS485::FW_READY || type == HVP2PRS485::FW_RESULT ||
+     type == HVP2PRS485::ACK || type == HVP2PRS485::ERROR_MSG){
+    Serial.printf("[FW RX] TX response type=0x%02X seq=%u sent=%d\n",
+                  unsigned(type), unsigned(seq), sent ? 1 : 0);
+  }
+}
+
+static bool fw_parse_version(const String &version, uint32_t parts[4]){
+  String v = version;
+  v.trim();
+  if(v.startsWith("v")) v.remove(0, 1);
+  int start = 0;
+  for(int i=0; i<4; ++i){
+    int dot = v.indexOf('.', start);
+    if((i < 3 && dot < 0) || (i == 3 && dot >= 0)) return false;
+    String piece = dot >= 0 ? v.substring(start, dot) : v.substring(start);
+    if(!piece.length()) return false;
+    uint64_t n = 0;
+    for(size_t j=0; j<piece.length(); ++j){
+      if(!isDigit(piece[j])) return false;
+      n = n * 10ULL + uint64_t(piece[j] - '0');
+      if(n > 0xFFFFFFFFULL) return false;
+    }
+    parts[i] = uint32_t(n);
+    start = dot + 1;
+  }
+  return true;
+}
+
+static int fw_compare_versions(const String &installed, const String &required, bool &valid){
+  uint32_t a[4] = {0,0,0,0}, b[4] = {0,0,0,0};
+  valid = fw_parse_version(installed, a) && fw_parse_version(required, b);
+  if(!valid) return 0;
+  for(int i=0; i<4; ++i){
+    if(a[i] < b[i]) return -1;
+    if(a[i] > b[i]) return 1;
+  }
+  return 0;
 }
 
 static String sha256_hex(const uint8_t digest[32]){
@@ -1446,7 +1616,7 @@ static void fw_sha_release(){
   if(g_fw_sha_active){ mbedtls_sha256_free(&g_fw_sha_ctx); g_fw_sha_active=false; }
 }
 
-static void fw_abort(const char *reason, uint16_t seq=0){
+static void fw_abort(const char *reason, int32_t seq=-1){
   if(g_fw_update_active) Update.abort();
   fw_sha_release();
   g_fw_update_active = false;
@@ -1457,14 +1627,23 @@ static void fw_abort(const char *reason, uint16_t seq=0){
   g_fw_received = 0;
   g_fw_expected_sha = "";
   g_fw_expected_version = "";
+  g_fw_last_rx_ms = 0;
   g_ctrl_fw_compatible = false;
   String msg = String("fw_abort|") + (reason ? reason : "unknown");
   Serial.printf("[FW RX] %s\n", msg.c_str());
-  if(seq) fw_send_text(HVP2PRS485::ERROR_MSG, seq, msg);
+  if(seq >= 0) fw_send_text(HVP2PRS485::ERROR_MSG, uint16_t(seq), msg);
   boot_set_status("Firmware update failed | waiting for CTRL");
 }
 
 static void fw_handle_begin(const HVP2PRS485::Frame &frame){
+  // Once a complete image has been verified, the selected boot partition must
+  // remain immutable until restart. In particular, do not let an eager HELLO /
+  // second FW_BEGIN from CTRL erase the just-verified image during the short
+  // interval between REBOOT ACK and ESP.restart().
+  if(g_fw_finalized || g_fw_reboot_due_ms){
+    fw_send_text(HVP2PRS485::ERROR_MSG, frame.seq, "fw_reboot_pending");
+    return;
+  }
   String meta = HVP2PRS485::payloadString(frame);
   String targetHw = boot_get_field(meta, "hw");
   String protoText = boot_get_field(meta, "proto");
@@ -1478,6 +1657,17 @@ static void fw_handle_begin(const HVP2PRS485::Frame &frame){
   // in addition to CTRL checking HELLO before it starts an update.
   if(targetHw != CTRL_TS_HW_ID || proto != HVP2PRS485::PROTOCOL_VERSION){
     fw_send_text(HVP2PRS485::ERROR_MSG, frame.seq, "fw_begin_wrong_target");
+    return;
+  }
+  bool versionValid = false;
+  const int currentVsIncoming = fw_compare_versions(CTRL_TS_SEMVER, version, versionValid);
+  if(!versionValid){
+    fw_send_text(HVP2PRS485::ERROR_MSG, frame.seq, "fw_begin_bad_version");
+    return;
+  }
+  if(currentVsIncoming > 0){
+    Serial.printf("[FW RX] downgrade blocked: running=%s incoming=%s\n", CTRL_TS_SEMVER, version.c_str());
+    fw_send_text(HVP2PRS485::ERROR_MSG, frame.seq, "fw_downgrade_blocked");
     return;
   }
   if(imageSize < 32768 || imageSize > FW_MAX_IMAGE_SIZE || version.length() < 2 || sha.length() != 64){
@@ -1502,6 +1692,7 @@ static void fw_handle_begin(const HVP2PRS485::Frame &frame){
     return;
   }
   g_fw_sha_active = true;
+  g_fw_reboot_due_ms = 0;
   g_fw_update_active = true;
   g_fw_expected_size = imageSize;
   g_fw_received = 0;
@@ -1584,7 +1775,7 @@ static void fw_handle_end(const HVP2PRS485::Frame &frame){
   // Firmware identity metadata is part of the compatibility contract, so if NVS
   // persistence fails, restore the currently-running partition as the boot target
   // rather than leaving a new image selected that can only report 'bootstrap'.
-  bool metaOk = save_fw_identity(g_fw_expected_version, actualSha);
+  bool metaOk = save_fw_identity(g_fw_expected_version, actualSha, g_fw_expected_size);
   if(!metaOk){
     const esp_partition_t *running = esp_ota_get_running_partition();
     if(running) esp_ota_set_boot_partition(running);
@@ -1609,7 +1800,9 @@ static void fw_handle_reboot(const HVP2PRS485::Frame &frame){
     return;
   }
   fw_send_text(HVP2PRS485::ACK, frame.seq, "rebooting");
-  g_fw_reboot_due_ms = millis() + 250;
+  // Duplicate REBOOT requests are idempotent and must not keep postponing the
+  // already scheduled restart.
+  if(!g_fw_reboot_due_ms) g_fw_reboot_due_ms = millis() + 250;
 }
 
 static void fw_service_timeout(){
@@ -1618,16 +1811,26 @@ static void fw_service_timeout(){
   }
 }
 
+static void fw_service_reboot(){
+  if(g_fw_reboot_due_ms && (int32_t)(millis() - g_fw_reboot_due_ms) >= 0){
+    Serial.println("[FW RX] rebooting into verified CTRL-TS image");
+    delay(20);
+    ESP.restart();
+  }
+}
+
 static inline void rs485_slave_turnaround_guard(){
-  // Give the EdgeBox master time to release DE after its final stop bit before
-  // the Waveshare auto-direction transceiver starts a reply. 150 us is ~1.7
-  // character times at 115200 8N1 and is negligible at the 20 Hz HMI poll rate.
-  delayMicroseconds(150);
+  // Bench-observed EdgeBox/Waveshare updater replies were lost with the original
+  // 150 us gap even though HELLO traffic worked. Use a conservative deterministic
+  // quiet interval before every slave response; update traffic is safety-held and
+  // the extra 2.5 ms is negligible compared with flash-write time.
+  delayMicroseconds(RS485_SLAVE_TURNAROUND_US);
 }
 
 static void process_rs485_frame(const HVP2PRS485::Frame &frame, bool boot_phase){
   last_hmi_rx = millis();
   if(frame.type == HVP2PRS485::HELLO_REQ){
+    g_boot_ctrl_confirmed = true;
     rs485_slave_turnaround_guard();
     HVP2PRS485::sendText(HMI, HVP2PRS485::HELLO_RESP, frame.seq, fw_identity_line());
     return;
@@ -1684,7 +1887,7 @@ static void create_ui(){
   lv_obj_t *brand=make_panel(frame,SX,HEADER_Y,70,HEADER_H,C_BG,0x63d84e,7);
   lbl_title=make_label(brand,"HV P2P\nCTRL-TS",0,6,&lv_font_montserrat_12,lv_color_hex(C_FG),70);
   lv_obj_set_style_text_line_space(lbl_title,-2,0);
-  lbl_subtitle=make_label(frame,"v26.09.15.02",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
+  lbl_subtitle=make_label(frame,"v26.09.17.02",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
 
   pill_ctrl=make_panel(frame,255,HEADER_Y,126,HEADER_H,C_PANEL,C_BORDER,5);
   dot_ctrl=lv_obj_create(pill_ctrl); lv_obj_set_pos(dot_ctrl,9,15); lv_obj_set_size(dot_ctrl,8,8); lv_obj_set_style_radius(dot_ctrl,LV_RADIUS_CIRCLE,0); lv_obj_set_style_border_width(dot_ctrl,0,0); lv_obj_set_style_bg_color(dot_ctrl,lv_color_hex(0xef5757),0); lv_obj_clear_flag(dot_ctrl,LV_OBJ_FLAG_SCROLLABLE);
@@ -1796,7 +1999,7 @@ static void service_link_state(){
 
   bool link_alive = last_hmi_rx && ((millis() - last_hmi_rx) <= HMI_TIMEOUT_MS);
   if(!link_alive) {
-    // v26.09.15.02: local UART/display timeout is a CTRL-TS link warning, not
+    // v26.09.17.02: local UART/display timeout is a CTRL-TS link warning, not
     // proof of a real CTRL E-Stop. Keep the last SRVR-resolved status banner so
     // the touchscreen cannot randomly show "Status | E-Stop CTRL" while SRVR
     // remains "Status | Active". The CTRL status pill can still show ERROR.
@@ -1814,6 +2017,8 @@ void setup(){
   load_fw_identity();
   Serial.printf("[FW RX] identity hash=%s\n", g_fw_image_hash.c_str());
   Serial.println("[WS-HMI] boot: starting framed RS485 thin-HMI runtime");
+  if(HMI.setRxBufferSize(HMI_RX_BUFFER_BYTES) < HMI_RX_BUFFER_BYTES)
+    Serial.println("[WS-HMI] ERROR allocating RS485 RX buffer");
   HMI.begin(HMI_BAUD, SERIAL_8N1, HMI_UART_RX, HMI_UART_TX);
   g_uart_ok = true;
   Serial.printf("[WS-HMI] onboard RS485 RX=%d TX=%d baud=%d (auto direction)\n", HMI_UART_RX, HMI_UART_TX, HMI_BAUD);
@@ -1848,9 +2053,8 @@ void setup(){
 }
 
 void loop(){
-  if((g_settings_reset_due_ms && millis() >= g_settings_reset_due_ms) || (g_fw_reboot_due_ms && millis() >= g_fw_reboot_due_ms)){
-    ESP.restart();
-  }
+  if(g_settings_reset_due_ms && (int32_t)(millis() - g_settings_reset_due_ms) >= 0) ESP.restart();
+  fw_service_reboot();
   lvgl_port_lock(-1);
   handle_hmi_rx();
   service_link_state();

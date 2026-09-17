@@ -1,4 +1,4 @@
-HV P2P v26.09.15.02 — GITHUB-READY SOURCE
+HV P2P v26.09.17.02 — GITHUB-READY SOURCE
 ==========================================
 
 PURPOSE
@@ -17,7 +17,7 @@ The v26.09.14.03 native SRVR executables were created correctly but their frozen
 payloads omitted ctrl.bin/w1p.bin because Nuitka treats *.bin as binary/code and
 skips it from ordinary --include-data-dir handling.
 
-v26.09.15.02 force-includes the exact CTRL/W1P images with explicit
+v26.09.17.02 force-includes the exact CTRL/W1P images with explicit
 --include-data-files rules, verifies them in the completed macOS app/release ZIP,
 and retains the Windows frozen-runtime smoke test. A shared spec patcher is used
 by both operating-system paths.
@@ -59,5 +59,5 @@ GitHub Actions remains the native compile/frozen-runtime authority.
 BOOTSTRAP / BENCH
 -----------------
 Read:
-- INITIAL_BOOTSTRAP_v26.09.15.02.md
-- NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.09.15.02.md
+- INITIAL_BOOTSTRAP_v26.09.17.02.md
+- NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.09.17.02.md

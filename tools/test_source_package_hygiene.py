@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = "26.09.15.02"
+VER = "26.09.17.02"
 
 failures: list[str] = []
 for d in ("PREVIEWS", "REFERENCE_ONLY", "NATIVE_BUILD_ARTIFACTS", "HVP2P_NATIVE_BUILD_ARTIFACTS", "__pycache__", ".pytest_cache", ".mypy_cache"):

@@ -6,7 +6,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 WF = (ROOT / ".github/workflows/complete-build.yml").read_text(encoding="utf-8")
 PATCH = (ROOT / "tools/patch_pyside_deploy_spec.py").read_text(encoding="utf-8")
-AUTH = (ROOT / "SRVR_GitHub_v26.09.15.02/firmware_authority.py").read_text(encoding="utf-8")
+AUTH = (ROOT / "SRVR_GitHub_v26.09.17.02/firmware_authority.py").read_text(encoding="utf-8")
 
 flags = (
     "--include-data-files=firmware_bundle/ctrl.bin=firmware_bundle/ctrl.bin",

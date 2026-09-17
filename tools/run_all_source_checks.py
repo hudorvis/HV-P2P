@@ -8,6 +8,8 @@ checks=[
     ['python3',str(ROOT/'tools'/'validate_edgebox_integration.py')],
     ['python3',str(ROOT/'tools'/'test_rs485_frame_host.py')],
     ['python3',str(ROOT/'tools'/'test_hmi_fw_retry_contract.py')],
+    ['python3',str(ROOT/'tools'/'test_ctrl_ts_rs485_transport_contract.py')],
+    ['python3',str(ROOT/'tools'/'test_ctrl_ts_splash_contract.py')],
     ['python3',str(ROOT/'tools'/'test_hmi_target_gate.py')],
     ['python3',str(ROOT/'tools'/'test_embed_tool.py')],
     ['python3',str(ROOT/'tools'/'test_firmware_authority_server.py')],
@@ -21,7 +23,7 @@ checks=[
     ['python3',str(ROOT/'tools'/'test_srvr_wire_contract.py')],
     ['python3',str(ROOT/'tools'/'test_speed_mode_contract.py')],
     ['python3',str(ROOT/'tools'/'test_python_syntax.py')],
-    ['python3',str(ROOT/'SRVR_GitHub_v26.09.15.02'/'tools'/'validate_project.py')],
+    ['python3',str(ROOT/'SRVR_GitHub_v26.09.17.02'/'tools'/'validate_project.py')],
 ]
 env=os.environ.copy()
 env['PYTHONDONTWRITEBYTECODE']='1'

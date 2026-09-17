@@ -1,8 +1,8 @@
-# HV P2P v26.09.15.02 — One-Time Firmware Bootstrap and Future Automatic Convergence
+# HV P2P v26.09.17.02 — One-Time Firmware Bootstrap and Future Automatic Convergence
 
 ## Purpose
 
-v26.09.15.02 introduces the SRVR-authoritative firmware chain:
+v26.09.17.02 introduces the SRVR-authoritative firmware chain:
 
 ```text
 SRVR
@@ -15,6 +15,18 @@ CTRL and W1P need **one authority-aware bootstrap installation** before SRVR can
 
 The first bootstrap is a commissioning/service operation. Keep the physical winch unable to move: motor power isolated where practical, local E-stop asserted/verified, requested velocity zero and brake engaged.
 
+
+## Commissioning note for upgrades from v26.09.15.02
+
+The RS485 receiver/timing correction in v26.09.17.02 must already be running on CTRL-TS before the corrected automatic transfer can be relied on. Therefore, if CTRL-TS currently runs v26.09.15.02, perform **one manual Arduino IDE USB flash of CTRL-TS v26.09.17.02** from the GitHub `STAGED_SOURCE` project.
+
+CTRL should preferably be allowed to converge from the matching SRVR over Ethernet once that authority path is proven. During commissioning, manually flashing CTRL from the same GitHub `STAGED_SOURCE` is an acceptable recovery/bootstrap path. W1P remains eligible for SRVR Ethernet convergence behind its existing stopped/braked safety gate.
+
+For Arduino IDE bootstrap:
+
+- CTRL-TS: ESP32S3 Dev Module, ESP32 core 3.3.8, 16 MB flash, QIO 80 MHz, OPI PSRAM, sketch-local `partitions.csv`, Hardware CDC/JTAG, CDC on boot enabled.
+- CTRL/W1P EdgeBox: Edgebox-ESP-100, ESP32 core 3.3.8, 16 MB flash, QIO 80 MHz, PSRAM disabled. Select `16M Flash (3MB APP/9.9MB FATFS)` in the Arduino Tools menu so the IDE compile-size gate exceeds the application size; the sketch-local `partitions.csv` remains the actual dual-OTA partition table. For reliable one-time serial programming, use 115200 upload speed if 921600 causes the chip to stop responding after the baud-rate switch.
+
 ## 1. Obtain the authoritative build
 
 Run `.github/workflows/complete-build.yml` from this source release. The firmware job must build in this order:
@@ -26,13 +38,13 @@ Run `.github/workflows/complete-build.yml` from this source release. The firmwar
 5. verify role/version/target/size/SHA-256;
 6. create `SRVR_FIRMWARE_BUNDLE` from the exact final CTRL and W1P application binaries.
 
-Use the resulting `HV-P2P-v26.09.15.02-Native-Firmware` artifact. Do not substitute an unrelated locally compiled binary for the SRVR firmware bundle.
+Use the resulting `HV-P2P-v26.09.17.02-Native-Firmware` artifact. Do not substitute an unrelated locally compiled binary for the SRVR firmware bundle.
 
 The authoritative artifact contains `NATIVE_BUILD_MANIFEST.json`, `SHA256SUMS.txt`, `BINARIES/`, `STAGED_SOURCE/` and `SRVR_FIRMWARE_BUNDLE/`. Verify its hashes before installation.
 
 ## 2. One-time CTRL-TS Waveshare bootstrap
 
-Use the v26.09.15.02 CTRL-TS source/build from the same native artifact. The GitHub build uses ESP32 Arduino core 3.3.8, the Waveshare ESP32-S3 16 MB/OPI-PSRAM configuration, and the checked-in dual-OTA `partitions.csv`.
+Use the v26.09.17.02 CTRL-TS source/build from the same native artifact. The GitHub build uses ESP32 Arduino core 3.3.8, the Waveshare ESP32-S3 16 MB/OPI-PSRAM configuration, and the checked-in dual-OTA `partitions.csv`.
 
 For a full USB bootstrap, flash the device using the staged/source project and the same build settings used by CI rather than uploading only an application `.bin` to a blank or differently partitioned device. Confirm after reboot that CTRL-TS answers CTRL over RS485 as hardware `WS-ESP32S3-7`, protocol 1.
 
@@ -40,7 +52,7 @@ The bootstrap CTRL-TS may initially report a bootstrap/non-final image hash. Tha
 
 ## 3. One-time W1P EdgeBox bootstrap
 
-Install the v26.09.15.02 W1P authority-aware firmware using USB/full-device programming with the checked-in 16 MB dual-OTA partition map. CI builds it for:
+Install the v26.09.17.02 W1P authority-aware firmware using USB/full-device programming with the checked-in 16 MB dual-OTA partition map. CI builds it for:
 
 `esp32:esp32:Edgebox-ESP-100:FlashSize=16M,FlashMode=qio,PSRAM=disabled,CPUFreq=240,CDCOnBoot=default,USBMode=default,UploadMode=default,UploadSpeed=921600`
 
@@ -58,7 +70,7 @@ Only after CTRL reaches `matched` may its existing CTRL -> CTRL-TS version/hash 
 
 ## 5. First authority start-up
 
-Connect SRVR, CTRL and W1P to the isolated control Ethernet network and run the **matching v26.09.15.02 SRVR native build**. The SRVR authority service listens on TCP port 8088 and serves only its verified packaged bundle.
+Connect SRVR, CTRL and W1P to the isolated control Ethernet network and run the **matching v26.09.17.02 SRVR native build**. The SRVR authority service listens on TCP port 8088 and serves only its verified packaged bundle.
 
 Then reboot/power-cycle CTRL and W1P as part of the normal stopped start-up sequence. Expected policy is:
 
@@ -68,7 +80,7 @@ Then reboot/power-cycle CTRL and W1P as part of the normal stopped start-up sequ
 - installed version newer than SRVR -> warning/safety hold; **no automatic downgrade**;
 - missing/invalid manifest, interrupted transfer, wrong role/target, wrong size, bad SHA-256 or missing embedded identity -> inactive image is not activated.
 
-W1P also reports `FW_MATCH`/`FW_AUTH`; SRVR treats a missing or false match as an internal W1P safety source. This deliberately blocks a pre-bootstrap W1P from being trusted by a v26.09.15.02 SRVR.
+W1P also reports `FW_MATCH`/`FW_AUTH`; SRVR treats a missing or false match as an internal W1P safety source. This deliberately blocks a pre-bootstrap W1P from being trusted by a v26.09.17.02 SRVR.
 
 ## 6. Future releases — no routine USB update
 
