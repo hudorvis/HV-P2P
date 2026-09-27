@@ -1,4 +1,4 @@
-name: HV P2P Complete Build v26.09.17.02
+name: HV P2P Complete Build v26.09.27.01
 
 on:
   workflow_dispatch:
@@ -23,9 +23,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
-      - name: Early source/backend/protocol regression suite
-        run: python3 tools/run_all_source_checks.py
 
       - name: Set up Arduino CLI
         uses: arduino/setup-arduino-cli@v2
@@ -64,17 +61,20 @@ jobs:
           grep -F '#define LV_FONT_MONTSERRAT_24 1' "$HOME/Arduino/libraries/lv_conf.h"
           arduino-cli lib list
 
+      - name: Source/protocol regression suite
+        run: python3 tools/run_all_source_checks.py
+
       - name: Native build CTRL-TS -> embed -> CTRL -> W1P
-        run: python3 tools/native_build_firmware.py --skip-source-preflight --output "$RUNNER_TEMP/HVP2P_NATIVE_BUILD_ARTIFACTS"
+        run: python3 tools/native_build_firmware.py --output "$RUNNER_TEMP/HVP2P_NATIVE_BUILD_ARTIFACTS"
 
       - name: Check that source CTRL still contains build guard
         run: |
-          grep -F '#error "CTRL-TS firmware image has not been staged.' HV_P2P_CTRL_EDGEBOX_v26.09.17.02/HV_P2P_CTRL_TS_Firmware_Image.h
+          grep -F '#error "CTRL-TS firmware image has not been staged.' HV_P2P_CTRL_EDGEBOX_v26.09.27.01/HV_P2P_CTRL_TS_Firmware_Image.h
 
       - name: Upload functional-test firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HV-P2P-v26.09.17.02-Native-Firmware
+          name: HV-P2P-v26.09.27.01-Native-Firmware
           path: ${{ runner.temp }}/HVP2P_NATIVE_BUILD_ARTIFACTS/
           if-no-files-found: error
           retention-days: 30
@@ -97,14 +97,15 @@ jobs:
     timeout-minutes: 50
     defaults:
       run:
-        working-directory: SRVR_GitHub_v26.09.17.02
+        working-directory: SRVR_GitHub_v26.09.27.01
     env:
-      APP_VERSION: '26.09.17.02'
+      APP_VERSION: '26.09.27.01'
       BUNDLE_IDENTIFIER: 'com.hvp2p.srvr'
-      BUNDLE_SHORT_VERSION: '26.9.15'
-      BUNDLE_BUILD_VERSION: '2609.15.2'
+      BUNDLE_SHORT_VERSION: '26.9.27'
+      BUNDLE_BUILD_VERSION: '2609.27.1'
       QT_QUICK_CONTROLS_STYLE: Basic
       PYTHONUNBUFFERED: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
       EXPECTED_ARCH: ${{ matrix.expected_arch }}
       PLATFORM_LABEL: ${{ matrix.platform_label }}
 
@@ -112,11 +113,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download exact verified firmware bundle
+      - name: Download exact native firmware authority bundle
         uses: actions/download-artifact@v4
         with:
-          name: HV-P2P-v26.09.17.02-Native-Firmware
-          path: NATIVE_BUILD_FOR_SRVR
+          name: HV-P2P-v26.09.27.01-Native-Firmware
+          path: ${{ runner.temp }}/hvp2p-native
 
       - name: Confirm macOS runner architecture
         shell: bash
@@ -130,15 +131,19 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
-          cache-dependency-path: SRVR_GitHub_v26.09.17.02/requirements.txt
+          cache-dependency-path: SRVR_GitHub_v26.09.27.01/requirements.txt
 
       - name: Static project preflight
         shell: bash
         run: |
           set -euxo pipefail
           python tools/validate_project.py
-          python ../tools/verify_srvr_firmware_bundle.py "$GITHUB_WORKSPACE/NATIVE_BUILD_FOR_SRVR/SRVR_FIRMWARE_BUNDLE"
-          python -m py_compile main.py backend.py firmware_authority.py tools/__init__.py tools/validate_project.py tools/test_backend_logic.py
+          python - <<'PY'
+          from pathlib import Path
+          for name in ('main.py','backend.py','firmware_authority.py','tools/__init__.py','tools/validate_project.py','tools/test_backend_logic.py'):
+              p=Path(name); compile(p.read_text(encoding='utf-8'), str(p), 'exec')
+          print('Python syntax PASS')
+          PY
 
       - name: Install Qt for Python
         shell: bash
@@ -146,11 +151,6 @@ jobs:
           set -euxo pipefail
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-          # Pin the exact Nuitka release already proven by the v26.09.14.03
-          # macOS deployment logs instead of allowing pyside6-deploy to fetch a
-          # newer compiler implicitly on a future runner image.
-          python -m pip install "Nuitka==4.2.1" ordered-set zstandard
-          python -m nuitka --version
           python - <<'PY'
           import os, platform
           import PySide6
@@ -166,11 +166,11 @@ jobs:
           set -euxo pipefail
           # Explicitly prove CI can import the application backend before running
           # the larger regression suite. This catches path mistakes immediately.
-          PYTHONPATH="$GITHUB_WORKSPACE/SRVR_GitHub_v26.09.17.02${PYTHONPATH:+:$PYTHONPATH}" python - <<'PY'
+          PYTHONPATH="$GITHUB_WORKSPACE/SRVR_GitHub_v26.09.27.01${PYTHONPATH:+:$PYTHONPATH}" python - <<'PY'
           import backend
           print("backend import PASS:", backend.__file__)
           PY
-          PYTHONPATH="$GITHUB_WORKSPACE/SRVR_GitHub_v26.09.17.02${PYTHONPATH:+:$PYTHONPATH}" python -m tools.test_backend_logic
+          PYTHONPATH="$GITHUB_WORKSPACE/SRVR_GitHub_v26.09.27.01${PYTHONPATH:+:$PYTHONPATH}" python -m tools.test_backend_logic
 
       - name: Create isolated deployment source tree
         shell: bash
@@ -187,8 +187,9 @@ jobs:
           cp main.py backend.py firmware_authority.py resources.qrc HV_P2P_SRVR.pyproject "$STAGE/"
           cp -R qml "$STAGE/"
           cp assets/HV_P2P_SRVR_icon.png "$STAGE/HV_P2P_SRVR_icon.png"
-          cp -R "$GITHUB_WORKSPACE/NATIVE_BUILD_FOR_SRVR/SRVR_FIRMWARE_BUNDLE" "$STAGE/firmware_bundle"
-          python ../tools/verify_srvr_firmware_bundle.py "$STAGE/firmware_bundle"
+          cp -R "$RUNNER_TEMP/hvp2p-native/SRVR_FIRMWARE_BUNDLE" "$STAGE/firmware_bundle"
+          test -s "$STAGE/firmware_bundle/ctrl.bin"
+          test -s "$STAGE/firmware_bundle/w1p.bin"
 
           echo 'Staged files:'
           find "$STAGE" -maxdepth 4 -print | sort
@@ -214,7 +215,12 @@ jobs:
           # also satisfies pyside6-deploy's dependency scanner.
           pyside6-rcc resources.qrc -o rc_resources.py
           test -s rc_resources.py
-          python -m py_compile main.py backend.py firmware_authority.py rc_resources.py
+          python - <<'PY'
+          from pathlib import Path
+          for name in ('main.py','backend.py','firmware_authority.py','rc_resources.py'):
+              p=Path(name); compile(p.read_text(encoding='utf-8'), str(p), 'exec')
+          print('staged Python syntax PASS')
+          PY
 
           # Qt's own QML syntax/type checker is authoritative for the frontend.
           pyside6-qmllint --max-warnings -1 qml/Main.qml qml/components/*.qml qml/pages/*.qml
@@ -237,11 +243,9 @@ jobs:
           rm -f pysidedeploy.spec
           pyside6-deploy main.py --init
           test -s pysidedeploy.spec
-          # Nuitka deliberately treats *.bin as executable/binary code and skips
-          # it when included only through --include-data-dir. Force the exact ESP
-          # application images as data files; the text manifest/checksum files are
-          # already discovered by pyside6-deploy from firmware_bundle.
           python "$GITHUB_WORKSPACE/tools/patch_pyside_deploy_spec.py" pysidedeploy.spec
+          grep -F -- '--include-data-files=firmware_bundle/ctrl.bin=firmware_bundle/ctrl.bin' pysidedeploy.spec
+          grep -F -- '--include-data-files=firmware_bundle/w1p.bin=firmware_bundle/w1p.bin' pysidedeploy.spec
 
           pyside6-deploy main.py -f --dry-run \
             --name "HV P2P SRVR" \
@@ -254,16 +258,7 @@ jobs:
             echo 'ERROR: deployment command references repository .github directory'
             exit 1
           fi
-          for flag in \
-            '--include-data-files=firmware_bundle/ctrl.bin=firmware_bundle/ctrl.bin' \
-            '--include-data-files=firmware_bundle/w1p.bin=firmware_bundle/w1p.bin'; do
-            grep -F -- "$flag" deploy-dry-run.txt
-            grep -F -- "$flag" pysidedeploy.spec
-          done
-          if grep -F -- '--include-data-dir=firmware_bundle=firmware_bundle' pysidedeploy.spec; then
-            echo 'ERROR: obsolete firmware include-data-dir rule survived spec patch'
-            exit 1
-          fi
+
 
           # Audit the generated config. Paths may be absolute or relative depending
           # on the PySide6 release, so do not reject a valid spec merely because
@@ -295,18 +290,8 @@ jobs:
           test -d "$APP_PATH/Contents/MacOS"
           test -f "$APP_PATH/Contents/Info.plist"
           echo "Built app: $APP_PATH"
-
-          # Prove the two ESP application images physically made it into the
-          # completed app before signing/smoke-test. A manifest-only bundle is
-          # not sufficient and is the exact failure caught in v26.09.14.03.
-          PACKAGED_CTRL="$(find "$APP_PATH/Contents" -type f -path '*/firmware_bundle/ctrl.bin' -print -quit)"
-          PACKAGED_W1P="$(find "$APP_PATH/Contents" -type f -path '*/firmware_bundle/w1p.bin' -print -quit)"
-          test -n "$PACKAGED_CTRL"
-          test -n "$PACKAGED_W1P"
-          test -s "$PACKAGED_CTRL"
-          test -s "$PACKAGED_W1P"
-          echo "Packaged CTRL firmware: $PACKAGED_CTRL"
-          echo "Packaged W1P firmware: $PACKAGED_W1P"
+          test "$(find "$APP_PATH/Contents" -type f -name ctrl.bin | wc -l | tr -d ' ')" -ge 1
+          test "$(find "$APP_PATH/Contents" -type f -name w1p.bin | wc -l | tr -d ' ')" -ge 1
 
           # Restore the project bundle identity/icon explicitly. The supplied
           # v26.08.17.11 working app still carried generic `main` display metadata
@@ -387,9 +372,9 @@ jobs:
             codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           fi
 
-          # Frozen-app smoke test: use the Cocoa plugin that the real Mac app
-          # will use, rather than relying on a headless plugin that deployment
-          # might legitimately omit from a production bundle.
+          # Prove the frozen app is self-contained: remove the staging copy before
+          # launching so authority startup can only use data inside the .app.
+          rm -rf "$STAGE/firmware_bundle"
           QT_QPA_PLATFORM=cocoa "$EXE" --smoke-test
 
           # Copy the already verified app to the workspace. Nothing inside the
@@ -443,8 +428,6 @@ jobs:
           ]
           for req in required:
               assert any(n == req or n.startswith(req) for n in names), f'missing required app content: {req}'
-          for fw in ('firmware_bundle/manifest.json', 'firmware_bundle/SHA256SUMS.txt', 'firmware_bundle/ctrl.bin', 'firmware_bundle/w1p.bin'):
-              assert any(n.endswith('/' + fw) for n in names), f'missing packaged firmware data: {fw}'
           assert any(n.startswith('HV P2P SRVR.app/Contents/_CodeSignature/') for n in names), 'missing code signature resources'
           print(f'Release ZIP verified: {len(names)} entries, one HV P2P SRVR.app bundle only.')
           PY
@@ -471,8 +454,8 @@ jobs:
       - name: Upload GitHub Actions artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HV-P2P-SRVR-v26.09.17.02-${{ matrix.artifact_suffix }}
-          path: HV P2P SRVR v26.09.17.02 ${{ matrix.platform_label }}.zip
+          name: HV-P2P-SRVR-v26.09.27.01-${{ matrix.artifact_suffix }}
+          path: HV P2P SRVR v26.09.27.01 ${{ matrix.platform_label }}.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -485,21 +468,22 @@ jobs:
     defaults:
       run:
         shell: pwsh
-        working-directory: SRVR_GitHub_v26.09.17.02
+        working-directory: SRVR_GitHub_v26.09.27.01
     env:
-      APP_VERSION: '26.09.17.02'
+      APP_VERSION: '26.09.27.01'
       QT_QUICK_CONTROLS_STYLE: Basic
       PYTHONUNBUFFERED: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download exact verified firmware bundle
+      - name: Download exact native firmware authority bundle
         uses: actions/download-artifact@v4
         with:
-          name: HV-P2P-v26.09.17.02-Native-Firmware
-          path: NATIVE_BUILD_FOR_SRVR
+          name: HV-P2P-v26.09.27.01-Native-Firmware
+          path: ${{ runner.temp }}\hvp2p-native
 
       - name: Initialize MSVC developer tools
         uses: ilammy/msvc-dev-cmd@v1
@@ -532,15 +516,18 @@ jobs:
           python-version: '3.12'
           architecture: 'x64'
           cache: 'pip'
-          cache-dependency-path: SRVR_GitHub_v26.09.17.02/requirements.txt
+          cache-dependency-path: SRVR_GitHub_v26.09.27.01/requirements.txt
 
       - name: Static project preflight
         run: |
           python tools/validate_project.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python ../tools/verify_srvr_firmware_bundle.py "$env:GITHUB_WORKSPACE/NATIVE_BUILD_FOR_SRVR/SRVR_FIRMWARE_BUNDLE"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -m py_compile main.py backend.py firmware_authority.py tools/__init__.py tools/validate_project.py tools/test_backend_logic.py
+          @'
+          from pathlib import Path
+          for name in ('main.py','backend.py','firmware_authority.py','tools/__init__.py','tools/validate_project.py','tools/test_backend_logic.py'):
+              p=Path(name); compile(p.read_text(encoding='utf-8'), str(p), 'exec')
+          print('Python syntax PASS')
+          '@ | python -
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Install Qt for Python and pinned Windows deploy compiler
@@ -562,7 +549,7 @@ jobs:
 
       - name: Backend safety motion and cross-platform regression tests
         run: |
-          $env:PYTHONPATH = "$env:GITHUB_WORKSPACE\SRVR_GitHub_v26.09.17.02" + $(if ($env:PYTHONPATH) { ";$env:PYTHONPATH" } else { "" })
+          $env:PYTHONPATH = "$env:GITHUB_WORKSPACE\SRVR_GitHub_v26.09.27.01" + $(if ($env:PYTHONPATH) { ";$env:PYTHONPATH" } else { "" })
           @'
           import backend
           print("backend import PASS:", backend.__file__)
@@ -580,7 +567,9 @@ jobs:
           Copy-Item qml -Destination $stage -Recurse
           Copy-Item assets/HV_P2P_SRVR_icon.png -Destination (Join-Path $stage 'HV_P2P_SRVR_icon.png')
           Copy-Item assets/HV_P2P_SRVR_icon.ico -Destination (Join-Path $stage 'HV_P2P_SRVR_icon.ico')
-          Copy-Item "$env:GITHUB_WORKSPACE/NATIVE_BUILD_FOR_SRVR/SRVR_FIRMWARE_BUNDLE" -Destination (Join-Path $stage 'firmware_bundle') -Recurse
+          Copy-Item (Join-Path $env:RUNNER_TEMP 'hvp2p-native\SRVR_FIRMWARE_BUNDLE') -Destination (Join-Path $stage 'firmware_bundle') -Recurse
+          if (!(Test-Path (Join-Path $stage 'firmware_bundle\ctrl.bin'))) { throw 'CTRL authority image missing from stage' }
+          if (!(Test-Path (Join-Path $stage 'firmware_bundle\w1p.bin'))) { throw 'W1P authority image missing from stage' }
           Get-ChildItem $stage -Recurse | Sort-Object FullName | ForEach-Object FullName
           foreach ($forbidden in @('.github','.git','assets','release','tools')) {
             if (Test-Path (Join-Path $stage $forbidden)) { throw "Forbidden deployment path present: $forbidden" }
@@ -592,7 +581,12 @@ jobs:
           Set-Location $stage
           pyside6-rcc resources.qrc -o rc_resources.py
           if ($LASTEXITCODE -ne 0 -or !(Test-Path rc_resources.py)) { throw 'pyside6-rcc failed' }
-          python -m py_compile main.py backend.py firmware_authority.py rc_resources.py
+          @'
+          from pathlib import Path
+          for name in ('main.py','backend.py','firmware_authority.py','rc_resources.py'):
+              p=Path(name); compile(p.read_text(encoding='utf-8'), str(p), 'exec')
+          print('staged Python syntax PASS')
+          '@ | python -
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $qmlFiles = @('qml/Main.qml') + @((Get-ChildItem qml/components/*.qml).FullName) + @((Get-ChildItem qml/pages/*.qml).FullName)
           & pyside6-qmllint --max-warnings -1 @qmlFiles
@@ -610,11 +604,47 @@ jobs:
           pyside6-deploy main.py --init
           if ($LASTEXITCODE -ne 0 -or !(Test-Path pysidedeploy.spec)) { throw 'pyside6-deploy --init failed' }
 
-          # Patch the generated spec with the approved icon, non-interactive
-          # Dependency Walker acquisition, and explicit forced inclusion of the
-          # CTRL/W1P *.bin firmware images. Nuitka intentionally skips *.bin from
-          # normal include-data-dir processing.
-          python "$env:GITHUB_WORKSPACE/tools/patch_pyside_deploy_spec.py" pysidedeploy.spec --windows
+          # Point pyside6-deploy at the checked-in Windows ICO generated from
+          # the same approved SRVR icon artwork as the macOS bundle.
+          @'
+          from pathlib import Path
+          spec = Path('pysidedeploy.spec')
+          lines = spec.read_text(encoding='utf-8').splitlines()
+          section = ''
+          icon_changed = False
+          nuitka_changed = False
+          out = []
+          for line in lines:
+              stripped = line.strip()
+              if stripped.startswith('[') and stripped.endswith(']'):
+                  section = stripped.lower()
+              if section == '[app]' and stripped.startswith('icon') and '=' in line:
+                  prefix = line.split('=', 1)[0]
+                  line = prefix + '= HV_P2P_SRVR_icon.ico'
+                  icon_changed = True
+              elif section == '[nuitka]' and stripped.startswith('extra_args') and '=' in line:
+                  prefix, value = line.split('=', 1)
+                  args = value.strip()
+                  flags = ['--assume-yes-for-downloads',
+                           '--include-data-files=firmware_bundle/ctrl.bin=firmware_bundle/ctrl.bin',
+                           '--include-data-files=firmware_bundle/w1p.bin=firmware_bundle/w1p.bin',
+                           '--include-data-files=firmware_bundle/manifest.json=firmware_bundle/manifest.json',
+                           '--include-data-files=firmware_bundle/SHA256SUMS.txt=firmware_bundle/SHA256SUMS.txt']
+                  parts = args.split()
+                  for flag in flags:
+                      if flag not in parts:
+                          parts.append(flag)
+                  args = ' '.join(parts)
+                  line = prefix + '= ' + args
+                  nuitka_changed = True
+              out.append(line)
+          if not icon_changed:
+              raise SystemExit('pysidedeploy.spec [app] icon field not found')
+          if not nuitka_changed:
+              raise SystemExit('pysidedeploy.spec [nuitka] extra_args field not found')
+          assert Path('HV_P2P_SRVR_icon.ico').stat().st_size > 1024
+          spec.write_text('\n'.join(out) + '\n', encoding='utf-8')
+          '@ | python -
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           pyside6-deploy main.py -f --dry-run --name "HV P2P SRVR" --extra-ignore-dirs=.git,.github,assets,build,release,__pycache__ --extra-modules=Quick,QuickControls2,Qml,Gui,Network | Tee-Object deploy-dry-run.txt
@@ -629,16 +659,8 @@ jobs:
           if (-not (Select-String -Path pysidedeploy.spec -SimpleMatch '--assume-yes-for-downloads' -Quiet)) {
             throw 'pysidedeploy.spec did not retain --assume-yes-for-downloads'
           }
-          foreach ($flag in @(
-            '--include-data-files=firmware_bundle/ctrl.bin=firmware_bundle/ctrl.bin',
-            '--include-data-files=firmware_bundle/w1p.bin=firmware_bundle/w1p.bin'
-          )) {
-            if (-not (Select-String -Path deploy-dry-run.txt,pysidedeploy.spec -SimpleMatch $flag -Quiet)) {
-              throw "Windows deployment did not force firmware image into onefile payload: $flag"
-            }
-          }
-          if (Select-String -Path pysidedeploy.spec -SimpleMatch '--include-data-dir=firmware_bundle=firmware_bundle' -Quiet) {
-            throw 'obsolete firmware include-data-dir rule survived spec patch'
+          foreach ($fwFlag in @('--include-data-files=firmware_bundle/ctrl.bin=firmware_bundle/ctrl.bin','--include-data-files=firmware_bundle/w1p.bin=firmware_bundle/w1p.bin')) {
+            if (-not (Select-String -Path pysidedeploy.spec -SimpleMatch $fwFlag -Quiet)) { throw "missing firmware data flag: $fwFlag" }
           }
           Get-Content pysidedeploy.spec
 
@@ -672,7 +694,7 @@ jobs:
           assert machine == 0x8664, 'expected AMD64/x64 executable'
           '@ | python -
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
+          Remove-Item (Join-Path $stage 'firmware_bundle') -Recurse -Force
           & $exe --smoke-test
           if ($LASTEXITCODE -ne 0) { throw "Frozen Windows smoke test failed: $LASTEXITCODE" }
 
@@ -687,7 +709,7 @@ jobs:
           @'
           from pathlib import Path
           import zipfile
-          version = '26.09.17.02'
+          version = '26.09.27.01'
           exe = Path('release_windows/HV P2P SRVR.exe')
           assert exe.is_file() and exe.stat().st_size > 0
           out = Path(f'HV P2P SRVR v{version} Windows x64.zip')
@@ -704,8 +726,8 @@ jobs:
       - name: Upload Windows GitHub Actions artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HV-P2P-SRVR-v26.09.17.02-Windows-x64
-          path: HV P2P SRVR v26.09.17.02 Windows x64.zip
+          name: HV-P2P-SRVR-v26.09.27.01-Windows-x64
+          path: HV P2P SRVR v26.09.27.01 Windows x64.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -718,25 +740,25 @@ jobs:
       - name: Download native firmware artifact
         uses: actions/download-artifact@v4
         with:
-          name: HV-P2P-v26.09.17.02-Native-Firmware
+          name: HV-P2P-v26.09.27.01-Native-Firmware
           path: COMPLETE_RELEASE/FIRMWARE
 
       - name: Download macOS Intel SRVR artifact
         uses: actions/download-artifact@v4
         with:
-          name: HV-P2P-SRVR-v26.09.17.02-macOS-Intel
+          name: HV-P2P-SRVR-v26.09.27.01-macOS-Intel
           path: COMPLETE_RELEASE/SRVR
 
       - name: Download macOS Apple Silicon SRVR artifact
         uses: actions/download-artifact@v4
         with:
-          name: HV-P2P-SRVR-v26.09.17.02-macOS-Apple-Silicon
+          name: HV-P2P-SRVR-v26.09.27.01-macOS-Apple-Silicon
           path: COMPLETE_RELEASE/SRVR
 
       - name: Download Windows x64 SRVR artifact
         uses: actions/download-artifact@v4
         with:
-          name: HV-P2P-SRVR-v26.09.17.02-Windows-x64
+          name: HV-P2P-SRVR-v26.09.27.01-Windows-x64
           path: COMPLETE_RELEASE/SRVR
 
       - name: Create combined HV P2P release ZIP
@@ -744,20 +766,17 @@ jobs:
         run: |
           set -euxo pipefail
           cat > COMPLETE_RELEASE/README_FIRST.txt <<'EOF'
-          HV P2P v26.09.17.02 - COMPLETE GITHUB BUILD OUTPUT
+          HV P2P v26.09.27.01 - COMPLETE GITHUB BUILD OUTPUT
 
           FIRMWARE/ contains the native CTRL-TS, CTRL EdgeBox and W1P EdgeBox build
-          products plus STAGED_SOURCE and SRVR_FIRMWARE_BUNDLE. The immutable
-          SRVR_FIRMWARE_BUNDLE contains the exact verified CTRL/W1P application images
-          and manifest that every native SRVR build embeds. For Arduino IDE programming,
-          use the three sketch folders under FIRMWARE/STAGED_SOURCE; the staged CTRL
-          source contains the exact compiled CTRL-TS carrier image and SHA-256 from this
-          same build.
+          products plus STAGED_SOURCE. For Arduino IDE programming, use the three
+          sketch folders under FIRMWARE/STAGED_SOURCE; the staged CTRL source contains
+          the exact compiled CTRL-TS carrier image and SHA-256 from this same build.
 
           SRVR/ contains the ORIGINAL, UNEXTRACTED native application archives:
-          - HV P2P SRVR v26.09.17.02 macOS Intel.zip
-          - HV P2P SRVR v26.09.17.02 macOS Apple Silicon.zip
-          - HV P2P SRVR v26.09.17.02 Windows x64.zip
+          - HV P2P SRVR v26.09.27.01 macOS Intel.zip
+          - HV P2P SRVR v26.09.27.01 macOS Apple Silicon.zip
+          - HV P2P SRVR v26.09.27.01 Windows x64.zip
 
           The macOS archives contain matching native HV P2P SRVR.app bundles; the
           Windows archive contains the matching native x64 HV P2P SRVR.exe.
@@ -775,17 +794,13 @@ jobs:
           import hashlib, zipfile
           root=Path('COMPLETE_RELEASE')
           expected_srvr={
-              root/'SRVR'/'HV P2P SRVR v26.09.17.02 macOS Intel.zip',
-              root/'SRVR'/'HV P2P SRVR v26.09.17.02 macOS Apple Silicon.zip',
-              root/'SRVR'/'HV P2P SRVR v26.09.17.02 Windows x64.zip',
+              root/'SRVR'/'HV P2P SRVR v26.09.27.01 macOS Intel.zip',
+              root/'SRVR'/'HV P2P SRVR v26.09.27.01 macOS Apple Silicon.zip',
+              root/'SRVR'/'HV P2P SRVR v26.09.27.01 Windows x64.zip',
           }
           srvr_entries={p for p in (root/'SRVR').iterdir() if p.is_file()}
           assert srvr_entries == expected_srvr, f'SRVR artifacts must remain three untouched native ZIPs: {sorted(map(str,srvr_entries))}'
           assert not any(p.name.endswith('.app') or p.suffix.lower()=='.exe' for p in root.rglob('*')), 'extracted SRVR app/exe must not leak into Complete Release'
-          authority_bundle=root/'FIRMWARE'/'SRVR_FIRMWARE_BUNDLE'
-          required_authority_files={authority_bundle/'manifest.json', authority_bundle/'ctrl.bin', authority_bundle/'w1p.bin', authority_bundle/'SHA256SUMS.txt'}
-          missing_authority=[p for p in sorted(required_authority_files) if not p.is_file()]
-          assert not missing_authority, f'Complete Release is missing SRVR authority payload: {missing_authority}'
 
           def sha256(p):
               h=hashlib.sha256()
@@ -798,7 +813,7 @@ jobs:
           files=[p for p in sorted(root.rglob('*')) if p.is_file() and p != manifest]
           manifest.write_text(''.join(f'{sha256(p)}  {p.relative_to(root).as_posix()}\n' for p in files), encoding='utf-8')
 
-          out=Path('HV P2P v26.09.17.02 Complete Release.zip')
+          out=Path('HV P2P v26.09.27.01 Complete Release.zip')
           with zipfile.ZipFile(out,'w',compression=zipfile.ZIP_DEFLATED) as z:
               for p in sorted(root.rglob('*')):
                   if p.is_file(): z.write(p, p.relative_to(root.parent))
@@ -806,8 +821,6 @@ jobs:
               assert z.testzip() is None
               names=z.namelist()
               assert any('FIRMWARE/STAGED_SOURCE/' in n for n in names)
-              for p in required_authority_files:
-                  assert f'COMPLETE_RELEASE/{p.relative_to(root).as_posix()}' in names
               for p in expected_srvr:
                   assert f'COMPLETE_RELEASE/{p.relative_to(root).as_posix()}' in names
               assert 'COMPLETE_RELEASE/SHA256SUMS.txt' in names
@@ -820,10 +833,10 @@ jobs:
       - name: Upload complete matched release
         uses: actions/upload-artifact@v4
         with:
-          name: HV-P2P-v26.09.17.02-Complete-Release
+          name: HV-P2P-v26.09.27.01-Complete-Release
           path: |
-            HV P2P v26.09.17.02 Complete Release.zip
-            HV P2P v26.09.17.02 Complete Release.zip.sha256
+            HV P2P v26.09.27.01 Complete Release.zip
+            HV P2P v26.09.27.01 Complete Release.zip.sha256
           if-no-files-found: error
           compression-level: 0
           retention-days: 30

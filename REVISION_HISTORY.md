@@ -1,19 +1,20 @@
-# HV P2P Native-Build Revision History
+# HV P2P Revision History
 
-- **v26.08.31.01** — commissioning/native-build baseline.
-- **v26.08.31.02** — generated LVGL configuration and required font set for CI.
-- **v26.08.31.03** — ESP32 Arduino 3.3.8 / LVGL compile compatibility corrections.
-- **v26.08.31.04** — CTRL-TS OTA block-handler const-correctness and `Update.write` compatibility.
-- **v26.08.31.05** — `Waveshare_ST7262_LVGL` / `ESP32_IO_Expander 0.0.3` CH422G address-symbol compatibility patch; CI fails closed if the expected vendor API is absent.
-- **v26.08.31.06** — unified root GitHub Actions workflow builds the complete matched release: native CTRL-TS/CTRL/W1P firmware, macOS Intel SRVR app, and combined complete-release artifact. This is the audited authoritative pre-fix baseline.
-- **v26.08.31.07** — first audit safety/build hardening set: independent 650 ms W1P VEL-command deadman; fail-closed W1P OTA/reboot/NVS safe-service gate; CTRL/W1P app OTA content-role verification; exact Waveshare dependency commit pin. Approved SRVR/CTRL-TS visual design unchanged.
-- **v26.08.31.08** — completes remaining v26.08.31.06 audit recommendations: transactional safe W1P local-IP readdress from the existing SRVR Setup field, including lost-ACK verification and automatic previous-IP rollback; atomic/recoverable SRVR `config.json`; true Free-D `u24` lens output; incoming Free-D checksum validation; stable/versioned macOS bundle metadata; and exact Complete Release ZIP/SRVR-ZIP preservation with internal/external SHA-256 manifests.
-- **v26.08.31.09** — locked SRVR Run/Setup operator revision: two-line HV P2P/SRVR logo, five-second two-step confirmation for Run Save/Recall/Slip actions, corrected Run System/Position alignment, revised Setup diagnostics/CTRL-TS presentation and Motion Profiles spacing, plus fail-safe SRVR Virtual Position Source for CTRL/CTRL-TS demonstrations. The issued .09 source pack reached CI but did not produce an authoritative compiled release.
-- **v26.08.31.10** — build-correction revision for .09. Virtual mode now latches the local software Servo Enable inhibit independently of hardware-output suppression, and the Virtual backend regression establishes its own neutral joystick/calibration test state. Locked .09 Run/Setup visuals and control semantics are unchanged.
-- **v26.08.31.11** — numbering-only draft designation for the cross-platform revision; withdrawn before authoritative build because the release date had advanced to 2026-09-04. Superseded by v26.09.04.01 with no functional change.
-- **v26.09.04.01** — first correctly dated cross-platform SRVR/build-hardening source revision: audited and regression-locked the existing Power/Speed semantics, added native Windows config/FileDialog path handling, and expanded GitHub CI/Complete Release to macOS Intel, macOS Apple Silicon and Windows x64. Windows CI failed before producing an authoritative release because Nuitka required Dependency Walker but the non-interactive runner declined the download prompt; this revision is superseded by v26.09.04.02.
-- **v26.09.04.02** — Windows CI build-correction revision. Functional application/firmware behaviour and locked Run/Setup UI are unchanged from v26.09.04.01. Windows deployment now initializes the MSVC developer environment (including `dumpbin`), pins Nuitka 4.2, injects `--assume-yes-for-downloads` into the generated `pysidedeploy.spec`, and fails the dry-run gate unless that flag is present in the actual Nuitka command.
-- **v26.09.04.03** — Windows CI probe correction. v26.09.04.02 successfully initialized the x64 MSVC environment and located `dumpbin.exe`, but its validation used `dumpbin /?` and incorrectly treated that help-mode exit status as a tool failure. The probe now runs `dumpbin /headers` against the runner's real `cmd.exe`, captures the native exit code after the process completes, and requires a recognizable PE/x64 header before deployment. Nuitka 4.2 and `--assume-yes-for-downloads` remain unchanged. Application/firmware behaviour and locked Run/Setup UI are unchanged.
-- **v26.09.14.02** — Corrective native CI revision of v26.09.14.01: fixes Arduino ESP32 core 3.3.8 `Print.h` `HEX` macro collision in the shared CTRL/W1P SRVR-authority SHA helper by renaming the lookup symbol to `HEX_DIGITS`; adds a regression guard; otherwise preserves the complete v26.09.14.01 OTA architecture, locked Run/Setup UI, W1P safety gates/watchdog, motion behavior and cross-platform build requirements.
-- **v26.09.14.01** — SRVR-authoritative firmware convergence. Adds immutable role-specific CTRL/W1P firmware bundle/service, startup version+running-SHA convergence, no automatic downgrade, validated inactive-partition OTA, W1P stopped/braked service-gate reuse, CTRL-before-CTRL-TS sequencing, firmware-first three-platform SRVR packaging, authority/bundle regression tests and one-time bootstrap documentation. Approved Run/Setup UI and established Power/Speed behavior remain locked; v26.09.04.03 Windows x64 CI fixes are retained.
-- **v26.09.17.02** — CTRL/CTRL-TS RS485 commissioning correction and splash-rendering fix. Live v26.09.15.02 testing proved HELLO/version traffic worked but updater replies were lost at FW_BEGIN/0%. The transport now uses 4096-byte UART RX buffers, 1024-byte firmware blocks, 2.5 ms master/slave turnaround guards, a 3 s/5 s retry window, idempotent lost-ACK/result handling and boot-time updater/reboot servicing. CTRL-TS splash rendering now auto-rotates portrait JPEGs and aspect-fits/centres arbitrary artwork into 800x480. A final deep-audit correction makes CTRL's HMI delivery cache transactional so packets refused while CTRL-TS is incompatible cannot delay the first full display refresh after reconnect. W1P/SRVR/locked Run+Setup behavior remains preserved.
+- **v26.08.31.01 - v26.09.04.03** — commissioning, safety, locked Run/Setup UI,
+  Virtual Position Source, Speed/Power semantics and cross-platform native-build
+  baseline. v26.09.04.03 is the surviving user-uploaded source used as the base
+  for the current reconstruction.
+- **v26.09.14.x - v26.09.15.02** — SRVR-authoritative CTRL/W1P automatic OTA,
+  exact SHA/identity verification, stale W1P session fail-closed handling,
+  explicit Nuitka firmware data inclusion and non-dirty native-build pipeline.
+- **v26.09.17.01 - v26.09.17.02** — CTRL <-> CTRL-TS RS485 updater hardening:
+  larger UART buffers, smaller blocks, conservative turnaround, bounded retries,
+  idempotent update completion/reboot, startup servicing, reconnect refresh and
+  corrected splash aspect/orientation rendering.
+- **v26.09.20.01** — W1P <-> Leadshine hardening: 2.0 ms Modbus inter-frame
+  margin, bounded no-response configuration sweep and safe read-only 38400/8N2
+  factory-framing diagnostic.
+- **v26.09.27.01** — current reconstructed release. The generated v26.09.20.01
+  attachment expired and its exact bytes were unavailable, so its later change
+  contracts were reconstructed on the surviving v26.09.04.03 source and audited
+  again under a new version identity. Locked Run/Setup QML remains unchanged.

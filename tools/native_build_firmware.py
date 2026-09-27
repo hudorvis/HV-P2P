@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
-"""Build the three HV P2P device firmwares in dependency order.
+"""Build native HV P2P firmware in dependency order without mutating source.
 
-This script does not install Arduino cores/libraries.  The GitHub Actions workflow
-in this release installs the pinned toolchain, then calls this script.
-
-Order is important:
-  1. Compile CTRL-TS native application.
-  2. Embed that exact .ino.bin + SHA-256 in a *staged copy* of CTRL source.
-  3. Compile CTRL, which is impossible from the checked-in source build guard.
+GitHub Actions is the authoritative native compiler. Order:
+  1. CTRL-TS native application.
+  2. Embed that exact CTRL-TS app/hash into an isolated CTRL source copy.
+  3. Compile CTRL.
   4. Compile W1P.
-  5. Package native build products and a SHA-256 manifest.
-  6. Create and verify the immutable SRVR CTRL/W1P firmware bundle.
-
-The checked-in source tree is never mutated by a successful build.
+  5. Verify retained role/target/version identity tokens.
+  6. Build immutable SRVR_FIRMWARE_BUNDLE for CTRL and W1P.
+  7. Preserve only clean staged Arduino source and native outputs outside checkout.
 """
 from __future__ import annotations
 
@@ -21,30 +17,26 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
 import tempfile
 
-VER = "26.09.17.02"
+VER = "26.09.27.01"
 SEMVER = f"v{VER}"
 CTRL_SLOT = 0x600000
 HMI_SLOT = 0x380000
+BUNDLE_SCHEMA = "hv-p2p-firmware-manifest-v1"
+BUNDLE_AUTHORITY = "HV_P2P_SRVR"
+EDGEBOX_TARGET = "EDGEBOX_ESP100"
 WAVESHARE_ST7262_LVGL_COMMIT = os.environ.get(
-    "WAVESHARE_ST7262_LVGL_COMMIT",
-    "593775b89ebfd2d411df3eadba7bc382767ed4a4",
+    "WAVESHARE_ST7262_LVGL_COMMIT", "593775b89ebfd2d411df3eadba7bc382767ed4a4"
 )
-
-# Espressif Arduino core 3.3.8 exposes the EdgeBox board but defaults it to 4 MB.
-# The physical EdgeBox-ESP-100 is 16 MB, so FlashSize=16M is mandatory here.
 EDGEBOX_FQBN = (
     "esp32:esp32:Edgebox-ESP-100:"
     "FlashSize=16M,FlashMode=qio,PSRAM=disabled,CPUFreq=240,"
     "CDCOnBoot=default,USBMode=default,UploadMode=default,UploadSpeed=921600"
 )
-# The Waveshare board is ESP32-S3N16R8.  The project uses a local dual-OTA
-# partitions.csv and OPI PSRAM for the 800x480 LVGL display stack.
 HMI_FQBN = (
     "esp32:esp32:esp32s3:"
     "FlashSize=16M,FlashMode=qio,PSRAM=opi,CPUFreq=240,"
@@ -53,11 +45,15 @@ HMI_FQBN = (
 )
 
 
+def _clean_env() -> dict[str, str]:
+    env = dict(os.environ)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    return env
+
+
 def run(cmd: list[str], *, cwd: Path | None = None) -> None:
     print("+", " ".join(str(x) for x in cmd), flush=True)
-    env = os.environ.copy()
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
-    subprocess.run(cmd, cwd=cwd, check=True, env=env)
+    subprocess.run(cmd, cwd=cwd, check=True, env=_clean_env())
 
 
 def sha256(path: Path) -> str:
@@ -68,33 +64,21 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def snapshot_checkout(root: Path, output: Path) -> dict[str, str]:
-    """Hash every checked-out file except .git and the explicit generated output tree."""
+def source_snapshot(root: Path) -> dict[str, str]:
+    """Hash all checkout files so native compilation cannot silently dirty source."""
+    ignored_parts = {".git", "__pycache__"}
     snap: dict[str, str] = {}
-    output_in_root = output == root or root in output.parents
-    for p in sorted(x for x in root.rglob("*") if x.is_file()):
-        if ".git" in p.relative_to(root).parts:
+    for p in sorted(root.rglob("*")):
+        if not p.is_file() or any(part in ignored_parts for part in p.parts):
             continue
-        if output_in_root and (p == output or output in p.parents):
-            continue
-        snap[p.relative_to(root).as_posix()] = sha256(p)
+        rel = p.relative_to(root).as_posix()
+        snap[rel] = sha256(p)
     return snap
 
 
-def remove_generated_stage_outputs(stage_dir: Path) -> None:
-    # arduino-cli --export-binaries may leave build/<fqbn>/... inside the staged
-    # sketch directory. Those are generated duplicates, not staged source.
-    for name in ("build", "__pycache__"):
-        for p in list(stage_dir.rglob(name)):
-            if p.is_dir():
-                shutil.rmtree(p)
-
-
 def require_binary_token(path: Path, token: str, role: str) -> None:
-    raw = path.read_bytes()
-    encoded = token.encode("ascii")
-    if encoded not in raw:
-        raise SystemExit(f"ERROR: {role} compiled application is missing retained build identity token: {token}")
+    if token.encode("ascii") not in path.read_bytes():
+        raise SystemExit(f"ERROR: {role} application missing retained identity token: {token}")
 
 
 def find_app_bin(build_dir: Path, sketch_stem: str) -> Path:
@@ -106,11 +90,8 @@ def find_app_bin(build_dir: Path, sketch_stem: str) -> Path:
         if name.endswith(".ino.bin") or name == f"{sketch_stem.lower()}.bin":
             candidates.append(p)
     if not candidates:
-        # Some arduino-cli versions name the app simply <sketch>.bin.
-        candidates = [
-            p for p in build_dir.rglob("*.bin")
-            if not any(x in p.name.lower() for x in ("bootloader", "partitions", "merged"))
-        ]
+        candidates = [p for p in build_dir.rglob("*.bin")
+                      if not any(x in p.name.lower() for x in ("bootloader", "partitions", "merged"))]
     if len(candidates) != 1:
         raise RuntimeError(f"expected one application binary in {build_dir}, got: {candidates}")
     return candidates[0]
@@ -120,8 +101,7 @@ def copy_build_products(build_dir: Path, out_dir: Path, prefix: str) -> list[Pat
     out_dir.mkdir(parents=True, exist_ok=True)
     copied = []
     for src in sorted(build_dir.rglob("*.bin")):
-        suffix = src.name
-        dest = out_dir / f"{prefix}__{suffix}"
+        dest = out_dir / f"{prefix}__{src.name}"
         shutil.copy2(src, dest)
         copied.append(dest)
     return copied
@@ -129,18 +109,62 @@ def copy_build_products(build_dir: Path, out_dir: Path, prefix: str) -> list[Pat
 
 def compile_sketch(cli: str, sketch_dir: Path, fqbn: str, build_dir: Path, max_size: int | None = None) -> Path:
     build_dir.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        cli, "compile", "--fqbn", fqbn,
-        "--warnings", "all",
-        "--export-binaries",
-        "--output-dir", str(build_dir),
-    ]
+    cmd = [cli, "compile", "--fqbn", fqbn, "--warnings", "all",
+           "--export-binaries", "--output-dir", str(build_dir)]
     if max_size is not None:
         cmd += ["--build-property", f"upload.maximum_size={max_size}"]
     cmd += [str(sketch_dir)]
     run(cmd)
-    app = find_app_bin(build_dir, sketch_dir.name)
-    return app
+    return find_app_bin(build_dir, sketch_dir.name)
+
+
+def bundle_id_for(release: str, ctrl_sha: str, w1p_sha: str) -> str:
+    return hashlib.sha256(f"{release}\nCTRL={ctrl_sha}\nW1P={w1p_sha}\n".encode("ascii")).hexdigest()
+
+
+def make_firmware_bundle(ctrl_app: Path, w1p_app: Path, out_dir: Path) -> dict:
+    """Create the immutable SRVR authority payload from verified native apps."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ctrl_dst = out_dir / "ctrl.bin"
+    w1p_dst = out_dir / "w1p.bin"
+    shutil.copy2(ctrl_app, ctrl_dst)
+    shutil.copy2(w1p_app, w1p_dst)
+    ctrl_sha, w1p_sha = sha256(ctrl_dst), sha256(w1p_dst)
+    bundle_id = bundle_id_for(SEMVER, ctrl_sha, w1p_sha)
+    manifest = {
+        "schema": BUNDLE_SCHEMA,
+        "authority": BUNDLE_AUTHORITY,
+        "bundle_id": bundle_id,
+        "release": SEMVER,
+        "images": {
+            "ctrl": {"file": "ctrl.bin", "role": "CTRL", "target": EDGEBOX_TARGET,
+                     "version": SEMVER, "size": ctrl_dst.stat().st_size, "sha256": ctrl_sha},
+            "w1p": {"file": "w1p.bin", "role": "W1P", "target": EDGEBOX_TARGET,
+                    "version": SEMVER, "size": w1p_dst.stat().st_size, "sha256": w1p_sha},
+        },
+    }
+    manifest_path = out_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    sums = [
+        f"{sha256(ctrl_dst)}  ctrl.bin",
+        f"{sha256(w1p_dst)}  w1p.bin",
+        f"{sha256(manifest_path)}  manifest.json",
+    ]
+    (out_dir / "SHA256SUMS.txt").write_text("\n".join(sums) + "\n", encoding="utf-8")
+    return manifest
+
+
+def _default_output() -> Path:
+    base = Path(os.environ.get("RUNNER_TEMP") or tempfile.gettempdir())
+    return base / "HVP2P_NATIVE_BUILD_ARTIFACTS"
+
+
+def _strip_generated_tree(stage: Path) -> None:
+    for p in list(stage.rglob("*")):
+        if p.is_dir() and (p.name in {"build", "dist", "__pycache__"} or p.name.startswith("cmake-build")):
+            shutil.rmtree(p, ignore_errors=True)
+    for p in list(stage.rglob("*.pyc")):
+        p.unlink(missing_ok=True)
 
 
 def main() -> int:
@@ -148,24 +172,14 @@ def main() -> int:
     ap.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     ap.add_argument("--output", type=Path, default=None)
     ap.add_argument("--arduino-cli", default=os.environ.get("ARDUINO_CLI", "arduino-cli"))
-    ap.add_argument("--skip-source-preflight", action="store_true",
-                    help="Skip source checks only when CI has already run tools/run_all_source_checks.py on this checkout")
     args = ap.parse_args()
 
     root = args.root.resolve()
-    output = (args.output or (root / "NATIVE_BUILD_ARTIFACTS")).resolve()
+    output = (args.output or _default_output()).resolve()
+    if output == root or root in output.parents:
+        raise SystemExit("ERROR: native output must be outside the source checkout")
     if shutil.which(args.arduino_cli) is None:
         raise SystemExit("ERROR: arduino-cli is not installed or not on PATH")
-
-    # Source/package hygiene is a PRE-BUILD gate. Never run it after native
-    # compilation, because successful Arduino/Python work legitimately creates
-    # generated artifacts that are not part of the pristine source package.
-    if not args.skip_source_preflight:
-        env = os.environ.copy()
-        env["PYTHONDONTWRITEBYTECODE"] = "1"
-        print("+", sys.executable, str(root / "tools" / "run_all_source_checks.py"), flush=True)
-        subprocess.run([sys.executable, str(root / "tools" / "run_all_source_checks.py")],
-                       cwd=root, check=True, env=env)
 
     ctrl_name = f"HV_P2P_CTRL_EDGEBOX_v{VER}"
     hmi_name = f"HV_P2P_CTRL_TS_v{VER}"
@@ -173,68 +187,49 @@ def main() -> int:
     for d in (ctrl_name, hmi_name, w1p_name):
         if not (root / d / f"{d}.ino").is_file():
             raise SystemExit(f"ERROR: source sketch missing: {d}")
-
     guard = (root / ctrl_name / "HV_P2P_CTRL_TS_Firmware_Image.h").read_text(errors="replace")
     if '#error "CTRL-TS firmware image has not been staged.' not in guard:
         raise SystemExit("ERROR: source CTRL carrier is not the expected clean build-guard state")
 
-    source_names = (ctrl_name, hmi_name, w1p_name)
-    checkout_before = snapshot_checkout(root, output)
+    before = source_snapshot(root)
+    if output.exists():
+        shutil.rmtree(output)
+    output.mkdir(parents=True)
 
-    output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="hvp2p_native_") as td:
-        stage = Path(td) / "source"
-        build = Path(td) / "build"
+        td = Path(td)
+        stage, build = td / "source", td / "build"
         for d in (ctrl_name, hmi_name, w1p_name):
             shutil.copytree(root / d, stage / d)
 
-        # 1. Native Waveshare image.
         hmi_app = compile_sketch(args.arduino_cli, stage / hmi_name, HMI_FQBN, build / "ctrl_ts")
-        if not 0 < hmi_app.stat().st_size <= HMI_SLOT:
-            raise SystemExit(f"ERROR: CTRL-TS app {hmi_app.stat().st_size} exceeds 0x{HMI_SLOT:X} OTA slot")
-        if hmi_app.read_bytes()[:1] != b"\xE9":
-            raise SystemExit("ERROR: native CTRL-TS output is not an ESP application image")
+        if not 0 < hmi_app.stat().st_size <= HMI_SLOT or hmi_app.read_bytes()[:1] != b"\xE9":
+            raise SystemExit("ERROR: invalid/oversize native CTRL-TS application")
 
-        # 2. Embed the exact native HMI into staged CTRL source.
         staged_header = stage / ctrl_name / "HV_P2P_CTRL_TS_Firmware_Image.h"
         run([sys.executable, str(root / "tools" / "embed_ctrl_ts_firmware.py"), str(hmi_app), SEMVER, str(staged_header)])
         run([sys.executable, str(root / "tools" / "verify_staged_hmi_header.py"), str(staged_header), str(hmi_app)])
 
-        # 3. Build the actual CTRL carrier.  Override the board's stock maximum
-        # sketch size because our local partition CSV deliberately provides 6 MB.
         ctrl_app = compile_sketch(args.arduino_cli, stage / ctrl_name, EDGEBOX_FQBN, build / "ctrl", CTRL_SLOT)
-        if not 0 < ctrl_app.stat().st_size <= CTRL_SLOT:
-            raise SystemExit(f"ERROR: CTRL app {ctrl_app.stat().st_size} exceeds 0x{CTRL_SLOT:X} app slot")
-        require_binary_token(ctrl_app, f"HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_VERSION={SEMVER}", "CTRL")
-        require_binary_token(ctrl_app, "HV_P2P_FW_TARGET=EDGEBOX_ESP100;", "CTRL")
-
-        # 4. W1P uses the same 16 MB dual-OTA partition map.
         w1p_app = compile_sketch(args.arduino_cli, stage / w1p_name, EDGEBOX_FQBN, build / "w1p", CTRL_SLOT)
-        if not 0 < w1p_app.stat().st_size <= CTRL_SLOT:
-            raise SystemExit(f"ERROR: W1P app {w1p_app.stat().st_size} exceeds 0x{CTRL_SLOT:X} app slot")
-        require_binary_token(w1p_app, f"HV_P2P_FW_ROLE=W1P;HV_P2P_FW_VERSION={SEMVER}", "W1P")
-        require_binary_token(w1p_app, "HV_P2P_FW_TARGET=EDGEBOX_ESP100;", "W1P")
+        for role, app in (("CTRL", ctrl_app), ("W1P", w1p_app)):
+            if not 0 < app.stat().st_size <= CTRL_SLOT or app.read_bytes()[:1] != b"\xE9":
+                raise SystemExit(f"ERROR: invalid/oversize {role} application")
+            require_binary_token(app, f"HV_P2P_FW_ROLE={role};", role)
+            require_binary_token(app, f"HV_P2P_FW_TARGET={EDGEBOX_TARGET};", role)
+            require_binary_token(app, f"HV_P2P_FW_VERSION={SEMVER};", role)
 
-        # 5. Preserve the staged source used to produce the binaries, but strip
-        # Arduino's generated export/build directories so the artifact remains
-        # source-only rather than duplicating BINARIES payloads.
-        remove_generated_stage_outputs(stage)
         staged_src = output / "STAGED_SOURCE"
-        if staged_src.exists():
-            shutil.rmtree(staged_src)
         staged_src.mkdir(parents=True)
         for d in (ctrl_name, hmi_name, w1p_name):
             shutil.copytree(stage / d, staged_src / d)
+        _strip_generated_tree(staged_src)
 
         bins_dir = output / "BINARIES"
-        if bins_dir.exists():
-            shutil.rmtree(bins_dir)
         products = []
         products += copy_build_products(build / "ctrl_ts", bins_dir / "CTRL_TS", hmi_name)
         products += copy_build_products(build / "ctrl", bins_dir / "CTRL", ctrl_name)
         products += copy_build_products(build / "w1p", bins_dir / "W1P", w1p_name)
-
-        # Canonical app filenames for straightforward use/verification.
         canonical = {
             "CTRL_TS": bins_dir / f"{hmi_name}.ino.bin",
             "CTRL": bins_dir / f"{ctrl_name}.ino.bin",
@@ -244,53 +239,32 @@ def main() -> int:
             shutil.copy2(src, dst)
             products.append(dst)
 
-        manifest = {
+        fw_bundle = output / "SRVR_FIRMWARE_BUNDLE"
+        bundle_manifest = make_firmware_bundle(ctrl_app, w1p_app, fw_bundle)
+
+        native_manifest = {
             "release": SEMVER,
             "arduino_core": "esp32:esp32@3.3.8",
             "dependencies": {
-                "Waveshare_ST7262_LVGL": {
-                    "repository": "https://github.com/iamfaraz/Waveshare_ST7262_LVGL.git",
-                    "commit": WAVESHARE_ST7262_LVGL_COMMIT,
-                },
-                "lvgl": "8.3.11",
-                "ESP32_Display_Panel": "0.1.6",
-                "ESP32_IO_Expander": "0.0.3",
-                "JPEGDEC": "1.8.4",
+                "Waveshare_ST7262_LVGL": {"repository": "https://github.com/iamfaraz/Waveshare_ST7262_LVGL.git", "commit": WAVESHARE_ST7262_LVGL_COMMIT},
+                "lvgl": "8.3.11", "ESP32_Display_Panel": "0.1.6", "ESP32_IO_Expander": "0.0.3", "JPEGDEC": "1.8.4",
             },
             "fqbn": {"CTRL_TS": HMI_FQBN, "CTRL": EDGEBOX_FQBN, "W1P": EDGEBOX_FQBN},
             "slot_limits": {"CTRL_TS": HMI_SLOT, "CTRL": CTRL_SLOT, "W1P": CTRL_SLOT},
-            "applications": {
-                role: {"file": str(path.relative_to(output)), "size": path.stat().st_size, "sha256": sha256(path)}
-                for role, path in canonical.items()
-            },
+            "applications": {role: {"file": str(path.relative_to(output)), "size": path.stat().st_size, "sha256": sha256(path)} for role, path in canonical.items()},
+            "firmware_bundle": {"directory": "SRVR_FIRMWARE_BUNDLE", "bundle_id": bundle_manifest["bundle_id"]},
         }
-        (output / "NATIVE_BUILD_MANIFEST.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        native_manifest_path = output / "NATIVE_BUILD_MANIFEST.json"
+        native_manifest_path.write_text(json.dumps(native_manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        checksum_targets = [p for p in output.rglob("*") if p.is_file() and p.name != "SHA256SUMS.txt"]
+        (output / "SHA256SUMS.txt").write_text("".join(
+            f"{sha256(p)}  {p.relative_to(output).as_posix()}\n" for p in sorted(checksum_targets)
+        ), encoding="utf-8")
 
-        # 6. Create the exact immutable CTRL/W1P authority bundle that every
-        # native SRVR package must carry.  The helper re-verifies release, role,
-        # target, ESP image identity, size and SHA-256 before copying anything.
-        bundle_dir = output / "SRVR_FIRMWARE_BUNDLE"
-        run([sys.executable, str(root / "tools" / "create_srvr_firmware_bundle.py"),
-             "--native-output", str(output), "--output", str(bundle_dir)])
-        run([sys.executable, str(root / "tools" / "verify_srvr_firmware_bundle.py"), str(bundle_dir)])
-
-        # Authenticate the complete native artifact tree (including staged source
-        # and the exact SRVR firmware bundle). Exclude only this checksum file.
-        sums_path = output / "SHA256SUMS.txt"
-        manifest_lines = []
-        for p in sorted(x for x in output.rglob("*") if x.is_file() and x != sums_path):
-            manifest_lines.append(f"{sha256(p)}  {p.relative_to(output).as_posix()}")
-        sums_path.write_text("\n".join(manifest_lines) + "\n")
-
-        # Do not re-run source-package hygiene after generated native outputs exist.
-        # Instead prove the three authoritative firmware source trees remained
-        # byte-for-byte unchanged throughout staging/compilation.
-        checkout_after = snapshot_checkout(root, output)
-        if checkout_after != checkout_before:
-            changed = sorted(set(checkout_before) | set(checkout_after))
-            changed = [k for k in changed if checkout_before.get(k) != checkout_after.get(k)]
-            raise SystemExit(f"ERROR: native build mutated checked-out source tree: {changed}")
-        print("SOURCE_IMMUTABILITY_PASS")
+    after = source_snapshot(root)
+    if after != before:
+        changed = sorted(set(before) ^ set(after) | {k for k in set(before) & set(after) if before[k] != after[k]})
+        raise SystemExit(f"ERROR: native build mutated source checkout: {changed[:30]}")
 
     print("NATIVE_FIRMWARE_BUILD_PASS")
     print(f"Artifacts: {output}")

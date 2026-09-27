@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
-"""Syntax-check project Python sources without writing __pycache__ files."""
 from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-count = 0
-for path in sorted(ROOT.rglob("*.py")):
-    rel = path.relative_to(ROOT)
-    # Generated/native outputs are never source and must not be syntax checked.
-    if any(part in {"NATIVE_BUILD_ARTIFACTS", "__pycache__", ".git"} for part in rel.parts):
-        continue
-    text = path.read_text(encoding="utf-8", errors="strict")
-    compile(text, str(path), "exec")
-    count += 1
-print(f"PYTHON_SYNTAX_PASS files={count}")
+import sys
+ROOT=Path(__file__).resolve().parents[1]
+files=sorted(p for p in ROOT.rglob("*.py") if "__pycache__" not in p.parts)
+for p in files:
+    try:
+        compile(p.read_text(encoding="utf-8"), str(p), "exec")
+    except Exception as exc:
+        print(f"PYTHON_SYNTAX_FAIL {p.relative_to(ROOT)}: {exc}")
+        raise
+print(f"PYTHON_SYNTAX_PASS {len(files)} files")
