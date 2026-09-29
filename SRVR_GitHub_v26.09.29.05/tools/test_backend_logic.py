@@ -38,23 +38,24 @@ from backend import (
 )
 
 app = QCoreApplication.instance() or QCoreApplication([])
-b = HVP2PBackend(version="26.09.29.04", smoke_test=True)
+b = HVP2PBackend(version="26.09.29.05", smoke_test=True)
+assert b.reverse_joystick is True, "New/reset CTRL joystick direction must default to Inverted"
 
 def healthy_ctrl_status(*, ctrl_ts=1, ads=1, version="vTEST", compatible=1):
     now = time.time()
     b._ctrl_rx_times.clear()
     b._ctrl_rx_times.extend([now - 0.05, now])
     b._handle_ctrl_hmi_status(
-        f"HMI_STATUS|ctrl_ts={int(ctrl_ts)}|ctrl_version=v26.09.29.04|"
-        f"fw_match=1|fw_authority=matched|fw_required=v26.09.29.04|"
-        f"version={version}|required=v26.09.29.04|fw_state=idle|image=1|"
+        f"HMI_STATUS|ctrl_ts={int(ctrl_ts)}|ctrl_version=v26.09.29.05|"
+        f"fw_match=1|fw_authority=matched|fw_required=v26.09.29.05|"
+        f"version={version}|required=v26.09.29.05|fw_state=idle|image=1|"
         f"compatible={int(compatible)}|age_ms=12|ads={int(ads)}"
     )
 
 def healthy_w1p_status(*, pos=0.0, vel=0.0, ip="172.20.1.102"):
     b.w1p.last_seen = time.time()
     b._parse_w1p(
-        f"STATUS POS_M={pos} VEL_MPS={vel} IP={ip} FW=v26.09.29.04 "
+        f"STATUS POS_M={pos} VEL_MPS={vel} IP={ip} FW=v26.09.29.05 "
         "FW_MATCH=1 FW_AUTH=matched ESTOP=0 VEL_WD=0 SERVICE_LOCK=0 "
         "WRITE_EN=0 SW_SRVON=0 SW_SRVON_INHIBIT=1 BRAKE_OUT=0 "
         "RS_STAT=CONNECTED LEAD_CFG=OK MODBUS=1 READY=1 POS_READ=1 "
@@ -111,10 +112,10 @@ try:
     # controller interface and must not be confused with the binary control stream.
     now = time.time()
     b._ctrl_rx_times.extend([now - 0.05, now])
-    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=1|ctrl_version=v26.09.29.04|fw_match=1|fw_authority=matched|fw_required=v26.09.29.04|version=vTEST|required=v26.09.29.04|fw_state=idle|image=1|compatible=1|age_ms=12|ads=1")
+    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=1|ctrl_version=v26.09.29.05|fw_match=1|fw_authority=matched|fw_required=v26.09.29.05|version=vTEST|required=v26.09.29.05|fw_state=idle|image=1|compatible=1|age_ms=12|ads=1")
     assert b.ctrlTsConnected and b.ads1115Connected
     assert b._ctrl_ts_version == "vTEST" and b._ctrl_ts_age_ms == 12
-    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=0|ctrl_version=v26.09.29.04|fw_match=1|fw_authority=matched|fw_required=v26.09.29.04|version=vTEST|required=v26.09.29.04|fw_state=idle|image=1|compatible=0|age_ms=20|ads=0")
+    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=0|ctrl_version=v26.09.29.05|fw_match=1|fw_authority=matched|fw_required=v26.09.29.05|version=vTEST|required=v26.09.29.05|fw_state=idle|image=1|compatible=0|age_ms=20|ads=0")
     assert not b.ctrlTsConnected and not b.ads1115Connected
     # Old CTRL firmware without a fresh explicit ads= field remains compatible:
     # live joystick packets + no ADS fault bit infer a healthy ADS link.
@@ -132,14 +133,14 @@ try:
     # liveness but must invalidate prior W1P authority/RS485 state until a new
     # complete STATUS arrives.
     healthy_ctrl_status(); healthy_w1p_status()
-    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=1|ctrl_version=v26.09.29.04|version=vTEST|age_ms=12|ads=1")
+    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=1|ctrl_version=v26.09.29.05|version=vTEST|age_ms=12|ads=1")
     b._ctrl_axis = 0.0; b._ctrl_flags = 0; b._motion_tick()
     assert b.state.estop_active and not b._ctrl_fw_match, "Missing CTRL FW_MATCH did not fail closed"
     healthy_ctrl_status(); healthy_w1p_status()
     b._parse_w1p("STATUS FW_MATCH=1 ESTOP=0 VEL_WD=0 SERVICE_LOCK=0 WRITE_EN=0")
     assert not b._w1p_status_fresh() and not b._w1p_fw_match and b.winch_rs_status == "Disconnected"
     healthy_w1p_status()
-    b._parse_w1p("HELLO VER=v26.09.29.04")
+    b._parse_w1p("HELLO VER=v26.09.29.05")
     assert not b._w1p_status_fresh() and not b._w1p_fw_match and b.winch_rs_status == "Disconnected"
     healthy_w1p_status()
     # Clear the deliberate safety transition through the required neutral gate
@@ -176,12 +177,12 @@ try:
     b._not_calibrated = True
     b._motion_tick()
     assert not b.state.estop_active, "Not Calibrated incorrectly triggered E-stop"
-    assert 0.0 < b.requested_speed_mps <= (5.0 / 3.6 + 1e-6), b.requested_speed_mps
+    assert 0.0 < abs(b.requested_speed_mps) <= (5.0 / 3.6 + 1e-6), b.requested_speed_mps
 
     # In normal mode the hard Near limit must block outward travel.
     b._not_calibrated = False
     b.state.pos_m = 0.0
-    b._ctrl_axis = -1.0
+    b._ctrl_axis = 1.0 if b.reverse_joystick else -1.0  # command negative/outward velocity at Near
     b._motion_tick()
     assert abs(b.requested_speed_mps) < 1e-9, "Near hard limit allowed outward motion"
 
@@ -374,7 +375,7 @@ try:
     b.resetSetupSettings()
     assert b.setupDraft["drive_modes"][0]["name"] == "Run Saved Mode"
 
-    # v26.09.29.04 Virtual Position Source is a true SRVR demo mode. Setup must
+    # v26.09.29.05 Virtual Position Source is a true SRVR demo mode. Setup must
     # stage it, Apply must activate it, CTRL input may move the simulated position
     # without W1P/EL7 health, and physical W1P feedback must not overwrite it.
     assert b.positionSource == "Encoder"
@@ -979,7 +980,7 @@ try:
     assert backup_cfg.is_file()
     expected_backup = json.loads(backup_cfg.read_text())
     b._config_path.write_text('{broken-json', encoding='utf-8')
-    b2 = HVP2PBackend(version="26.09.29.04", smoke_test=True)
+    b2 = HVP2PBackend(version="26.09.29.05", smoke_test=True)
     try:
         assert json.loads(b2._config_path.read_text()) == expected_backup
     finally:

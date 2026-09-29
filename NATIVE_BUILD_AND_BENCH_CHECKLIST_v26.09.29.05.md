@@ -1,4 +1,4 @@
-# HV P2P v26.09.29.04 Native Build and Bench Checklist
+# HV P2P v26.09.29.05 Native Build and Bench Checklist
 
 ## GitHub Actions gates
 - Source/protocol regression suite passes, including `test_audit_regressions.py`.

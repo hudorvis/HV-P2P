@@ -1,3 +1,8 @@
+# v26.09.29.05
+
+- CI test hotfix only: update direction-sensitive SRVR backend tests for the commissioned default inverted CTRL joystick direction.
+- No intentional runtime control/safety/RS485/UI behaviour change from v26.09.29.04.
+
 # v26.09.29.04
 - Final CTRL analogue-input mapping: AI0/pin 14 = 5 V normally-closed E-stop status; AI1/pin 16 = APEM joystick signal.
 - SGM58031 continuous joystick channel and temporary E-stop sampling channel swapped accordingly; diagnostics/docs/tests updated.

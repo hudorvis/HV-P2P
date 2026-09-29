@@ -1,4 +1,4 @@
-# HV P2P v26.09.29.04 Audit Closure
+# HV P2P v26.09.29.05 Audit Closure
 
 ## Scope
 This release closes the source-level findings from the full v26.09.27.01 audit
