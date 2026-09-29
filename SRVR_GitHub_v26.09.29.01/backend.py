@@ -199,7 +199,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.09.27.01", smoke_test: bool = False):
+    def __init__(self, version="26.09.29.01", smoke_test: bool = False):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -721,8 +721,8 @@ class HVP2PBackend(QObject):
         required_status = {
             "FW_MATCH", "ESTOP", "VEL_WD", "SERVICE_LOCK", "WRITE_EN",
             "SW_SRVON_INHIBIT", "BRAKE_OUT", "RS_STAT", "LEAD_CFG",
-            "MODBUS", "READY", "POS_READ", "IO_READ", "DO1_CFG",
-            "DO4_CFG", "SRDY"
+            "MODBUS", "READY", "POS_READ", "IO_READ", "DO2_CFG",
+            "DO3_CFG", "DO4_CFG", "DO5_CFG", "SRDY"
         }
         if not required_status.issubset(fields):
             return
@@ -778,8 +778,8 @@ class HVP2PBackend(QObject):
             ready = fields.get("READY","0").upper() in ("1","OK","READY","TRUE","ON")
             pos_ok = fields.get("POS_READ","0").upper() in ("1","OK","TRUE","ON")
             io_ok = fields.get("IO_READ","0").upper() in ("1","OK","TRUE","ON")
-            do_ok = fields.get("DO1_CFG","0").upper() in ("1","OK","TRUE","ON")
-            brake_cfg_ok = fields.get("DO4_CFG","1").upper() in ("1","OK","TRUE","ON")
+            do_ok = all(fields.get(key,"0").upper() in ("1","OK","TRUE","ON") for key in ("DO2_CFG","DO3_CFG","DO4_CFG","DO5_CFG"))
+            brake_cfg_ok = fields.get("DO4_CFG","0").upper() in ("1","OK","TRUE","ON")
             srdy = fields.get("SRDY","0").upper() in ("1","OK","READY","TRUE","ON")
             if rs in ("1","OK","CONNECTED") and cfg == "OK" and fb_ok and ready and pos_ok and io_ok and do_ok and brake_cfg_ok and srdy:
                 self.winch_rs_status = "Connected"

@@ -1,5 +1,5 @@
 // ============================================================
-// HV P2P W1P EdgeBox v26.09.27.01
+// HV P2P W1P EdgeBox v26.09.29.01
 // Seeed EdgeBox-ESP-100 Leadshine EL7-RS2000P commissioning interface
 //
 // Purpose:
@@ -47,11 +47,11 @@
 
 // -------------------- Version / identity --------------------
 static const char* FW_NAME    = "HV P2P W1P";
-static const char* FW_VERSION = "v26.09.27.01";
+static const char* FW_VERSION = "v26.09.29.01";
 static const char* NODE_BANNER = "HV_P2P_W1P";
 static const char* HV_AUTH_ROLE = "W1P";
 static const char* HV_AUTH_TARGET = "EDGEBOX_ESP100";
-static const char* HV_AUTH_VERSION = "v26.09.27.01";
+static const char* HV_AUTH_VERSION = "v26.09.29.01";
 
 // -------------------- Network defaults --------------------
 static IPAddress LOCAL_IP(172, 20, 1, 102);
@@ -235,7 +235,7 @@ static const int LOCAL_ESTOP_HEALTHY_LEVEL = HIGH;
 static const int PIN_STATUS_LED = -1;
 
 // -------------------- Leadshine Servo Enable strategy --------------------
-// v26.09.27.01: EdgeBox W5500 + isolated native RS485; corrected EL7 SRV-ON configuration to PA4.00 / P04.00
+// v26.09.29.01: EdgeBox W5500 + isolated native RS485; corrected EL7 SRV-ON configuration to PA4.00 / P04.00
 // Input Selection DI1. MotionStudio confirmed the usable no-extra-wire setup
 // is DI1 = Servo ON Input (SRV-ON), Normally Closed, which reads/writes as
 // 0x83. Do not use the old DI5 / P04.04 path; do not use Normally Open
@@ -351,7 +351,7 @@ static const uint32_t MODBUS_FAULT_POLL_MS = 150;
 static const uint32_t MODBUS_REPLY_TIMEOUT_MS = 50;
 static const uint8_t  MODBUS_READ_RETRIES = 3;
 static const uint32_t MODBUS_INTERFRAME_GAP_US = 2000; // > Modbus fixed 1.75 ms t3.5 recommendation above 19.2 kbps
-// v26.09.27.01: EdgeBox W5500 + isolated native RS485; fail the physical link after two consecutive invalid/no-reply
+// v26.09.29.01: EdgeBox W5500 + isolated native RS485; fail the physical link after two consecutive invalid/no-reply
 // transactions, with a 250 ms stale-reply backstop. Require two valid replies
 // before recovering. The 50 ms reply timeout is still generous at 115200 baud,
 // while reducing the time for a removed CN3 lead to become a safety fault.
@@ -386,7 +386,7 @@ static const float MAX_PROFILE_ACCEL_MPS2 = 20.0f;
 static const float MOTION_ZERO_EPS_MPS = 0.005f;
 static const float DYNAMIC_LEAD_TIME_S = 0.50f;
 static const float DYNAMIC_MIN_LEAD_MPS = 0.05f;
-// v26.09.27.01: EdgeBox W5500 + isolated native RS485; Dynamic mode is a closed cable-speed hold. Joystick sets
+// v26.09.29.01: EdgeBox W5500 + isolated native RS485; Dynamic mode is a closed cable-speed hold. Joystick sets
 // target line speed; this PI trim lets the command nudge above/below the shaped
 // target to hold measured feedback speed more precisely under changing load.
 static const float DYNAMIC_SPEED_KP = 0.14f;
@@ -551,7 +551,7 @@ static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_W1P";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL,CTRL_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_W1P_v*.ino.bin firmware. CTRL/CTRL-TS files are rejected.";
 static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=W1P;";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=W1P;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.09.27.01;";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=W1P;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.09.29.01;";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
@@ -1051,17 +1051,29 @@ static bool modbusWriteSingleRegister(uint8_t slave, uint16_t reg, uint16_t valu
   DriveSerial.write(req, sizeof(req));
   DriveSerial.flush();
 
+  g.last_modbus_exception = 0;
   uint8_t resp[8];
   size_t got = 0;
+  size_t targetLen = sizeof(resp);
   unsigned long t0 = millis();
-  while ((millis() - t0) < MODBUS_REPLY_TIMEOUT_MS && got < sizeof(resp)) {
-    while (DriveSerial.available() && got < sizeof(resp)) resp[got++] = uint8_t(DriveSerial.read());
+  while ((millis() - t0) < MODBUS_REPLY_TIMEOUT_MS && got < targetLen) {
+    while (DriveSerial.available() && got < targetLen) {
+      resp[got++] = uint8_t(DriveSerial.read());
+      if (got >= 2 && resp[1] == uint8_t(0x06 | 0x80)) targetLen = 5;
+    }
     serviceStatusHeartbeatDuringModbusWait();
+    delayMicroseconds(50);
   }
   modbusTransactionFinished();
-  if (got != sizeof(resp)) { noteRsErr(); return false; }
-  uint16_t respCrc = uint16_t(resp[6]) | (uint16_t(resp[7]) << 8);
-  if (modbusCRC16(resp, 6) != respCrc) { noteRsErr(); return false; }
+  if (got != targetLen) { noteRsErr(); return false; }
+  uint16_t respCrc = uint16_t(resp[targetLen-2]) | (uint16_t(resp[targetLen-1]) << 8);
+  if (modbusCRC16(resp, targetLen-2) != respCrc) { noteRsErr(); return false; }
+  if (resp[0] != slave) { noteRsErr(); return false; }
+  if (resp[1] == uint8_t(0x06 | 0x80)) {
+    g.last_modbus_exception = resp[2];
+    noteRsOk();
+    return false;
+  }
   if (memcmp(req, resp, 6) != 0) { noteRsErr(); return false; }
   noteRsOk();
   return true;
@@ -1090,18 +1102,30 @@ static bool modbusWriteMultipleRegisters(uint8_t slave, uint16_t reg, uint16_t c
   DriveSerial.write(req, idx);
   DriveSerial.flush();
 
+  g.last_modbus_exception = 0;
   uint8_t resp[8];
   size_t got = 0;
+  size_t targetLen = sizeof(resp);
   unsigned long t0 = millis();
-  while ((millis() - t0) < MODBUS_REPLY_TIMEOUT_MS && got < sizeof(resp)) {
-    while (DriveSerial.available() && got < sizeof(resp)) resp[got++] = uint8_t(DriveSerial.read());
+  while ((millis() - t0) < MODBUS_REPLY_TIMEOUT_MS && got < targetLen) {
+    while (DriveSerial.available() && got < targetLen) {
+      resp[got++] = uint8_t(DriveSerial.read());
+      if (got >= 2 && resp[1] == uint8_t(0x10 | 0x80)) targetLen = 5;
+    }
     serviceStatusHeartbeatDuringModbusWait();
+    delayMicroseconds(50);
   }
   modbusTransactionFinished();
-  if (got != sizeof(resp)) { noteRsErr(); return false; }
-  uint16_t respCrc = uint16_t(resp[6]) | (uint16_t(resp[7]) << 8);
-  if (modbusCRC16(resp, 6) != respCrc) { noteRsErr(); return false; }
-  if (resp[0] != slave || resp[1] != 0x10 || resp[2] != req[2] || resp[3] != req[3] || resp[4] != req[4] || resp[5] != req[5]) { noteRsErr(); return false; }
+  if (got != targetLen) { noteRsErr(); return false; }
+  uint16_t respCrc = uint16_t(resp[targetLen-2]) | (uint16_t(resp[targetLen-1]) << 8);
+  if (modbusCRC16(resp, targetLen-2) != respCrc) { noteRsErr(); return false; }
+  if (resp[0] != slave) { noteRsErr(); return false; }
+  if (resp[1] == uint8_t(0x10 | 0x80)) {
+    g.last_modbus_exception = resp[2];
+    noteRsOk();
+    return false;
+  }
+  if (resp[1] != 0x10 || resp[2] != req[2] || resp[3] != req[3] || resp[4] != req[4] || resp[5] != req[5]) { noteRsErr(); return false; }
   noteRsOk();
   return true;
 }
@@ -1144,7 +1168,7 @@ static bool driveResetPrEmergencyStop() {
 }
 
 static bool driveSendEmergencyStop() {
-  if (!g.drive_writes_enabled || !g.rs_link_ok) return false;
+  if (!g.drive_writes_enabled) return false;
   bool ok = modbusWriteSingleRegister(DRIVE_MODBUS_ID, REG_PR_CONTROL, PR_EMERGENCY_STOP);
   if (ok) g.pr_estop_latched = true;
   return ok;
@@ -1164,21 +1188,17 @@ static bool driveConfigureMotionProfile() {
 
   const uint16_t accel = accelMsPer1000Rpm(driveAccelLimit);
   const uint16_t decel = accelMsPer1000Rpm(driveDecelLimit);
-  bool ok = true;
-  ok &= modbusWriteSingleRegister(DRIVE_MODBUS_ID, REG_PR0_MODE, PR_MODE_VELOCITY);
-  ok &= modbusWriteSingleRegister(DRIVE_MODBUS_ID, REG_PR0_ACCEL, accel);
-  ok &= modbusWriteSingleRegister(DRIVE_MODBUS_ID, REG_PR0_DECEL, decel);
-  if (ok) {
-    lastConfiguredAccelMps2 = driveAccelLimit;
-    lastConfiguredDecelMps2 = driveDecelLimit;
-    lastConfiguredCrossMps2 = g_drive_crossover_mps2;
-    g.drive_mode_ok = true;
-    noteRsOk();
-  } else {
+  if (!modbusWriteSingleRegister(DRIVE_MODBUS_ID, REG_PR0_MODE, PR_MODE_VELOCITY) ||
+      !modbusWriteSingleRegister(DRIVE_MODBUS_ID, REG_PR0_ACCEL, accel) ||
+      !modbusWriteSingleRegister(DRIVE_MODBUS_ID, REG_PR0_DECEL, decel)) {
     g.drive_mode_ok = false;
-    noteRsErr();
+    return false;
   }
-  return ok;
+  lastConfiguredAccelMps2 = driveAccelLimit;
+  lastConfiguredDecelMps2 = driveDecelLimit;
+  lastConfiguredCrossMps2 = g_drive_crossover_mps2;
+  g.drive_mode_ok = true;
+  return true;
 }
 
 static bool driveWriteVelocityCommandMps(float vel_mps) {
@@ -1191,17 +1211,19 @@ static bool driveWriteVelocityCommandMps(float vel_mps) {
   rpm_f = constrain(rpm_f, -EL7_RATED_MAX_RPM, EL7_RATED_MAX_RPM);
   const int16_t rpm = int16_t(lroundf(rpm_f));
 
-  bool ok = true;
-  ok &= modbusWriteSingleRegister(DRIVE_MODBUS_ID, REG_PR0_VELOCITY, uint16_t(rpm));
-  ok &= modbusWriteSingleRegister(DRIVE_MODBUS_ID, REG_PR_CONTROL, PR_TRIGGER_PATH0);
-  if (!ok) {
+  // Never trigger PR0 unless the new velocity value was positively acknowledged.
+  // A failed velocity write followed by a trigger could execute the previous stale
+  // P09.03 value, so the two writes are deliberately short-circuited.
+  if (!modbusWriteSingleRegister(DRIVE_MODBUS_ID, REG_PR0_VELOCITY, uint16_t(rpm))) {
     g.drive_mode_ok = false;
-    noteRsErr();
+    return false;
+  }
+  if (!modbusWriteSingleRegister(DRIVE_MODBUS_ID, REG_PR_CONTROL, PR_TRIGGER_PATH0)) {
+    g.drive_mode_ok = false;
     return false;
   }
   g.drive_mode_ok = true;
   g.drive_enabled = true; // command path is active; software/internal SRV-ON or physical SON controls torque enable
-  noteRsOk();
   return true;
 }
 
@@ -2004,7 +2026,7 @@ static bool driveAutoEnableReady() {
   if (g.no_motion_feedback_fault && requestingMotion) return false;
 
   if (!g.drive_writes_enabled) {
-    // v26.09.27.01: EdgeBox W5500 + isolated native RS485; only arm from WAIT on a fresh, non-zero joystick command.
+    // v26.09.29.01: EdgeBox W5500 + isolated native RS485; only arm from WAIT on a fresh, non-zero joystick command.
     // Do not re-arm from stale VEL state, and do not arm while the motor is still
     // coasting from a previous PR stop. Once armed, do not drop writes just because
     // feedback velocity becomes non-zero; that caused the observed step/pulse motion.
@@ -2125,7 +2147,7 @@ static void serviceMotionProfile() {
     g.vel_request_mps = 0.0f;
   }
   float target = constrain(g.vel_request_mps, -MAX_CMD_VEL_MPS, MAX_CMD_VEL_MPS);
-  // v26.09.27.01: EdgeBox W5500 + isolated native RS485; predictive hard-limit guard.  SRVR also tapers before
+  // v26.09.29.01: EdgeBox W5500 + isolated native RS485; predictive hard-limit guard.  SRVR also tapers before
   // Near/Far, but W1P applies the same stopping-distance rule locally so a
   // delayed network packet cannot keep driving past an end limit.
   target = limitVelocityForSoftLimits(g.pos_m, target);
@@ -2983,7 +3005,7 @@ void setup() {
   Serial.printf("%s %s\n", FW_NAME, FW_VERSION);
   Serial.printf("[OTA] Build identity: %s\n", HV_UPDATE_BUILD_TOKEN);
   Serial.println("Leadshine EL7-RS2000P command interface (auto-enable under SRVR safety gate)");
-  Serial.println("v26.09.27.01: retains .07 motion/service/OTA safety and adds coordinated safe W1P IP readdress; existing SRVR/safety + joystick-neutral re-arm retained");
+  Serial.println("v26.09.29.01: retains .07 motion/service/OTA safety and adds coordinated safe W1P IP readdress; existing SRVR/safety + joystick-neutral re-arm retained");
   Serial.println("============================================================");
 
   pinMode(PIN_LOCAL_ESTOP, INPUT);

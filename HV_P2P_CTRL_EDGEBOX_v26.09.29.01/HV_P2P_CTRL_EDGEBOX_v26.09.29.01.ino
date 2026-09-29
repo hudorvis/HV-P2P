@@ -16,7 +16,7 @@
 static bool g_ads_inited = false;
 static uint8_t ADS_ADDR = 0x48;
 
-#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.09.27.01"
+#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.09.29.01"
 #define CTRL_HMI_ARCH "EdgeBox ESP-100 + isolated RS485 Waveshare thin HMI"
 
 IPAddress local_IP(172,20,1,101);
@@ -84,6 +84,9 @@ static String g_hmiReportedHw;
 static uint8_t g_hmiReportedProto = 0;
 static uint32_t g_lastHmiHelloTxMs = 0;
 static uint32_t g_lastHmiPollTxMs = 0;
+static uint16_t g_hmiOutstandingPollSeq = 0;
+static uint16_t g_hmiPollSeq = 0;
+static bool g_hmiPollOutstanding = false;
 
 // CTRL is the firmware authority for the Waveshare CTRL-TS. A generated
 // HV_P2P_CTRL_TS_Firmware_Image.h embeds the exact exported .bin, version and
@@ -201,7 +204,7 @@ static uint32_t lastHmiLayoutForward = 0;
 #define HMI_LAYOUT_MAX_LEN 2200
 static const char* HMI_LAYOUT_NVS_NS = "hmiui";
 static const char* HMI_LAYOUT_NVS_KEY = "layout";
-static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.09.27.01|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
+static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.09.29.01|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
 
 
 
@@ -226,10 +229,10 @@ static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_CTRL";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL_TS,W1P,W1P_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_CTRL_v*.ino.bin firmware. CTRL-TS and W1P files are rejected.";
 static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=CTRL;";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.09.27.01;";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.09.29.01;";
 static const char* HV_AUTH_ROLE = "CTRL";
 static const char* HV_AUTH_TARGET = "EDGEBOX_ESP100";
-static const char* HV_AUTH_VERSION = "v26.09.27.01";
+static const char* HV_AUTH_VERSION = "v26.09.29.01";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
@@ -488,7 +491,7 @@ static void hvLoadHmiLayoutConfig() {
     int nl = stored.indexOf('\n');
     if(nl >= 0) stored = stored.substring(0, nl);
     stored.trim();
-    // v26.09.27.01 migration: older CTRL NVS layouts were main4/aux1-aux4.
+    // v26.09.29.01 migration: older CTRL NVS layouts were main4/aux1-aux4.
     // Preserve the operator's stored labels/settings but expose the new AUX5 tile.
     if(stored.indexOf("|layout=main4") >= 0) stored.replace("|layout=main4", "|layout=main5");
     if(stored.indexOf("|aux5=") < 0) stored += "|aux5=AUX 5";
@@ -823,7 +826,7 @@ static void sendHmiStatusToSrvr()
   uint32_t age = g_lastHmiRxMs ? (now - g_lastHmiRxMs) : 999999;
   String line = "HMI_STATUS";
   line += "|ctrl_ts=" + String(hmiLinkConnected() ? 1 : 0);
-  line += "|ctrl_version=v26.09.27.01";
+  line += "|ctrl_version=v26.09.29.01";
   line += "|fw_match=" + String(g_srvrFirmwareMatched ? 1 : 0);
   line += "|fw_authority=" + g_srvrFirmwareState;
   line += "|fw_required=" + (g_srvrRequiredVersion.length() ? g_srvrRequiredVersion : String("unknown"));
@@ -965,7 +968,7 @@ static void handleUdpRx()
     g_lastSrvrDisplayMs = millis();
     g_latestDisplayPacket = line;
     g_latestDisplayPacket.replace("DSP1|", "HMI1|");
-    // v26.09.27.01: store latest SRVR display packet only. The UART
+    // v26.09.29.01: store latest SRVR display packet only. The UART
     // forward is rate-limited in loop() so CTRL-TS is not flooded and the
     // left-side LVGL elements do not flicker from repeated redraw pressure.
   }
@@ -1226,6 +1229,7 @@ static void handleHmiFrame(const HVP2PRS485::Frame &frame)
   g_lastHmiRxMs = millis();
   if(hmiFwHandleFrame(frame)) return;
   if(frame.type == HVP2PRS485::HELLO_RESP) {
+    g_hmiPollOutstanding = false;
     String line = HVP2PRS485::payloadString(frame);
     g_hmiReportedHw = hvGetPipeField(line, "hw");
     g_hmiReportedVersion = hvGetPipeField(line, "version");
@@ -1271,12 +1275,20 @@ static void handleHmiFrame(const HVP2PRS485::Frame &frame)
     return;
   }
   if(frame.type == HVP2PRS485::EVENT) {
+    if(!g_hmiPollOutstanding || frame.seq != g_hmiPollSeq) {
+      Serial.printf("[HMI] ignoring stale/unexpected EVENT seq=%u expected=%u outstanding=%d\n",
+                    unsigned(frame.seq), unsigned(g_hmiPollSeq), g_hmiPollOutstanding ? 1 : 0);
+      return;
+    }
+    g_hmiPollOutstanding = false;
     handleHmiEventLine(HVP2PRS485::payloadString(frame));
     return;
   }
   if(frame.type == HVP2PRS485::ERROR_MSG) {
     Serial.printf("[HMI] CTRL-TS error: %s\n", HVP2PRS485::payloadString(frame).c_str());
     g_hmiCompatible = false;
+    g_hmiPollOutstanding = false;
+    g_lastHmiHelloTxMs = 0;
   }
 }
 
@@ -1299,13 +1311,22 @@ static void handleHmiRx()
     }
   } else if((now - g_lastHmiPollTxMs) >= 50) {
     g_lastHmiPollTxMs = now;
+    g_hmiPollSeq = g_hmiSeq++;
+    g_hmiPollOutstanding = true;
     hmiMasterTurnaroundGuard();
-    HVP2PRS485::sendFrame(HMI, HVP2PRS485::POLL, g_hmiSeq++);
+    HVP2PRS485::sendFrame(HMI, HVP2PRS485::POLL, g_hmiPollSeq);
   }
 
   if(!hmiFwActive() && g_lastHmiRxMs && (now - g_lastHmiRxMs) > HMI_LINK_TIMEOUT_MS) {
     if(g_hmiCompatible) Serial.println("[HMI] RS485 link timeout - compatibility/safety gate dropped");
     g_hmiCompatible = false;
+    g_hmiPollOutstanding = false;
+    g_lastHmiHelloTxMs = 0;
+    // Do not keep presenting a stale detected version/hash after the peer is gone.
+    g_hmiReportedVersion = "";
+    g_hmiReportedHash = "";
+    g_hmiReportedHw = "";
+    g_hmiReportedProto = 0;
   }
 }
 
@@ -1483,7 +1504,7 @@ void loop()
     g_latestDisplayPacket = "";
   }
 
-  // v26.09.27.01: do not resend UIL1 layout on a timer.
+  // v26.09.29.01: do not resend UIL1 layout on a timer.
   // Some Waveshare/LVGL builds visibly flicker when the layout header/config
   // is resent periodically. Layout is now sent only at boot, upload/reset,
   // and in response to a CTRL-TS PING/reconnect request.

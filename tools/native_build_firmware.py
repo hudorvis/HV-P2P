@@ -22,7 +22,7 @@ import subprocess
 import sys
 import tempfile
 
-VER = "26.09.27.01"
+VER = "26.09.29.01"
 SEMVER = f"v{VER}"
 CTRL_SLOT = 0x600000
 HMI_SLOT = 0x380000
@@ -35,7 +35,8 @@ WAVESHARE_ST7262_LVGL_COMMIT = os.environ.get(
 EDGEBOX_FQBN = (
     "esp32:esp32:Edgebox-ESP-100:"
     "FlashSize=16M,FlashMode=qio,PSRAM=disabled,CPUFreq=240,"
-    "CDCOnBoot=default,USBMode=default,UploadMode=default,UploadSpeed=921600"
+    "CDCOnBoot=default,USBMode=default,UploadMode=default,UploadSpeed=921600,"
+    "PartitionScheme=custom"
 )
 HMI_FQBN = (
     "esp32:esp32:esp32s3:"
