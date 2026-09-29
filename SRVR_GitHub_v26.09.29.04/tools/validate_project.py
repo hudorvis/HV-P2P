@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "26.09.29.02"
+VERSION = "26.09.29.04"
 ERRORS: list[str] = []
 
 
@@ -350,7 +350,7 @@ require('width:parent.width*.22' in qml_main and
 require(qml_main.count('width:f(72)') >= 2 and 'parent.width-f(48+72+66)' in qml_main,
         "Free-D lens decoded percentage width fix is missing")
 
-# v26.09.29.02 locked Run/Setup revision. Keep the approved panel geometry and
+# v26.09.29.04 locked Run/Setup revision. Keep the approved panel geometry and
 # setting semantics while guarding only the requested presentation/interaction deltas.
 require('text:"HV P2P\\nSRVR"' in qml_main and 'HV P2P  |  SRVR' not in qml_main and 'P2P°\\nSRVR' not in qml_main,
         "locked two-line HV P2P/SRVR logo/header revision is missing")
@@ -526,7 +526,7 @@ require('profileValue(Number(gp.x), key)' in span_qml and
         'var gv=root.sideView ? Number(gp.y)' not in span_qml,
         "Free-D geometry markers are not pinned to the exact calculated cable profile")
 
-# v26.09.29.02 integration contract: fifth CTRL-TS AUX travels in the spare A7
+# v26.09.29.04 integration contract: fifth CTRL-TS AUX travels in the spare A7
 # 16-bit flag, and display packets expose all five state-aware labels.
 require("FLAG_AUX5 = 0x0400" in backend, "AUX5 controller flag missing")
 require('f"aux5={labels[4]}"' in backend, "DSP1 AUX5 field missing")
@@ -601,9 +601,9 @@ require('Nuitka==4.2' in workflow and '--assume-yes-for-downloads' in workflow,
         "Windows CI does not pin Nuitka and permit required non-interactive dependency-tool downloads")
 require("Select-String -Path deploy-dry-run.txt -SimpleMatch '--assume-yes-for-downloads'" in workflow,
         "Windows deploy dry-run does not prove the actual Nuitka command is non-interactive")
-require('HV-P2P-SRVR-v26.09.29.02-macOS-Intel' in workflow and
-        'HV-P2P-SRVR-v26.09.29.02-macOS-Apple-Silicon' in workflow and
-        'HV-P2P-SRVR-v26.09.29.02-Windows-x64' in workflow,
+require('HV-P2P-SRVR-v26.09.29.04-macOS-Intel' in workflow and
+        'HV-P2P-SRVR-v26.09.29.04-macOS-Apple-Silicon' in workflow and
+        'HV-P2P-SRVR-v26.09.29.04-Windows-x64' in workflow,
         "native SRVR artifact names are incomplete")
 require('def _app_data_dir' in backend and 'LOCALAPPDATA' in backend and 'XDG_CONFIG_HOME' in backend,
         "cross-platform private config directory mapping is missing")
@@ -639,3 +639,6 @@ print("  Joystick calibration wizard + neutral-return safety interlock: OK")
 print("  Run 20/25/25/30 geometry: OK")
 print("  Proven W1P/CTRL critical command + secondary interface contract: OK")
 print("  Isolated deployment staging + smoke checks: OK")
+
+setup=(ROOT/"qml/pages/SetupPage.qml").read_text()
+require("Current Percentage" in setup and "backend.joystickPercentage" in setup, "CTRL Setup shows calibrated Current Percentage")

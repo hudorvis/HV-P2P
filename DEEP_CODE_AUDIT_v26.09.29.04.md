@@ -1,4 +1,4 @@
-# HV P2P v26.09.29.02 Audit Closure
+# HV P2P v26.09.29.04 Audit Closure
 
 ## Scope
 This release closes the source-level findings from the full v26.09.27.01 audit
@@ -15,7 +15,7 @@ Retained correct contracts:
 - 2.0 ms inter-frame gap, 50 ms reply timeout and three read attempts;
 - P05.29=4, P05.30=6, P05.31=1 expectations;
 - safe read-only 38400 8N2 factory-framing diagnostic;
-- independent ~650 ms velocity-command freshness watchdog;
+- independent ~500 ms velocity-command freshness watchdog;
 - stopped/braked/Servo-Enable-inhibited service gate.
 
 Closed defects:

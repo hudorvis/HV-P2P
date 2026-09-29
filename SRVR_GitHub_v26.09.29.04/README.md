@@ -1,8 +1,8 @@
-# HV P2P SRVR v26.09.29.02 — Qt Quick desktop build source
+# HV P2P SRVR v26.09.29.04 — Qt Quick desktop build source
 
-This SRVR source continues from the audited/hardened v26.08.31.08 control baseline. v26.09.29.02 locks the newly approved **Run** and **Setup** page revisions while retaining the existing Free-D, Log, communication, safety, calibration and configuration behavior unless explicitly noted below.
+This SRVR source continues from the audited/hardened v26.08.31.08 control baseline. v26.09.29.04 locks the newly approved **Run** and **Setup** page revisions while retaining the existing Free-D, Log, communication, safety, calibration and configuration behavior unless explicitly noted below.
 
-## v26.09.29.02 operator revisions
+## v26.09.29.04 operator revisions
 
 ### Run
 
@@ -40,7 +40,7 @@ Changing back to `Encoder` stops the simulation, keeps physical Servo Enable inh
 
 The release retains the v26.08.31.07/.08 protections, including:
 
-- independent 650 ms W1P VEL-command deadman;
+- independent 500 ms W1P VEL-command deadman;
 - fail-closed W1P OTA/reboot/NVS service-safe gate;
 - CTRL/W1P OTA content-role verification;
 - transactional W1P IP readdress with lost-ACK proof and automatic rollback;
@@ -82,9 +82,9 @@ Use the repository-root workflow:
 
 `.github/workflows/complete-build.yml`
 
-It builds the matched v26.09.29.02 CTRL-TS, CTRL and W1P firmware, freezes/smoke-tests the Intel (`x86_64`) macOS SRVR application, preserves the original SRVR distribution ZIP, and publishes the complete matched release.
+It builds the matched v26.09.29.04 CTRL-TS, CTRL and W1P firmware, freezes/smoke-tests the Intel (`x86_64`) macOS SRVR application, preserves the original SRVR distribution ZIP, and publishes the complete matched release.
 
-A successful GitHub compile is not powered-motion commissioning approval. Complete the repository `NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.09.29.02.md` before hardware sign-off.
+A successful GitHub compile is not powered-motion commissioning approval. Complete the repository `NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.09.29.04.md` before hardware sign-off.
 
 
 ## Native desktop targets

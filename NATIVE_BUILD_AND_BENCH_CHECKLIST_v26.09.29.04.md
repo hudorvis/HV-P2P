@@ -1,4 +1,4 @@
-# HV P2P v26.09.29.02 Native Build and Bench Checklist
+# HV P2P v26.09.29.04 Native Build and Bench Checklist
 
 ## GitHub Actions gates
 - Source/protocol regression suite passes, including `test_audit_regressions.py`.
@@ -12,9 +12,11 @@
 - Complete Release is created only after all required jobs succeed.
 
 ## CTRL / joystick bench
-- Confirm EdgeBox is the 0-10 V analogue-input option.
-- +5 V -> APEM pin 1; 0 V -> pin 3; output pin 4 -> EdgeBox AI0 pin 14;
+- Confirm the factory 249-ohm 4-20 mA shunts have been removed from AI0/AI1 so both commissioned channels are voltage inputs.
+- +5 V -> APEM pin 1; 0 V -> pin 3; output pin 4 -> EdgeBox AI1 pin 16;
   same 0 V -> EdgeBox AGND pin 12 or 22.
+- E-stop status loop: +5 V -> NC E-stop contact -> EdgeBox AI0 pin 14; 0 V -> EdgeBox AGND.
+- Confirm AI0 reads healthy high when released and drops low/open when the E-stop is pressed.
 - Confirm digital GND pin 24 is not being used as the analogue reference.
 - Check CTRL serial diagnostic shows SGM58031 detected at 0x48.
 - Verify near 0/2.5/5 V field readings across joystick travel, then run SRVR
@@ -52,7 +54,7 @@ Leadshine settings and powered bench:
 - Confirm a valid Modbus exception is reported as an exception, not a wiring
   timeout.
 - Confirm a deliberately failed velocity write cannot be followed by PR0 trigger.
-- Confirm the 650 ms VEL watchdog independently stops and inhibits the drive.
+- Confirm the 500 ms VEL watchdog independently stops and inhibits the drive.
 - Confirm peer timeout, E-stop, malformed/stale status and RS485 loss remain
   fail-closed.
 - Confirm OTA/service refuses to proceed unless stopped, Servo Enable OFF and

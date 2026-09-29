@@ -85,6 +85,7 @@ Item {
                             Rectangle { anchors.verticalCenter:parent.verticalCenter; x:joyTrack.x + (joyTrack.width-width)*Math.max(0,Math.min(1,(backend.joystickValue+1)/2)); width:root.f(13); height:root.f(13); radius:root.f(7); color:root.cyan; border.color:"#50646c"; border.width:root.f(5) }
                         }
                         Row { width:parent.width;height:root.f(25);Text{width:parent.width-root.f(60);anchors.verticalCenter:parent.verticalCenter;text:"Current Value";color:root.fg;font.pixelSize:root.f(11)}Text{width:root.f(60);anchors.verticalCenter:parent.verticalCenter;text:Number(backend.joystickValue).toFixed(2);horizontalAlignment:Text.AlignHCenter;color:root.fg;font.pixelSize:root.f(12)} }
+                        Row { width:parent.width;height:root.f(25);Text{width:parent.width-root.f(72);anchors.verticalCenter:parent.verticalCenter;text:"Current Percentage";color:root.fg;font.pixelSize:root.f(11)}Text{width:root.f(72);anchors.verticalCenter:parent.verticalCenter;text:Number(backend.joystickPercentage).toFixed(1)+" %";horizontalAlignment:Text.AlignHCenter;color:root.fg;font.pixelSize:root.f(12)} }
                         Row {
                             width:parent.width; height:root.f(31); spacing:root.f(4)
                             Text{width:root.f(100);anchors.verticalCenter:parent.verticalCenter;text:"Deadband";color:root.fg;font.pixelSize:root.f(11)}

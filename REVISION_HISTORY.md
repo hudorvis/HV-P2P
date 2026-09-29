@@ -1,8 +1,14 @@
+# v26.09.29.04
+- Final CTRL analogue-input mapping: AI0/pin 14 = 5 V normally-closed E-stop status; AI1/pin 16 = APEM joystick signal.
+- SGM58031 continuous joystick channel and temporary E-stop sampling channel swapped accordingly; diagnostics/docs/tests updated.
+- Otherwise functionally identical to v26.09.29.03.
 
-## v26.09.29.02
-- EdgeBox Arduino/GitHub partition-option compatibility hotfix.
-- EdgeBox board has no visible Custom partition menu; native build now selects the supported 16M 3MB APP/9.9MB FATFS option while the sketch-local `partitions.csv` supplies the actual project dual-OTA layout.
-- Supersedes v26.09.29.01 before deployment.
+## v26.09.29.04
+- CTRL AI1 changed to a 5 V normally-closed E-stop status input for the commissioned voltage-input EdgeBox hardware.
+- Joystick sampling upgraded to 8-sample trimmed-mean plus the existing light IIR filter.
+- SRVR CTRL Setup adds calibrated Current Percentage; new/reset joystick Direction defaults Inverted.
+- W1P VEL freshness watchdog reduced to 500 ms and SRVR non-zero VEL refresh tightened to 150 ms.
+- Retains the v26.09.29.02 EdgeBox partition-menu hotfix and all v26.09.29.01 audit/bench corrections.
 
 # HV P2P Revision History
 
@@ -20,7 +26,7 @@
   650 ms velocity freshness watchdog, OTA/service safety gates and continued
   CTRL-TS automatic convergence. **v26.09.27.01 is the authoritative direct
   source baseline for the present release.**
-- **v26.09.29.02** — closes audit/bench defects found in v26.09.27.01: W1P STATUS
+- **v26.09.29.04** — closes audit/bench defects found in v26.09.27.01: W1P STATUS
   field mismatch, stale PR0 trigger possibility, Modbus write exceptions,
   duplicate RS485 failure counting, best-effort stop gating, CTRL-TS session/
   sequence/stale-identity handling, stable graphical firmware progress,

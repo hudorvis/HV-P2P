@@ -42,6 +42,7 @@ WINCH_PROBE_INTERVAL_S = 0.05
 HMI_STATUS_TIMEOUT_S = 3.5
 HMI_DISPLAY_MIN_CHANGE_INTERVAL_S = 0.04
 HMI_DISPLAY_KEEPALIVE_S = 3.0
+VEL_KEEPALIVE_S = 0.15  # refresh unchanged non-zero VEL well inside the 500 ms W1P watchdog
 CTRL_AUX_BITS = (FLAG_AUX1, FLAG_AUX2, FLAG_AUX3, FLAG_AUX4, FLAG_AUX5)
 
 
@@ -199,7 +200,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.09.29.02", smoke_test: bool = False):
+    def __init__(self, version="26.09.29.04", smoke_test: bool = False):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -215,7 +216,9 @@ class HVP2PBackend(QObject):
         self.w1p_ip = "172.20.1.102"
         self.w1p_reported_ip = ""
         self.w1p_port = 5000
-        self.reverse_joystick = False
+        # Default new/reset installations to the physical direction used by the commissioned CTRL joystick.
+        # Saved/imported configurations remain authoritative and are not silently flipped.
+        self.reverse_joystick = True
         self.reverse_motor = False
         self.joystick_deadband_pct = JOY_DEADBAND_PCT
         # Joystick calibration maps the CTRL raw -1..+1 value onto a corrected
@@ -1279,7 +1282,7 @@ class HVP2PBackend(QObject):
         now = time.time()
         same = abs(vel-self.last_sent_vel) < .01
         if not force and same:
-            if abs(vel) < .001 or (now-getattr(self, "_last_vel_tx", 0.0)) < .25:
+            if abs(vel) < .001 or (now-getattr(self, "_last_vel_tx", 0.0)) < VEL_KEEPALIVE_S:
                 return
         self.last_sent_vel = vel
         self.requested_speed_mps = vel
@@ -2742,7 +2745,7 @@ class HVP2PBackend(QObject):
             return False
         # Prefer the explicit HMI_STATUS ads= field when available. ``ads`` and
         # FLAG_ADS1115_FAULT are retained wire names; on EdgeBox they mean the
-        # onboard SGM58031 / AI0 joystick-input health, not an external ADS1115.
+        # onboard SGM58031 / AI1 joystick-input health, not an external ADS1115.
         if self._ads1115_status_last_seen > 0 and time.time() - self._ads1115_status_last_seen <= HMI_STATUS_TIMEOUT_S:
             return bool(self._ads1115_connected_reported)
         return True
@@ -2758,6 +2761,12 @@ class HVP2PBackend(QObject):
     def rs485Connected(self): return bool(self.w1p.connected and self._w1p_status_fresh() and self._w1p_fw_match and self.winch_rs_status == "Connected")
     @Property(float, notify=stateChanged)
     def joystickValue(self): return float(self._calibrated_joystick(self._ctrl_axis))
+    @Property(float, notify=stateChanged)
+    def joystickPercentage(self):
+        # Calibrated physical stick position: Left=-100%, Centre=0%, Right=+100%.
+        # Direction inversion is a downstream motion-command setting and deliberately
+        # does not change this calibration readout.
+        return float(self._calibrated_joystick(self._ctrl_axis) * 100.0)
     @Property(float, notify=stateChanged)
     def joystickRawValue(self): return float(self._ctrl_axis)
     @Property(bool, notify=stateChanged)

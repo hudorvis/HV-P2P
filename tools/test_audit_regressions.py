@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER="26.09.29.02"
+VER="26.09.29.04"
 W=(ROOT/f"HV_P2P_W1P_EDGEBOX_v{VER}/HV_P2P_W1P_EDGEBOX_v{VER}.ino").read_text()
 C=(ROOT/f"HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino").read_text()
 T=(ROOT/f"HV_P2P_CTRL_TS_v{VER}/HV_P2P_CTRL_TS_v{VER}.ino").read_text()
@@ -22,4 +22,16 @@ assert 'HEADER_H=45' in T and 'FOOT_H=35' in T and 'SW=780, GAP=7' in T
 edgebox_fqbn = N[N.index('EDGEBOX_FQBN'):N.index('HMI_FQBN')]
 assert 'PartitionScheme=app3M_fat9M_16MB' in edgebox_fqbn
 assert 'PartitionScheme=custom' not in edgebox_fqbn
+
+# v26.09.29.04 operator input / safety refinements.
+assert 'self.reverse_joystick = True' in B
+assert 'VEL_KEEPALIVE_S = 0.15' in B
+assert 'def joystickPercentage' in B
+assert 'W1P_VEL_COMMAND_TIMEOUT_MS = 500' in W
+assert 'JOY_SAMPLES = 8' in C and 'trimmedSum' in C
+assert 'SGM_CONFIG_AI1_CONT_800SPS_6V144 = 0x50E3' in C
+assert 'sampleCtrlEstopAI0' in C
+assert 'AI0 carries the CTRL E-stop status' in C and 'AI1 carries the APEM 0-5 V joystick signal' in C
+assert 'Failed selecting AI0 E-stop channel' in C and 'Failed restoring AI1 joystick channel' in C
+assert 'CTRL_ESTOP_HEALTHY_MIN_V = 3.5f' in C and 'CTRL_ESTOP_HEALTHY_CONFIRM_SAMPLES = 3' in C
 print('AUDIT_REGRESSIONS_PASS')

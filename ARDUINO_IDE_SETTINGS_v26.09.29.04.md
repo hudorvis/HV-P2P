@@ -1,4 +1,4 @@
-# Arduino IDE Commissioning Settings — v26.09.29.02
+# Arduino IDE Commissioning Settings — v26.09.29.04
 
 GitHub Actions remains authoritative for release compilation. These settings are for initial/manual bench flashing only.
 
