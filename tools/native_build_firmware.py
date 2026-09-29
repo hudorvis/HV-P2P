@@ -22,7 +22,7 @@ import subprocess
 import sys
 import tempfile
 
-VER = "26.09.29.01"
+VER = "26.09.29.02"
 SEMVER = f"v{VER}"
 CTRL_SLOT = 0x600000
 HMI_SLOT = 0x380000
@@ -36,7 +36,7 @@ EDGEBOX_FQBN = (
     "esp32:esp32:Edgebox-ESP-100:"
     "FlashSize=16M,FlashMode=qio,PSRAM=disabled,CPUFreq=240,"
     "CDCOnBoot=default,USBMode=default,UploadMode=default,UploadSpeed=921600,"
-    "PartitionScheme=custom"
+    "PartitionScheme=app3M_fat9M_16MB"
 )
 HMI_FQBN = (
     "esp32:esp32:esp32s3:"

@@ -1,4 +1,4 @@
-# CTRL Joystick Wiring — v26.09.29.01
+# CTRL Joystick Wiring — v26.09.29.02
 
 The CTRL EdgeBox must be the **0-10 V analogue-input option**. The firmware reads **AI0** through the onboard SGM58031.
 

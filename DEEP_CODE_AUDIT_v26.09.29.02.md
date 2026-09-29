@@ -1,4 +1,4 @@
-# HV P2P v26.09.29.01 Audit Closure
+# HV P2P v26.09.29.02 Audit Closure
 
 ## Scope
 This release closes the source-level findings from the full v26.09.27.01 audit
@@ -55,8 +55,10 @@ Additional closure:
 
 ## Build/OTA
 CTRL/W1P and CTRL-TS all use sketch-local dual-OTA partition tables. The native
-builder now explicitly selects `PartitionScheme=custom` for EdgeBox as well as
-CTRL-TS. Source CTRL intentionally retains its hard build guard until GitHub has
+builder selects the EdgeBox-supported `PartitionScheme=app3M_fat9M_16MB`; the
+sketch-local `partitions.csv` overrides that predefined CSV and provides the actual
+6 MB + 6 MB dual-OTA layout. CTRL-TS continues to use its supported custom
+partition option. Source CTRL intentionally retains its hard build guard until GitHub has
 built the exact CTRL-TS binary and generated the carrier header.
 
 No native ESP32 binaries or desktop applications were fabricated locally.

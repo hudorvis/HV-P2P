@@ -1,4 +1,4 @@
-# Arduino IDE Commissioning Settings — v26.09.29.01
+# Arduino IDE Commissioning Settings — v26.09.29.02
 
 GitHub Actions remains authoritative for release compilation. These settings are for initial/manual bench flashing only.
 
@@ -8,7 +8,7 @@ GitHub Actions remains authoritative for release compilation. These settings are
 - CPU Frequency: **240 MHz (WiFi)**
 - Flash Mode: **QIO 80 MHz**
 - Flash Size: **16 MB (128 Mb)**
-- Partition Scheme: **Custom** (uses the sketch-local dual-OTA `partitions.csv`)
+- Partition Scheme: **16M Flash (3MB APP/9.9MB FATFS)**. The EdgeBox board definition does not expose a Custom menu item; the sketch-local `partitions.csv` has higher build priority and supplies the actual dual-OTA table.
 - PSRAM: **Disabled**
 - USB CDC On Boot: **Disabled/default**
 - Upload Mode: **UART0 / Hardware CDC**

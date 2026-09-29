@@ -1,7 +1,14 @@
-# HV P2P v26.09.29.01 Change Summary
+# HV P2P v26.09.29.02 Change Summary
+
+
+## EdgeBox partition-menu correction
+
+- Corrected the EdgeBox native-build FQBN to use the supported `PartitionScheme=app3M_fat9M_16MB` menu value instead of the unsupported `PartitionScheme=custom`.
+- Manual Arduino IDE commissioning should leave **16M Flash (3MB APP/9.9MB FATFS)** selected on EdgeBox. The sketch-local `partitions.csv` remains authoritative for the actual dual-OTA partition table under the current Arduino-ESP32 build system.
+- No control, safety, RS485, HMI or UI design behaviour was changed by this hotfix.
 
 ## Basis
-v26.09.29.01 is built directly from the authoritative user-supplied
+v26.09.29.02 is built directly from the authoritative user-supplied
 **HV P2P v26.09.27.01** source. It closes confirmed defects found by the full
 source audit and real-hardware commissioning logs/photos from CTRL and CTRL-TS.
 The approved SRVR Run and Setup QML designs remain unchanged.
@@ -59,10 +66,12 @@ The footer now ends at Y=472, leaving an 8 px bottom margin matching the top,
 instead of the unintended ~51 px empty strip seen on v26.09.27.01 hardware.
 
 ## Partition/build correction
-The CTRL and W1P native build FQBN now explicitly selects
-`PartitionScheme=custom`, guaranteeing that the sketch-local 16 MB dual-OTA
-`partitions.csv` is used. Manual Arduino commissioning must also select
-**Partition Scheme: Custom**. The CTRL-TS native build already selected Custom.
+The CTRL and W1P native build FQBN now selects the EdgeBox-supported
+`PartitionScheme=app3M_fat9M_16MB` menu value. The sketch-local 16 MB dual-OTA
+`partitions.csv` remains authoritative for the actual partition table; Arduino-ESP32
+automatically prefers a sketch-local `partitions.csv` over the predefined menu CSV.
+Manual EdgeBox commissioning should therefore leave **16M Flash (3MB APP/9.9MB FATFS)** selected.
+CTRL-TS continues to use its supported `PartitionScheme=custom` CI setting.
 
 ## Regression coverage
 A new `tools/test_audit_regressions.py` locks the above producer/consumer,

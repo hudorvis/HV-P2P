@@ -1,10 +1,10 @@
-# HV P2P v26.09.29.01 Native Build and Bench Checklist
+# HV P2P v26.09.29.02 Native Build and Bench Checklist
 
 ## GitHub Actions gates
 - Source/protocol regression suite passes, including `test_audit_regressions.py`.
 - CTRL-TS builds first.
 - Exact native CTRL-TS application is embedded into staged CTRL and verified.
-- CTRL/W1P both build with `PartitionScheme=custom` and retain role/target/version
+- CTRL/W1P use the supported EdgeBox `PartitionScheme=app3M_fat9M_16MB` FQBN value while their sketch-local `partitions.csv` supplies the actual 6 MB dual-OTA layout; both retain role/target/version
   identity tokens.
 - Immutable SRVR firmware authority bundle is generated from those exact apps.
 - Source checkout hash is identical before/after native firmware build.

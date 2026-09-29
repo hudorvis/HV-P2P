@@ -1,4 +1,4 @@
-# HV P2P v26.09.29.01 Initial Bootstrap
+# HV P2P v26.09.29.02 Initial Bootstrap
 
 ## Build first
 Upload this GitHub-ready source to the repository and let the included workflow
@@ -6,7 +6,7 @@ finish. Do not fabricate application binaries locally. Use the GitHub
 `COMPLETE_RELEASE/FIRMWARE/STAGED_SOURCE` folders for manual commissioning.
 
 ## Manual commissioning settings
-See `ARDUINO_IDE_SETTINGS_v26.09.29.01.md`.
+See `ARDUINO_IDE_SETTINGS_v26.09.29.02.md`.
 
 Critical items:
 - CTRL/W1P EdgeBox: 16 MB, QIO, **PSRAM Disabled**, **Partition Scheme Custom**.
@@ -14,18 +14,18 @@ Critical items:
 - A clean initial flash may erase all flash; routine re-flashes should normally
   preserve NVS.
 
-## Recommended first v26.09.29.01 commissioning order
+## Recommended first v26.09.29.02 commissioning order
 1. Flash CTRL-TS manually from the GitHub STAGED_SOURCE.
 2. Flash CTRL manually from the GitHub STAGED_SOURCE. The staged CTRL contains
    the exact native CTRL-TS image/hash from the same GitHub firmware build.
-3. Start the matching v26.09.29.01 SRVR.
+3. Start the matching v26.09.29.02 SRVR.
 4. For W1P, use automatic SRVR convergence only if the EdgeBox already has the
    correct dual-OTA layout and can prove the stopped/braked service gate.
    Otherwise manually flash W1P from STAGED_SOURCE once.
 5. Bench-test with machinery unable to move before enabling motion hardware.
 
 ## CTRL joystick
-See `CTRL_JOYSTICK_WIRING_v26.09.29.01.md`. Current CTRL reads the onboard
+See `CTRL_JOYSTICK_WIRING_v26.09.29.02.md`. Current CTRL reads the onboard
 EdgeBox SGM58031 AI0; the older external ADS1115 architecture is not used.
 
 ## CTRL EdgeBox <-> CTRL-TS Waveshare RS485
