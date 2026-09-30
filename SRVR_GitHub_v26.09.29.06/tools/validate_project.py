@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "26.09.29.05"
+VERSION = "26.09.29.06"
 ERRORS: list[str] = []
 
 
@@ -350,7 +350,7 @@ require('width:parent.width*.22' in qml_main and
 require(qml_main.count('width:f(72)') >= 2 and 'parent.width-f(48+72+66)' in qml_main,
         "Free-D lens decoded percentage width fix is missing")
 
-# v26.09.29.05 locked Run/Setup revision. Keep the approved panel geometry and
+# v26.09.29.06 locked Run/Setup revision. Keep the approved panel geometry and
 # setting semantics while guarding only the requested presentation/interaction deltas.
 require('text:"HV P2P\\nSRVR"' in qml_main and 'HV P2P  |  SRVR' not in qml_main and 'P2P°\\nSRVR' not in qml_main,
         "locked two-line HV P2P/SRVR logo/header revision is missing")
@@ -526,7 +526,7 @@ require('profileValue(Number(gp.x), key)' in span_qml and
         'var gv=root.sideView ? Number(gp.y)' not in span_qml,
         "Free-D geometry markers are not pinned to the exact calculated cable profile")
 
-# v26.09.29.05 integration contract: fifth CTRL-TS AUX travels in the spare A7
+# v26.09.29.06 integration contract: fifth CTRL-TS AUX travels in the spare A7
 # 16-bit flag, and display packets expose all five state-aware labels.
 require("FLAG_AUX5 = 0x0400" in backend, "AUX5 controller flag missing")
 require('f"aux5={labels[4]}"' in backend, "DSP1 AUX5 field missing")
@@ -582,7 +582,7 @@ require('cp assets/HV_P2P_SRVR_icon.png "$STAGE/HV_P2P_SRVR_icon.png"' in workfl
         "P2P SRVR bundle icon is not restored during packaging")
 require('CFBundleDisplayName' in workflow and "HV P2P SRVR'" in workflow,
         "HV P2P SRVR bundle display metadata is not enforced")
-require(all(token in workflow for token in ('CFBundleIdentifier', 'com.hvp2p.srvr', 'CFBundleShortVersionString', 'CFBundleVersion', 'HVP2PReleaseVersion', "BUNDLE_BUILD_VERSION: '2609.29.2'")),
+require(all(token in workflow for token in ('CFBundleIdentifier', 'com.hvp2p.srvr', 'CFBundleShortVersionString', 'CFBundleVersion', 'HVP2PReleaseVersion', "BUNDLE_BUILD_VERSION: '2609.29.3'")),
         "HV P2P SRVR stable bundle identity/version metadata is not enforced")
 require('three untouched native ZIPs' in workflow and 'SHA256SUMS.txt' in workflow and 'Complete Release.zip.sha256' in workflow,
         "complete release does not preserve/hash all native SRVR ZIPs and authoritative release ZIP")
@@ -601,9 +601,9 @@ require('Nuitka==4.2' in workflow and '--assume-yes-for-downloads' in workflow,
         "Windows CI does not pin Nuitka and permit required non-interactive dependency-tool downloads")
 require("Select-String -Path deploy-dry-run.txt -SimpleMatch '--assume-yes-for-downloads'" in workflow,
         "Windows deploy dry-run does not prove the actual Nuitka command is non-interactive")
-require('HV-P2P-SRVR-v26.09.29.05-macOS-Intel' in workflow and
-        'HV-P2P-SRVR-v26.09.29.05-macOS-Apple-Silicon' in workflow and
-        'HV-P2P-SRVR-v26.09.29.05-Windows-x64' in workflow,
+require('HV-P2P-SRVR-v26.09.29.06-macOS-Intel' in workflow and
+        'HV-P2P-SRVR-v26.09.29.06-macOS-Apple-Silicon' in workflow and
+        'HV-P2P-SRVR-v26.09.29.06-Windows-x64' in workflow,
         "native SRVR artifact names are incomplete")
 require('def _app_data_dir' in backend and 'LOCALAPPDATA' in backend and 'XDG_CONFIG_HOME' in backend,
         "cross-platform private config directory mapping is missing")
@@ -623,6 +623,21 @@ require('self._safety_servo_inhibited = True' in _virtual_branch,
         "Virtual Position Source does not latch the local Servo Enable inhibit independently of hardware I/O")
 require('fillText("SKATE"' not in span_qml, "Top/Side span diagrams still draw the SKATE text label")
 
+# v26.09.29.06 CTRL joystick readout labels/geometry and global preset-name mode.
+setup=(ROOT/"qml/pages/SetupPage.qml").read_text()
+require('text:"Value"' in setup and 'text:"Percentage"' in setup,
+        "CTRL Setup uses Value / Percentage labels")
+require('text:Number(backend.joystickValue).toFixed(2);horizontalAlignment:Text.AlignRight' in setup and
+        'text:Number(backend.joystickPercentage).toFixed(1)+" %";horizontalAlignment:Text.AlignRight' in setup and
+        setup.count('width:root.f(72);anchors.verticalCenter:parent.verticalCenter') >= 2,
+        "CTRL Setup Value / Percentage readouts share the same right-aligned value column")
+require('text:"Preset Names"' in qml_main and 'text:"Short Names"' in qml_main and 'text:"Long Names"' in qml_main and
+        'backend.setPresetNameMode("Short Names")' in qml_main and 'backend.setPresetNameMode("Long Names")' in qml_main,
+        "Run Shortcuts exposes global Short Names / Long Names preset display selection")
+require('displayName' in span_qml, "Top/Side span diagrams use the selected preset display name")
+require('def setPresetNameMode' in backend and 'preset_name_mode' in backend and 'displayName' in backend,
+        "backend persists and exposes the global preset-name display mode")
+
 if ERRORS:
     print("HV P2P SRVR preflight FAILED:", file=sys.stderr)
     for e in ERRORS:
@@ -637,8 +652,6 @@ print("  QRC/project manifest: OK")
 print("  Four-page heading/style contract + clipping guards: OK")
 print("  Joystick calibration wizard + neutral-return safety interlock: OK")
 print("  Run 20/25/25/30 geometry: OK")
+print("  Preset Short/Long naming contract: OK")
 print("  Proven W1P/CTRL critical command + secondary interface contract: OK")
 print("  Isolated deployment staging + smoke checks: OK")
-
-setup=(ROOT/"qml/pages/SetupPage.qml").read_text()
-require("Current Percentage" in setup and "backend.joystickPercentage" in setup, "CTRL Setup shows calibrated Current Percentage")

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER="26.09.29.05"
+VER="26.09.29.06"
 W=(ROOT/f"HV_P2P_W1P_EDGEBOX_v{VER}/HV_P2P_W1P_EDGEBOX_v{VER}.ino").read_text()
 C=(ROOT/f"HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino").read_text()
 T=(ROOT/f"HV_P2P_CTRL_TS_v{VER}/HV_P2P_CTRL_TS_v{VER}.ino").read_text()
@@ -23,7 +23,7 @@ edgebox_fqbn = N[N.index('EDGEBOX_FQBN'):N.index('HMI_FQBN')]
 assert 'PartitionScheme=app3M_fat9M_16MB' in edgebox_fqbn
 assert 'PartitionScheme=custom' not in edgebox_fqbn
 
-# v26.09.29.05 operator input / safety refinements.
+# v26.09.29.06 operator input / safety refinements.
 assert 'self.reverse_joystick = True' in B
 assert 'VEL_KEEPALIVE_S = 0.15' in B
 assert 'def joystickPercentage' in B
@@ -34,10 +34,10 @@ assert 'sampleCtrlEstopAI0' in C
 assert 'AI0 carries the CTRL E-stop status' in C and 'AI1 carries the APEM 0-5 V joystick signal' in C
 assert 'Failed selecting AI0 E-stop channel' in C and 'Failed restoring AI1 joystick channel' in C
 assert 'CTRL_ESTOP_HEALTHY_MIN_V = 3.5f' in C and 'CTRL_ESTOP_HEALTHY_CONFIRM_SAMPLES = 3' in C
-# v26.09.29.05 CI direction-regression guard: backend tests must not assume
+# v26.09.29.06 CI direction-regression guard: backend tests must not assume
 # positive raw CTRL axis implies positive requested motor speed when the default
 # commissioned joystick direction is inverted.
-BT=(ROOT/'SRVR_GitHub_v26.09.29.05/tools/test_backend_logic.py').read_text()
+BT=(ROOT/'SRVR_GitHub_v26.09.29.06/tools/test_backend_logic.py').read_text()
 assert 'assert b.reverse_joystick is True' in BT
 assert '0.0 < abs(b.requested_speed_mps)' in BT
 assert '1.0 if b.reverse_joystick else -1.0' in BT

@@ -301,6 +301,7 @@ ApplicationWindow {
                                             }
                                         }
                                         Row { width:parent.width;height:f(32);Text{width:f(150);anchors.verticalCenter:parent.verticalCenter;text:"Calibration Mode";color:fg;font.pixelSize:f(13)}Item{width:parent.width-f(150);height:parent.height;Row{anchors.fill:parent;spacing:f(7);HVButton{width:(parent.width-f(7))/2;height:parent.height;text:"Limit Calibration";onClicked:{window.cancelShortcutConfirm();backend.openLimitCalibration()}}HVButton{width:(parent.width-f(7))/2;height:parent.height;text:"Winch Calibration";onClicked:{window.cancelShortcutConfirm();backend.openWinchCalibration()}}}} }
+                                        Row { width:parent.width;height:f(32);Text{width:f(150);anchors.verticalCenter:parent.verticalCenter;text:"Preset Names";color:fg;font.pixelSize:f(13)}Item{width:parent.width-f(150);height:parent.height;Row{anchors.fill:parent;spacing:f(7);HVButton{width:(parent.width-f(7))/2;height:parent.height;text:"Short Names";selected:backend.presetNameMode==="Short Names";onClicked:{window.cancelShortcutConfirm();backend.setPresetNameMode("Short Names")}}HVButton{width:(parent.width-f(7))/2;height:parent.height;text:"Long Names";selected:backend.presetNameMode==="Long Names";onClicked:{window.cancelShortcutConfirm();backend.setPresetNameMode("Long Names")}}}} }
                                     }
                                 }
                             }

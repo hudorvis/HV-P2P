@@ -1,5 +1,5 @@
 // ============================================================
-// HV P2P W1P EdgeBox v26.09.29.05
+// HV P2P W1P EdgeBox v26.09.29.06
 // Seeed EdgeBox-ESP-100 Leadshine EL7-RS2000P commissioning interface
 //
 // Purpose:
@@ -47,11 +47,11 @@
 
 // -------------------- Version / identity --------------------
 static const char* FW_NAME    = "HV P2P W1P";
-static const char* FW_VERSION = "v26.09.29.05";
+static const char* FW_VERSION = "v26.09.29.06";
 static const char* NODE_BANNER = "HV_P2P_W1P";
 static const char* HV_AUTH_ROLE = "W1P";
 static const char* HV_AUTH_TARGET = "EDGEBOX_ESP100";
-static const char* HV_AUTH_VERSION = "v26.09.29.05";
+static const char* HV_AUTH_VERSION = "v26.09.29.06";
 
 // -------------------- Network defaults --------------------
 static IPAddress LOCAL_IP(172, 20, 1, 102);
@@ -235,7 +235,7 @@ static const int LOCAL_ESTOP_HEALTHY_LEVEL = HIGH;
 static const int PIN_STATUS_LED = -1;
 
 // -------------------- Leadshine Servo Enable strategy --------------------
-// v26.09.29.05: EdgeBox W5500 + isolated native RS485; corrected EL7 SRV-ON configuration to PA4.00 / P04.00
+// v26.09.29.06: EdgeBox W5500 + isolated native RS485; corrected EL7 SRV-ON configuration to PA4.00 / P04.00
 // Input Selection DI1. MotionStudio confirmed the usable no-extra-wire setup
 // is DI1 = Servo ON Input (SRV-ON), Normally Closed, which reads/writes as
 // 0x83. Do not use the old DI5 / P04.04 path; do not use Normally Open
@@ -351,7 +351,7 @@ static const uint32_t MODBUS_FAULT_POLL_MS = 150;
 static const uint32_t MODBUS_REPLY_TIMEOUT_MS = 50;
 static const uint8_t  MODBUS_READ_RETRIES = 3;
 static const uint32_t MODBUS_INTERFRAME_GAP_US = 2000; // > Modbus fixed 1.75 ms t3.5 recommendation above 19.2 kbps
-// v26.09.29.05: EdgeBox W5500 + isolated native RS485; fail the physical link after two consecutive invalid/no-reply
+// v26.09.29.06: EdgeBox W5500 + isolated native RS485; fail the physical link after two consecutive invalid/no-reply
 // transactions, with a 250 ms stale-reply backstop. Require two valid replies
 // before recovering. The 50 ms reply timeout is still generous at 115200 baud,
 // while reducing the time for a removed CN3 lead to become a safety fault.
@@ -386,7 +386,7 @@ static const float MAX_PROFILE_ACCEL_MPS2 = 20.0f;
 static const float MOTION_ZERO_EPS_MPS = 0.005f;
 static const float DYNAMIC_LEAD_TIME_S = 0.50f;
 static const float DYNAMIC_MIN_LEAD_MPS = 0.05f;
-// v26.09.29.05: EdgeBox W5500 + isolated native RS485; Dynamic mode is a closed cable-speed hold. Joystick sets
+// v26.09.29.06: EdgeBox W5500 + isolated native RS485; Dynamic mode is a closed cable-speed hold. Joystick sets
 // target line speed; this PI trim lets the command nudge above/below the shaped
 // target to hold measured feedback speed more precisely under changing load.
 static const float DYNAMIC_SPEED_KP = 0.14f;
@@ -402,13 +402,17 @@ static float g_dynamic_feedback_mps = 0.0f;
 static const uint32_t W1P_STATUS_INTERVAL_MS = 50;
 static const uint32_t W1P_PEER_TIMEOUT_MS = 750;
 // Independent motion-command watchdog. SRVR refreshes an unchanged non-zero
-// VEL at least every 250 ms; generic STATUS/PING traffic must never keep motion
+// VEL at least every 150 ms; generic STATUS/PING traffic must never keep motion
 // alive if the actual SRVR motion loop stops issuing VEL commands.
 static const uint32_t W1P_VEL_COMMAND_TIMEOUT_MS = 500;
 static const float    MAX_CMD_VEL_MPS = 20.0f;
-static const float    LIMIT_STOP_GUARD_BASE_M = 0.03f;
-static const float    LIMIT_STOP_GUARD_PER_MPS = 0.12f;
-static const float    LIMIT_STOP_GUARD_MAX_M = 0.35f;
+// Reaction-aware predictive Near/Far envelope. The configured deceleration is
+// derated so stopping distance does not assume ideal drive/brake performance.
+// SRVR performs the same class of calculation, but W1P is the independent local
+// enforcement point and does not depend on fresh network timing to protect limits.
+static const float    LIMIT_PREDICT_REACTION_S = 0.15f;
+static const float    LIMIT_PREDICT_MARGIN_M = 0.05f;
+static const float    LIMIT_PREDICT_DECEL_FACTOR = 0.75f;
 static const float    AUTO_DRIVE_ARM_MIN_REQUEST_MPS = 0.02f; // do not arm/trigger PR0 at idle
 static const uint32_t AUTO_DRIVE_ARM_REQUEST_FRESH_MS = 450; // command must be recent before arming from WAIT
 static const float    AUTO_DRIVE_DISABLE_ZERO_REQUEST_MPS = 0.01f; // release writes only after commanded stop is settled
@@ -551,7 +555,7 @@ static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_W1P";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL,CTRL_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_W1P_v*.ino.bin firmware. CTRL/CTRL-TS files are rejected.";
 static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=W1P;";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=W1P;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.09.29.05;";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=W1P;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.09.29.06;";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
@@ -1980,6 +1984,19 @@ static float selectedProfileRate(float current, float target) {
 }
 
 
+static float predictiveLimitSpeedCap(float remainingM) {
+  const float usable = max(0.0f, remainingM - LIMIT_PREDICT_MARGIN_M);
+  if (usable <= 0.0f) return 0.0f;
+  // While tapering toward a non-zero cap, selectedProfileRate() uses the normal
+  // deceleration value; use the slower of normal/stop deceleration here so the
+  // envelope never assumes a braking rate the profile will not actually deliver.
+  const float configured = max(0.10f, min(g_drive_decel_mps2, g_drive_stop_decel_mps2));
+  const float a = max(0.10f, configured * LIMIT_PREDICT_DECEL_FACTOR);
+  const float at = a * LIMIT_PREDICT_REACTION_S;
+  // Solve usable = v*t + v^2/(2a) for the positive velocity root.
+  return max(0.0f, sqrtf(max(0.0f, at*at + 2.0f*a*usable)) - at);
+}
+
 static float limitVelocityForSoftLimits(float pos, float requestedVel) {
   if (g.service_mode) return requestedVel;
   if (fabsf(requestedVel) <= MOTION_ZERO_EPS_MPS) return 0.0f;
@@ -1988,22 +2005,14 @@ static float limitVelocityForSoftLimits(float pos, float requestedVel) {
   float fl = g.limit_far_m;
   if (fl < nl) { float t = fl; fl = nl; nl = t; }
 
-  const float stopDecel = max(0.10f, g_drive_stop_decel_mps2);
-  const float fbSpeed = fabsf(g.vel_actual_mps);
-  const float guard = min(LIMIT_STOP_GUARD_MAX_M, max(LIMIT_STOP_GUARD_BASE_M, LIMIT_STOP_GUARD_BASE_M + LIMIT_STOP_GUARD_PER_MPS * fbSpeed));
-
   if (requestedVel < 0.0f) {
     const float remaining = pos - nl;
-    if (remaining <= guard) return 0.0f;
-    const float effective = max(0.0f, remaining - guard);
-    const float allowed = sqrtf(max(0.0f, 2.0f * stopDecel * effective));
+    const float allowed = predictiveLimitSpeedCap(remaining);
     return -min(fabsf(requestedVel), allowed);
   }
   if (requestedVel > 0.0f) {
     const float remaining = fl - pos;
-    if (remaining <= guard) return 0.0f;
-    const float effective = max(0.0f, remaining - guard);
-    const float allowed = sqrtf(max(0.0f, 2.0f * stopDecel * effective));
+    const float allowed = predictiveLimitSpeedCap(remaining);
     return min(fabsf(requestedVel), allowed);
   }
   return 0.0f;
@@ -2026,7 +2035,7 @@ static bool driveAutoEnableReady() {
   if (g.no_motion_feedback_fault && requestingMotion) return false;
 
   if (!g.drive_writes_enabled) {
-    // v26.09.29.05: EdgeBox W5500 + isolated native RS485; only arm from WAIT on a fresh, non-zero joystick command.
+    // v26.09.29.06: EdgeBox W5500 + isolated native RS485; only arm from WAIT on a fresh, non-zero joystick command.
     // Do not re-arm from stale VEL state, and do not arm while the motor is still
     // coasting from a previous PR stop. Once armed, do not drop writes just because
     // feedback velocity becomes non-zero; that caused the observed step/pulse motion.
@@ -2147,16 +2156,18 @@ static void serviceMotionProfile() {
     g.vel_request_mps = 0.0f;
   }
   float target = constrain(g.vel_request_mps, -MAX_CMD_VEL_MPS, MAX_CMD_VEL_MPS);
-  // v26.09.29.05: EdgeBox W5500 + isolated native RS485; predictive hard-limit guard.  SRVR also tapers before
+  // v26.09.29.06: EdgeBox W5500 + isolated native RS485; predictive hard-limit guard.  SRVR also tapers before
   // Near/Far, but W1P applies the same stopping-distance rule locally so a
   // delayed network packet cannot keep driving past an end limit.
   target = limitVelocityForSoftLimits(g.pos_m, target);
 
   // Traditional mode advances the command-only velocity profile at the selected rate.
-  // Dynamic mode treats joystick position as a constant cable-speed request and
-  // keeps the outer command tied to measured winch speed. The EL7's internal
-  // velocity loop then supplies whatever torque is required to hold the target
-  // RPM/cable speed on uphill/downhill cable slopes.
+  // Speed/Dynamic mode treats joystick position as a constant cable-speed request
+  // and keeps a small bounded outer correction tied to measured winch speed. The
+  // EL7 remains in closed-loop velocity mode: uphill under-speed increases torque
+  // demand, while downhill over-speed is resisted by negative/regenerative motor
+  // torque. W1P deliberately never reverses the velocity command merely to brake;
+  // the servo velocity loop provides braking torque while preserving direction.
   const float profileReference = g.vel_profile_mps;
   const float rate = max(0.05f, selectedProfileRate(profileReference, target));
   float nextProfile = moveToward(profileReference, target, rate * dt);
@@ -3005,7 +3016,7 @@ void setup() {
   Serial.printf("%s %s\n", FW_NAME, FW_VERSION);
   Serial.printf("[OTA] Build identity: %s\n", HV_UPDATE_BUILD_TOKEN);
   Serial.println("Leadshine EL7-RS2000P command interface (auto-enable under SRVR safety gate)");
-  Serial.println("v26.09.29.05: retains .07 motion/service/OTA safety and adds coordinated safe W1P IP readdress; existing SRVR/safety + joystick-neutral re-arm retained");
+  Serial.println("v26.09.29.06: retains .07 motion/service/OTA safety and adds coordinated safe W1P IP readdress; existing SRVR/safety + joystick-neutral re-arm retained");
   Serial.println("============================================================");
 
   pinMode(PIN_LOCAL_ESTOP, INPUT);

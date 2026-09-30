@@ -1,0 +1,113 @@
+# HV P2P v26.09.29.06 deep code audit / closure
+
+## Scope
+
+This source release was rebuilt from the last good v26.09.29.05 tree. The audit
+covers SRVR, CTRL EdgeBox, W1P EdgeBox, CTRL-TS Waveshare, both RS485 paths,
+Leadshine motion/commissioning, automatic OTA authority, joystick/E-stop input
+handling, end-limit behaviour and the native build pipeline. GitHub Actions
+remains the authoritative native compiler; physical motion and regenerative-load
+behaviour remain bench commissioning gates.
+
+## CTRL analogue inputs
+
+Commissioned mapping retained:
+- AI0 / pin 14: 5 V normally-closed E-stop status loop;
+- AI1 / pin 16: APEM joystick signal;
+- AGND / pin 12: common analogue reference.
+
+The factory 249-ohm current-input shunts must be removed on the used analogue
+channels for the commissioned voltage-input arrangement. Joystick acquisition
+retains 8 genuinely spaced samples, high/low rejection, averaging and the light
+IIR stage. E-stop invalid/intermediate/fault states resolve unsafe.
+
+## Automatic joystick-centre drift
+
+The new centre manager does not mutate persisted calibration. The calibrated
+Left/Centre/Right points remain authoritative; a separate temporary centre trim
+is applied only after an extended safely stationary, stable-near-neutral period.
+The correction is bounded to +/-3% of the smaller calibrated half-span and uses a
+slow time constant. A larger stable offset is reported as a recalibration issue
+instead of being hidden by automatic learning.
+
+## Predictive stopping / limits
+
+Existing Near/Far positions remain the absolute software hard boundaries. SRVR
+now overlays a stopping-distance envelope using a fixed margin, control-reaction
+allowance and a derated configured deceleration. Existing user ramp zones remain
+additional constraints.
+
+W1P repeats a local version of the same speed cap before motion profiling. This
+is intentionally independent of SRVR display/control refresh, so an already
+received velocity request cannot remain unrestricted all the way to a calibrated
+limit. W1P's local reaction allowance is 150 ms; SRVR uses the slightly more
+conservative 200 ms taper allowance. Both use a 50 mm fixed margin and 75% of the
+slower configured normal/stop deceleration in the envelope calculation.
+
+This feature does not replace physical/hardwired safety functions and must be
+commissioned from low speed before full operating speeds are enabled.
+
+## Speed/Dynamic mode on an incline
+
+The source path was rechecked end-to-end:
+- SRVR `Speed` maps to W1P `DYNAMIC`;
+- W1P retains the Leadshine PR path in velocity mode;
+- W1P runs its local motion profile at 50 Hz and obtains measured drive velocity;
+- a bounded PI trim compares target/profile velocity with measured velocity;
+- under-speed raises the command correction, while over-speed lowers it;
+- correction is bounded and cannot reverse commanded direction.
+
+Therefore uphill/downhill compensation is based on closed-loop velocity error,
+not on an open-loop fixed power percentage. The servo's internal velocity loop is
+responsible for motor torque/current, including negative/regenerative torque when
+holding speed against an overhauling downhill load. W1P must not command reverse
+travel simply to generate braking torque.
+
+The EL7 hardware's regenerative resistor/DC-bus capacity is still a physical
+limit: a long/high-energy descent can require an appropriately sized external
+regenerative arrangement even when the velocity-control software is correct.
+
+## W1P <-> Leadshine retained contracts
+
+- EdgeBox UART1 TX17/RX18/RTS8 in ESP-IDF RS485 half-duplex;
+- 115200 8N1, Modbus slave 1;
+- CRC16 low-byte-first, 2 ms inter-frame gap, 50 ms reply timeout and bounded
+  read retries;
+- P05.29=4, P05.30=6, P05.31=1 commissioning expectations;
+- read-only 38400 8N2 factory-framing diagnostic;
+- independent 500 ms VEL-command freshness watchdog;
+- fail-closed service/OTA gates and software Servo Enable inhibition;
+- FC06/FC16 exception decoding, no stale PR0 trigger after velocity-write
+  failure and no single-failure double-counting.
+
+Hardware note retained: EdgeBox RS485 RJ45 must be custom-mapped to Leadshine
+485+/485-; it is not a straight-through Ethernet pinout. Independent hardwired
+STO/torque-disable remains the recommended ultimate E-stop path because a fully
+broken communications channel cannot carry a software stop.
+
+## CTRL <-> CTRL-TS retained contracts
+
+- CTRL TX17/RX18/RTS8 hardware half-duplex;
+- CTRL-TS RX15/TX16 with automatic transceiver direction;
+- 115200 8N1, 4096-byte RX buffers, 1024-byte firmware blocks;
+- 2.5 ms slave response turnaround;
+- framed sequence/CRC32 protocol;
+- exact target/version/SHA compatibility and idempotent updater recovery;
+- new HELLO/COMPATIBLE session after TS reboot;
+- stale HMI identity cleared on timeout;
+- stable updater-owned splash/progress and headless RS485 recovery if display
+  initialization fails.
+
+The new global preset-name display choice is generated by SRVR and forwarded by
+CTRL over the existing display transport; it does not alter motion/preset
+identity or RS485 firmware protocol semantics.
+
+## Build / validation
+
+The source suite includes the previous RS485/OTA/Leadshine/Modbus/build contracts
+plus the new motion-innovation contract. Safety-critical W1P functions are
+normalised-hash locked after deliberate review. CTRL source still contains the
+mandatory compile guard until GitHub first builds the exact CTRL-TS image and
+stages it into the generated carrier header.
+
+No native ESP32 binaries or desktop executables were fabricated locally.

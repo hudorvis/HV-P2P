@@ -43,6 +43,25 @@ HMI_STATUS_TIMEOUT_S = 3.5
 HMI_DISPLAY_MIN_CHANGE_INTERVAL_S = 0.04
 HMI_DISPLAY_KEEPALIVE_S = 3.0
 VEL_KEEPALIVE_S = 0.15  # refresh unchanged non-zero VEL well inside the 500 ms W1P watchdog
+
+# Automatic centre-drift compensation is deliberately conservative. It is a
+# runtime trim only: calibration endpoints and the saved Centre capture are never
+# silently rewritten. Learning is allowed only while the whole motion system is
+# stationary and the raw stick is already close to the captured centre.
+JOY_CENTRE_DRIFT_IDLE_S = 5.0
+JOY_CENTRE_DRIFT_SAMPLE_WINDOW_S = 2.0
+JOY_CENTRE_DRIFT_CAPTURE_FRAC = 0.08
+JOY_CENTRE_DRIFT_STABILITY_FRAC = 0.015
+JOY_CENTRE_DRIFT_MAX_FRAC = 0.03
+JOY_CENTRE_DRIFT_TAU_S = 20.0
+
+# Predictive Near/Far soft-limit envelope. The configured deceleration is
+# deliberately derated so the calculation does not assume ideal braking. The
+# reaction allowance covers the 50 ms SRVR loop, command transport and drive
+# update latency; W1P independently enforces a matching local envelope.
+PREDICTIVE_LIMIT_REACTION_S = 0.20
+PREDICTIVE_LIMIT_MARGIN_M = 0.05
+PREDICTIVE_LIMIT_DECEL_FACTOR = 0.75
 CTRL_AUX_BITS = (FLAG_AUX1, FLAG_AUX2, FLAG_AUX3, FLAG_AUX4, FLAG_AUX5)
 
 
@@ -200,7 +219,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.09.29.05", smoke_test: bool = False):
+    def __init__(self, version="26.09.29.06", smoke_test: bool = False):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -227,6 +246,11 @@ class HVP2PBackend(QObject):
         self.joystick_cal_left = -1.0
         self.joystick_cal_centre = 0.0
         self.joystick_cal_right = 1.0
+        self._joystick_centre_trim_raw = 0.0
+        self._joystick_centre_idle_since = 0.0
+        self._joystick_centre_samples = deque(maxlen=120)
+        self._joystick_centre_last_update = time.monotonic()
+        self._joystick_centre_warned = False
         self.position_source = "Encoder"
         self._virtual_velocity_mps = 0.0
         self._virtual_last_tick = time.monotonic()
@@ -342,7 +366,11 @@ class HVP2PBackend(QObject):
         self._w1p_rx: queue.Queue[str] = queue.Queue(maxsize=1000)
         self.w1p = W1PClient(self.w1p_ip, self.w1p_port, self._w1p_rx, self._log)
 
+        # Long names remain user-editable. Short names are the fixed P1..P10
+        # identifiers. One global display mode is propagated to SRVR diagrams and
+        # CTRL-TS so the same name style is shown everywhere.
         self.preset_names = [f"P{i}" for i in range(1,11)]
+        self.preset_name_mode = "Short Names"
         self.preset_positions = [None] * 10
         self.preset_visible = [True] * 10
 
@@ -616,23 +644,107 @@ class HVP2PBackend(QObject):
         self._ads1115_status_last_seen = now
         self._ads1115_connected_reported = str(fields.get("ads", fields.get("ads1115", "0"))).strip() == "1"
 
-    def _calibrated_joystick(self, raw: float) -> float:
-        """Piecewise-normalise a raw joystick sample around the captured centre.
+    def _joystick_min_cal_span(self) -> float:
+        try:
+            left = float(self.joystick_cal_left)
+            centre = float(self.joystick_cal_centre)
+            right = float(self.joystick_cal_right)
+            return max(1e-6, min(abs(left-centre), abs(right-centre)))
+        except Exception:
+            return 1.0
 
-        The mapping deliberately supports controllers whose electrical direction
-        is reversed: the physical Left capture always maps to -1 and Right to +1.
-        The separate CTRL Direction setting is then applied afterwards.
+    def _effective_joystick_centre(self) -> float:
+        span = self._joystick_min_cal_span()
+        bound = JOY_CENTRE_DRIFT_MAX_FRAC * span
+        trim = max(-bound, min(bound, float(self._joystick_centre_trim_raw or 0.0)))
+        return float(self.joystick_cal_centre) + trim
+
+    def _reset_joystick_centre_drift(self) -> None:
+        self._joystick_centre_trim_raw = 0.0
+        self._joystick_centre_idle_since = 0.0
+        self._joystick_centre_samples.clear()
+        self._joystick_centre_last_update = time.monotonic()
+        self._joystick_centre_warned = False
+
+    def _update_joystick_centre_drift(self) -> None:
+        """Slowly track small neutral-voltage drift only while safely stationary.
+
+        This never changes saved calibration. A displacement larger than the
+        bounded trim is reported rather than learned away, preserving the ability
+        to detect a failing joystick/input that really needs recalibration.
+        """
+        now = time.monotonic()
+        raw = max(-1.0, min(1.0, float(self._ctrl_axis or 0.0)))
+        span = self._joystick_min_cal_span()
+        centre = float(self.joystick_cal_centre)
+        effective = self._effective_joystick_centre()
+        capture = max(0.003, JOY_CENTRE_DRIFT_CAPTURE_FRAC * span)
+        stable_range = max(0.0015, JOY_CENTRE_DRIFT_STABILITY_FRAC * span)
+        eligible = bool(
+            self._ctrl_connected()
+            and not self.state.estop_active
+            and not self.joystick_calibration_open
+            and self.goto_target_m is None
+            and not self._service_override_active()
+            and not self._joystick_neutral_required
+            and abs(float(self.requested_speed_mps or 0.0)) <= 0.001
+            and abs(float(self.current_speed_mps or 0.0)) <= 0.03
+            and abs(raw-effective) <= capture
+        )
+        if not eligible:
+            self._joystick_centre_idle_since = 0.0
+            self._joystick_centre_samples.clear()
+            self._joystick_centre_last_update = now
+            return
+
+        if self._joystick_centre_idle_since <= 0.0:
+            self._joystick_centre_idle_since = now
+        self._joystick_centre_samples.append((now, raw))
+        cutoff = now - JOY_CENTRE_DRIFT_SAMPLE_WINDOW_S
+        while self._joystick_centre_samples and self._joystick_centre_samples[0][0] < cutoff:
+            self._joystick_centre_samples.popleft()
+        if (now - self._joystick_centre_idle_since) < JOY_CENTRE_DRIFT_IDLE_S or len(self._joystick_centre_samples) < 12:
+            self._joystick_centre_last_update = now
+            return
+
+        vals = [v for _, v in self._joystick_centre_samples]
+        if (max(vals) - min(vals)) > stable_range:
+            self._joystick_centre_last_update = now
+            return
+        mean = sum(vals) / len(vals)
+        max_trim = JOY_CENTRE_DRIFT_MAX_FRAC * span
+        observed_trim = mean - centre
+        desired_trim = max(-max_trim, min(max_trim, observed_trim))
+        dt = max(0.0, min(0.25, now - float(self._joystick_centre_last_update or now)))
+        self._joystick_centre_last_update = now
+        alpha = 1.0 - math.exp(-dt / max(0.1, JOY_CENTRE_DRIFT_TAU_S))
+        self._joystick_centre_trim_raw += (desired_trim - self._joystick_centre_trim_raw) * alpha
+        self._joystick_centre_trim_raw = max(-max_trim, min(max_trim, self._joystick_centre_trim_raw))
+
+        if abs(observed_trim) > max_trim * 1.15:
+            if not self._joystick_centre_warned:
+                pct = 100.0 * observed_trim / max(span, 1e-6)
+                self._log(f"[CTRL] Joystick centre drift {pct:+.1f}% exceeds automatic trim range; recalibration recommended")
+                self._joystick_centre_warned = True
+        elif abs(observed_trim) < max_trim * 0.8:
+            self._joystick_centre_warned = False
+
+    def _calibrated_joystick(self, raw: float) -> float:
+        """Piecewise-normalise a raw joystick sample around the effective centre.
+
+        The captured calibration remains authoritative. The only automatic
+        adjustment is the tightly bounded runtime centre trim above; endpoints are
+        never moved. Physical Left always maps to -1 and Right to +1, with the
+        separate CTRL Direction setting applied afterwards.
         """
         raw = max(-1.0, min(1.0, float(raw)))
         left = float(self.joystick_cal_left)
-        centre = float(self.joystick_cal_centre)
+        centre = self._effective_joystick_centre()
         right = float(self.joystick_cal_right)
         lspan = left - centre
         rspan = right - centre
         if abs(lspan) < 1e-6 or abs(rspan) < 1e-6 or lspan * rspan >= 0.0:
             return raw
-        # Select the physical Left or Right half by which side of centre the raw
-        # sample occupies. This works whether Left is electrically low or high.
         if (raw - centre) * lspan >= 0.0:
             value = -((raw - centre) / lspan)
         else:
@@ -1011,32 +1123,48 @@ class HVP2PBackend(QObject):
         except Exception:
             pass
 
+    @staticmethod
+    def _predictive_speed_cap(remaining_m: float, decel_mps2: float) -> float:
+        """Maximum line speed that can stop inside the remaining distance.
+
+        Uses d = margin + v*t_reaction + v^2/(2a), solved for v. The deceleration
+        passed here is already the active profile's conservative braking value.
+        """
+        d = max(0.0, float(remaining_m) - PREDICTIVE_LIMIT_MARGIN_M)
+        a = max(0.10, float(decel_mps2) * PREDICTIVE_LIMIT_DECEL_FACTOR)
+        t = max(0.0, float(PREDICTIVE_LIMIT_REACTION_S))
+        if d <= 0.0:
+            return 0.0
+        at = a * t
+        return max(0.0, math.sqrt(at*at + 2.0*a*d) - at)
+
     def _hard_limit_velocity(self, pos, req):
+        """Apply ramp zones plus a reaction-aware predictive soft-limit envelope.
+
+        Existing Near/Far positions remain absolute hard boundaries. This layer
+        begins reducing permitted velocity early enough to stop before the end,
+        while W1P independently repeats the stopping-distance cap locally.
+        """
         nl = float(self.state.near_limit.position_m or 0.0)
         fl = float(self.state.far_limit.position_m if self.state.far_limit.position_m is not None else self.state.total_length_m)
         if fl < nl:
             nl, fl = fl, nl
-        if req == 0:
+        if abs(float(req)) <= 1e-9:
             return 0.0
-        a = max(.1, float(self.max_stop_decel_mps2))
-        fb = abs(self.current_speed_mps)
-        guard = max(.03, min(.35, .03 + .12 * fb))
+        decel = max(0.10, min(float(self.max_decel_mps2), float(self.max_stop_decel_mps2)))
+        span = max(0.0, fl - nl)
         if req < 0:
             rem = pos - nl
-            if rem <= guard:
-                return 0.0
-            allow = math.sqrt(max(0, 2*a*(rem-guard)))
-            ramp = self._ramp_distance(self.state.near_limit, fl-nl)
-            if ramp > 0 and pos < nl+ramp:
-                allow = min(allow, abs(req)*max(0, min(1, rem/ramp)))
+            allow = self._predictive_speed_cap(rem, decel)
+            ramp = self._ramp_distance(self.state.near_limit, span)
+            if ramp > 0.0 and pos < nl + ramp:
+                allow = min(allow, abs(req) * max(0.0, min(1.0, rem / ramp)))
             return -min(abs(req), allow)
-        rem = fl-pos
-        if rem <= guard:
-            return 0.0
-        allow = math.sqrt(max(0, 2*a*(rem-guard)))
-        ramp = self._ramp_distance(self.state.far_limit, fl-nl)
-        if ramp > 0 and pos > fl-ramp:
-            allow = min(allow, abs(req)*max(0, min(1, rem/ramp)))
+        rem = fl - pos
+        allow = self._predictive_speed_cap(rem, decel)
+        ramp = self._ramp_distance(self.state.far_limit, span)
+        if ramp > 0.0 and pos > fl - ramp:
+            allow = min(allow, abs(req) * max(0.0, min(1.0, rem / ramp)))
         return min(abs(req), allow)
 
     @staticmethod
@@ -1329,7 +1457,7 @@ class HVP2PBackend(QObject):
             try:
                 n = int(parts[1])
                 if 1 <= n <= len(self.preset_names):
-                    name = str(self.preset_names[n-1] or f"P{n}").strip()
+                    name = self._preset_display_name(n-1)
                     if len(parts) >= 3:
                         return f"{name} {parts[2]}"
             except Exception:
@@ -1449,7 +1577,7 @@ class HVP2PBackend(QObject):
         labels = [self._display_field(self._aux_action_label(i, source="ctrl")) for i in range(5)]
         preset_names, preset_pos, preset_abs, preset_vis = [], [], [], []
         for i in range(10):
-            preset_names.append(self._display_field(self.preset_names[i], 8))
+            preset_names.append(self._display_field(self._preset_display_name(i), 24))
             rel = self.preset_positions[i]
             preset_pos.append("" if rel is None else f"{float(rel):.2f}")
             absolute = self._preset_absolute_position(i)
@@ -1578,6 +1706,7 @@ class HVP2PBackend(QObject):
             self._send_velocity(0.0, force=abs(self.last_sent_vel) > .0001)
             return
 
+        self._update_joystick_centre_drift()
         axis = self._calibrated_joystick(self._ctrl_axis) * (-1 if self.reverse_joystick else 1)
         deadband = max(0.0, min(25.0, float(self.joystick_deadband_pct)))
         if self._joystick_neutral_required:
@@ -2180,6 +2309,7 @@ class HVP2PBackend(QObject):
             right = float(joy_cal.get("right", self.joystick_cal_right))
             if abs(left-centre) >= 0.05 and abs(right-centre) >= 0.05 and (left-centre)*(right-centre) < 0.0:
                 self.joystick_cal_left, self.joystick_cal_centre, self.joystick_cal_right = left, centre, right
+                self._reset_joystick_centre_drift()
         except Exception:
             pass
         self._apply_position_source_runtime(snap.get("position_source", self.position_source), send_safety=not self.smoke_test)
@@ -2325,6 +2455,8 @@ class HVP2PBackend(QObject):
         default_names = [f"P{i}" for i in range(1,11)]
         if "preset_names" in c:
             self.preset_names = [str(x or default_names[i]) for i,x in enumerate(self._normalise_list(c.get("preset_names"), default_names, 10))]
+        if "preset_name_mode" in c:
+            self.preset_name_mode = self._normalise_preset_name_mode(c.get("preset_name_mode"))
         if "preset_positions" in c:
             raw_pos = self._normalise_list(c.get("preset_positions"), [None]*10, 10)
             vals = []
@@ -2516,6 +2648,7 @@ class HVP2PBackend(QObject):
                 right = float(joy_cal.get("right", self.joystick_cal_right))
                 if abs(left-centre) >= 0.05 and abs(right-centre) >= 0.05 and (left-centre)*(right-centre) < 0.0:
                     self.joystick_cal_left, self.joystick_cal_centre, self.joystick_cal_right = left, centre, right
+                    self._reset_joystick_centre_drift()
             except Exception:
                 pass
             # Encoder is the physical source; Virtual is an SRVR-only demo source
@@ -2537,6 +2670,7 @@ class HVP2PBackend(QObject):
 
             default_names = [f"P{i}" for i in range(1,11)]
             self.preset_names = [str(x or default_names[i]) for i,x in enumerate(self._normalise_list(c.get("preset_names"), default_names, 10))]
+            self.preset_name_mode = self._normalise_preset_name_mode(c.get("preset_name_mode", self.preset_name_mode))
             raw_pos = self._normalise_list(c.get("preset_positions"), [None]*10, 10)
             self.preset_positions = []
             for v in raw_pos:
@@ -2655,6 +2789,7 @@ class HVP2PBackend(QObject):
                 "acceleration_mode": self.acceleration_mode,
                 "battery_change_mode": self.battery_change_mode,
                 "preset_names": self.preset_names,
+                "preset_name_mode": self.preset_name_mode,
                 "preset_positions": self.preset_positions,
                 "preset_visible": self.preset_visible,
                 "limits": {
@@ -2769,6 +2904,10 @@ class HVP2PBackend(QObject):
         return float(self._calibrated_joystick(self._ctrl_axis) * 100.0)
     @Property(float, notify=stateChanged)
     def joystickRawValue(self): return float(self._ctrl_axis)
+    @Property(float, notify=stateChanged)
+    def joystickCentreTrimPercentage(self):
+        span = self._joystick_min_cal_span()
+        return float(100.0 * self._joystick_centre_trim_raw / max(span, 1e-6))
     @Property(bool, notify=stateChanged)
     def systemReady(self): return not self.state.estop_active
     @Property(str, notify=stateChanged)
@@ -2853,9 +2992,33 @@ class HVP2PBackend(QObject):
     def accelerationMode(self): return self.acceleration_mode
     @Property(bool, notify=configChanged)
     def batteryChange(self): return self.battery_change_mode
+    @staticmethod
+    def _normalise_preset_name_mode(value) -> str:
+        return "Long Names" if str(value or "").strip().lower().startswith("long") else "Short Names"
+
+    def _preset_display_name(self, i: int) -> str:
+        if not (0 <= int(i) < 10):
+            return ""
+        short_name = f"P{int(i)+1}"
+        if self.preset_name_mode == "Long Names":
+            return str(self.preset_names[int(i)] or short_name).strip() or short_name
+        return short_name
+
+    @Property(str, notify=configChanged)
+    def presetNameMode(self): return str(self.preset_name_mode)
     @Property('QVariantList', notify=configChanged)
     def presets(self):
-        return [{"index":i,"label":f"P{i+1}","name":self.preset_names[i],"position":self.preset_positions[i] if self.preset_positions[i] is not None else 0.0,"set":self.preset_positions[i] is not None,"visible":self.preset_visible[i]} for i in range(10)]
+        return [{
+            "index": i,
+            "label": f"P{i+1}",
+            "shortName": f"P{i+1}",
+            "longName": str(self.preset_names[i] or f"P{i+1}"),
+            "name": str(self.preset_names[i] or f"P{i+1}"),
+            "displayName": self._preset_display_name(i),
+            "position": self.preset_positions[i] if self.preset_positions[i] is not None else 0.0,
+            "set": self.preset_positions[i] is not None,
+            "visible": self.preset_visible[i],
+        } for i in range(10)]
     @Property('QVariantList', notify=configChanged)
     def geometryPoints(self): return self.geometry
     @Property('QVariantList', notify=stateChanged)
@@ -3117,6 +3280,16 @@ class HVP2PBackend(QObject):
         if 0 <= i < 10:
             self.preset_names[i] = str(name).strip() or f"P{i+1}"
             self._save_config(); self._notify_config()
+
+    @Slot(str)
+    def setPresetNameMode(self, mode):
+        new_mode = self._normalise_preset_name_mode(mode)
+        if new_mode == self.preset_name_mode:
+            return
+        self.preset_name_mode = new_mode
+        self._save_config()
+        self._notify_config()
+        self._send_controller_display_packet(force=True)
 
     @Slot(int,float)
     def setPresetPosition(self,i,value):
@@ -3677,6 +3850,7 @@ class HVP2PBackend(QObject):
         # restore the W1P service-mode state before starting joystick capture.
         # Joystick calibration itself never enables service movement.
         self._sync_service_mode_to_winch(force=True)
+        self._reset_joystick_centre_drift()
         self.joystick_calibration_open = True
         self._joystick_neutral_required = True
         self.joystick_calibration_step = 0
@@ -3731,6 +3905,7 @@ class HVP2PBackend(QObject):
                 return
             self.joystick_calibration_error = ""
             self.joystick_calibration_open = False
+            self._reset_joystick_centre_drift()
             # Setup uses explicit Apply/Reset semantics. Completing the wizard
             # stages the new raw calibration only; the live joystick mapping and
             # persistent config are unchanged until Setup Apply is pressed.

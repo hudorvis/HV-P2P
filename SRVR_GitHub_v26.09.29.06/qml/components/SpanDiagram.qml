@@ -286,7 +286,8 @@ Item {
                     c.strokeStyle="#dfe3e1"; c.fillStyle="#dfe3e1"; c.lineWidth=1
                     c.beginPath(); c.arc(px,py,4,0,Math.PI*2); c.stroke()
                     c.font="12px Helvetica Neue"; c.textAlign="center"
-                    c.fillText("P"+(p+1),px,py-15)
+                    var presetLabel = item.displayName ? String(item.displayName) : (item.name ? String(item.name) : ("P"+(p+1)))
+                    c.fillText(presetLabel,px,py-15)
                 }
             }
 

@@ -38,7 +38,7 @@ from backend import (
 )
 
 app = QCoreApplication.instance() or QCoreApplication([])
-b = HVP2PBackend(version="26.09.29.05", smoke_test=True)
+b = HVP2PBackend(version="26.09.29.06", smoke_test=True)
 assert b.reverse_joystick is True, "New/reset CTRL joystick direction must default to Inverted"
 
 def healthy_ctrl_status(*, ctrl_ts=1, ads=1, version="vTEST", compatible=1):
@@ -46,16 +46,16 @@ def healthy_ctrl_status(*, ctrl_ts=1, ads=1, version="vTEST", compatible=1):
     b._ctrl_rx_times.clear()
     b._ctrl_rx_times.extend([now - 0.05, now])
     b._handle_ctrl_hmi_status(
-        f"HMI_STATUS|ctrl_ts={int(ctrl_ts)}|ctrl_version=v26.09.29.05|"
-        f"fw_match=1|fw_authority=matched|fw_required=v26.09.29.05|"
-        f"version={version}|required=v26.09.29.05|fw_state=idle|image=1|"
+        f"HMI_STATUS|ctrl_ts={int(ctrl_ts)}|ctrl_version=v26.09.29.06|"
+        f"fw_match=1|fw_authority=matched|fw_required=v26.09.29.06|"
+        f"version={version}|required=v26.09.29.06|fw_state=idle|image=1|"
         f"compatible={int(compatible)}|age_ms=12|ads={int(ads)}"
     )
 
 def healthy_w1p_status(*, pos=0.0, vel=0.0, ip="172.20.1.102"):
     b.w1p.last_seen = time.time()
     b._parse_w1p(
-        f"STATUS POS_M={pos} VEL_MPS={vel} IP={ip} FW=v26.09.29.05 "
+        f"STATUS POS_M={pos} VEL_MPS={vel} IP={ip} FW=v26.09.29.06 "
         "FW_MATCH=1 FW_AUTH=matched ESTOP=0 VEL_WD=0 SERVICE_LOCK=0 "
         "WRITE_EN=0 SW_SRVON=0 SW_SRVON_INHIBIT=1 BRAKE_OUT=0 "
         "RS_STAT=CONNECTED LEAD_CFG=OK MODBUS=1 READY=1 POS_READ=1 "
@@ -112,10 +112,10 @@ try:
     # controller interface and must not be confused with the binary control stream.
     now = time.time()
     b._ctrl_rx_times.extend([now - 0.05, now])
-    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=1|ctrl_version=v26.09.29.05|fw_match=1|fw_authority=matched|fw_required=v26.09.29.05|version=vTEST|required=v26.09.29.05|fw_state=idle|image=1|compatible=1|age_ms=12|ads=1")
+    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=1|ctrl_version=v26.09.29.06|fw_match=1|fw_authority=matched|fw_required=v26.09.29.06|version=vTEST|required=v26.09.29.06|fw_state=idle|image=1|compatible=1|age_ms=12|ads=1")
     assert b.ctrlTsConnected and b.ads1115Connected
     assert b._ctrl_ts_version == "vTEST" and b._ctrl_ts_age_ms == 12
-    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=0|ctrl_version=v26.09.29.05|fw_match=1|fw_authority=matched|fw_required=v26.09.29.05|version=vTEST|required=v26.09.29.05|fw_state=idle|image=1|compatible=0|age_ms=20|ads=0")
+    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=0|ctrl_version=v26.09.29.06|fw_match=1|fw_authority=matched|fw_required=v26.09.29.06|version=vTEST|required=v26.09.29.06|fw_state=idle|image=1|compatible=0|age_ms=20|ads=0")
     assert not b.ctrlTsConnected and not b.ads1115Connected
     # Old CTRL firmware without a fresh explicit ads= field remains compatible:
     # live joystick packets + no ADS fault bit infer a healthy ADS link.
@@ -133,14 +133,14 @@ try:
     # liveness but must invalidate prior W1P authority/RS485 state until a new
     # complete STATUS arrives.
     healthy_ctrl_status(); healthy_w1p_status()
-    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=1|ctrl_version=v26.09.29.05|version=vTEST|age_ms=12|ads=1")
+    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=1|ctrl_version=v26.09.29.06|version=vTEST|age_ms=12|ads=1")
     b._ctrl_axis = 0.0; b._ctrl_flags = 0; b._motion_tick()
     assert b.state.estop_active and not b._ctrl_fw_match, "Missing CTRL FW_MATCH did not fail closed"
     healthy_ctrl_status(); healthy_w1p_status()
     b._parse_w1p("STATUS FW_MATCH=1 ESTOP=0 VEL_WD=0 SERVICE_LOCK=0 WRITE_EN=0")
     assert not b._w1p_status_fresh() and not b._w1p_fw_match and b.winch_rs_status == "Disconnected"
     healthy_w1p_status()
-    b._parse_w1p("HELLO VER=v26.09.29.05")
+    b._parse_w1p("HELLO VER=v26.09.29.06")
     assert not b._w1p_status_fresh() and not b._w1p_fw_match and b.winch_rs_status == "Disconnected"
     healthy_w1p_status()
     # Clear the deliberate safety transition through the required neutral gate
@@ -178,6 +178,15 @@ try:
     b._motion_tick()
     assert not b.state.estop_active, "Not Calibrated incorrectly triggered E-stop"
     assert 0.0 < abs(b.requested_speed_mps) <= (5.0 / 3.6 + 1e-6), b.requested_speed_mps
+
+    # Predictive stopping produces a monotonic speed envelope before the hard
+    # boundary and still reaches zero at the fixed safety margin. W1P repeats
+    # this independently; this verifies the SRVR side of the same contract.
+    v_far = b._predictive_speed_cap(10.0, 5.0)
+    v_mid = b._predictive_speed_cap(2.0, 5.0)
+    v_near = b._predictive_speed_cap(0.5, 5.0)
+    v_stop = b._predictive_speed_cap(0.05, 5.0)
+    assert v_far > v_mid > v_near > 0.0 and abs(v_stop) < 1e-12
 
     # In normal mode the hard Near limit must block outward travel.
     b._not_calibrated = False
@@ -257,6 +266,15 @@ try:
     # Operator-editable Run fields persist through the backend interface.
     b.setPresetName(0, "Wide Establish")
     assert b.preset_names[0] == "Wide Establish"
+    # Short/Long is one global display choice. The editable long name remains
+    # stored independently while P1..P10 remain fixed short identifiers.
+    b.setPresetNameMode("Short Names")
+    assert b.presetNameMode == "Short Names" and b.presets[0]["displayName"] == "P1"
+    assert "preset_names=P1," in b._build_controller_display_packet()
+    b.setPresetNameMode("Long Names")
+    assert b.presetNameMode == "Long Names" and b.presets[0]["displayName"] == "Wide Establish"
+    assert "preset_names=Wide Establish," in b._build_controller_display_packet()
+    b.setPresetNameMode("Short Names")
     b.setPresetPosition(0, 22.25)
     assert abs(b.preset_positions[0] - 22.25) < 1e-9
     b.setPresetPosition(0, 1234.0)
@@ -375,7 +393,7 @@ try:
     b.resetSetupSettings()
     assert b.setupDraft["drive_modes"][0]["name"] == "Run Saved Mode"
 
-    # v26.09.29.05 Virtual Position Source is a true SRVR demo mode. Setup must
+    # v26.09.29.06 Virtual Position Source is a true SRVR demo mode. Setup must
     # stage it, Apply must activate it, CTRL input may move the simulated position
     # without W1P/EL7 health, and physical W1P feedback must not overwrite it.
     assert b.positionSource == "Encoder"
@@ -480,6 +498,29 @@ try:
     b._ctrl_axis = b.joystick_cal_centre; b._motion_tick()
     assert not b._joystick_neutral_required and abs(b.requested_speed_mps) < 1e-9
     b.joystick_deadband_pct = old_deadband
+
+    # Automatic centre-drift compensation is deliberately small and runtime-only.
+    # Simulate a stable +2% neutral shift after a safe stationary dwell and prove
+    # that the effective centre moves slowly without rewriting the saved centre.
+    b.joystick_cal_left, b.joystick_cal_centre, b.joystick_cal_right = -0.80, 0.0, 0.80
+    b._reset_joystick_centre_drift()
+    healthy_ctrl_status(); healthy_w1p_status(); b._ctrl_flags = 0
+    b.state.estop_active = False; b.goto_target_m = None; b.calibration_open = False
+    b.battery_change_mode = False; b.joystick_calibration_open = False
+    b._joystick_neutral_required = False; b.requested_speed_mps = 0.0; b.current_speed_mps = 0.0
+    drift_now = time.monotonic()
+    b._joystick_centre_idle_since = drift_now - 6.0
+    b._joystick_centre_last_update = drift_now - 0.25
+    for i in range(20):
+        b._joystick_centre_samples.append((drift_now - 1.9 + i*0.095, 0.016))
+    saved_centre = b.joystick_cal_centre
+    b._ctrl_axis = 0.016
+    b._update_joystick_centre_drift()
+    assert 0.0 < b._joystick_centre_trim_raw <= 0.024 + 1e-12
+    assert b.joystick_cal_centre == saved_centre
+    assert b._effective_joystick_centre() > saved_centre
+    b._reset_joystick_centre_drift()
+    assert abs(b._joystick_centre_trim_raw) < 1e-12
 
     # Electrical reversal is also valid: physical Left must still map to -1.
     b.joystick_cal_left, b.joystick_cal_centre, b.joystick_cal_right = 0.80, 0.10, -0.70
@@ -980,7 +1021,7 @@ try:
     assert backup_cfg.is_file()
     expected_backup = json.loads(backup_cfg.read_text())
     b._config_path.write_text('{broken-json', encoding='utf-8')
-    b2 = HVP2PBackend(version="26.09.29.05", smoke_test=True)
+    b2 = HVP2PBackend(version="26.09.29.06", smoke_test=True)
     try:
         assert json.loads(b2._config_path.read_text()) == expected_backup
     finally:
