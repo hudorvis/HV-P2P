@@ -221,7 +221,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.01.01", smoke_test: bool = False):
+    def __init__(self, version="26.10.01.02", smoke_test: bool = False):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -618,6 +618,12 @@ class HVP2PBackend(QObject):
             pass
         return fields
 
+    def _current_firmware_version(self) -> str:
+        return "v" + str(self.version or "").lstrip("vV")
+
+    def _firmware_version_matches_current(self, reported) -> bool:
+        return str(reported or "").strip().lower().lstrip("v") == str(self.version or "").strip().lower().lstrip("v")
+
     def _handle_ctrl_hmi_status(self, line: str):
         """Parse the proven CTRL HMI_STATUS relay packet.
 
@@ -631,11 +637,18 @@ class HVP2PBackend(QObject):
         self._ctrl_ts_last_seen = now
         self._ctrl_ts_connected_reported = str(fields.get("ctrl_ts", "0")).strip() == "1"
         self._ctrl_fw_version = str(fields.get("ctrl_version", self._ctrl_fw_version or ""))
-        # Missing FW_MATCH is intentionally false so older/partial firmware cannot
-        # accidentally satisfy the current SRVR authority contract.
-        self._ctrl_fw_match = str(fields.get("fw_match", "0")).strip() == "1"
         self._ctrl_fw_authority = str(fields.get("fw_authority", "unknown"))
         self._ctrl_fw_required = str(fields.get("fw_required", ""))
+        # Never trust a field node's old-session fw_match=1 by itself. A CTRL that
+        # matched a previous SRVR release may keep running while this newer SRVR
+        # starts. The running CTRL version and the authority version it claims to
+        # require must both equal this SRVR release before the match is accepted.
+        reported_match = str(fields.get("fw_match", "0")).strip() == "1"
+        version_current = self._firmware_version_matches_current(self._ctrl_fw_version)
+        authority_current = self._firmware_version_matches_current(self._ctrl_fw_required)
+        self._ctrl_fw_match = bool(reported_match and version_current and authority_current)
+        if reported_match and not self._ctrl_fw_match:
+            self._ctrl_fw_authority = "stale_release_report"
         self._ctrl_ts_version = str(fields.get("version", ""))
         self._ctrl_ts_required_version = str(fields.get("required", self._ctrl_ts_required_version))
         self._ctrl_ts_fw_state = str(fields.get("fw_state", self._ctrl_ts_fw_state or "idle"))
@@ -875,8 +888,11 @@ class HVP2PBackend(QObject):
             if "FL" in fields: self.state.far_limit.position_m = float(fields["FL"])
             if "VEL_MPS" in fields and self.position_source != "Virtual": self.current_speed_mps = float(fields["VEL_MPS"])
             if "FW" in fields: self._w1p_fw_version = str(fields["FW"])
-            self._w1p_fw_match = str(fields.get("FW_MATCH", "0")).strip() == "1"
+            reported_w1p_match = str(fields.get("FW_MATCH", "0")).strip() == "1"
+            self._w1p_fw_match = bool(reported_w1p_match and self._firmware_version_matches_current(self._w1p_fw_version))
             self._w1p_fw_authority = str(fields.get("FW_AUTH", "unknown"))
+            if reported_w1p_match and not self._w1p_fw_match:
+                self._w1p_fw_authority = "stale_release_report"
             if "IP" in fields: self.w1p_reported_ip = str(fields["IP"])
             if "WRITE_EN" in fields: self.winch_drive_writes_enabled = fields["WRITE_EN"].lower() in ("1","true","on")
             if "UPM" in fields: self.winch_units_per_m = float(fields["UPM"])
@@ -2531,7 +2547,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.01.01 moves the installed joystick polarity correction into CTRL,
+        # v26.10.01.02 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same
@@ -2911,24 +2927,34 @@ class HVP2PBackend(QObject):
     @Property(str, notify=stateChanged)
     def ctrlTsVersion(self): return str(self._ctrl_ts_version or "—")
     @Property(str, notify=stateChanged)
-    def ctrlTsRequiredVersion(self): return str(self._ctrl_ts_required_version or "—")
+    def ctrlTsRequiredVersion(self):
+        # SRVR is the release authority. Do not display an old CTRL's embedded
+        # requirement as current when a newer SRVR has just started.
+        return self._current_firmware_version()
     @Property(str, notify=stateChanged)
     def ctrlTsFirmwareState(self):
+        raw = str(self._ctrl_ts_fw_state or "idle")
+        current = self._firmware_version_matches_current(self._ctrl_ts_version)
+        authority_current = bool(self._ctrl_fw_match)
         states = {
-            "idle": "Up to date" if self.ctrlTsConnected else "Idle",
             "starting": "Starting update",
             "transferring": "Updating",
             "verifying": "Verifying",
             "rebooting": "Rebooting",
             "image_missing": "Image not staged",
         }
-        return states.get(str(self._ctrl_ts_fw_state or "idle"), str(self._ctrl_ts_fw_state or "Idle"))
+        if raw == "idle":
+            if not self.ctrlTsConnected:
+                return "Idle"
+            return "Up to date" if current and authority_current else "Update required"
+        return states.get(raw, raw)
     @Property(bool, notify=stateChanged)
     def ctrlTsImageAvailable(self): return bool(self._ctrl_ts_image_available)
     @Property(bool, notify=stateChanged)
     def ctrlTsCompatible(self):
         return bool(self._ctrl_ts_compatible_reported and self._ctrl_ts_last_seen > 0 and
-                    time.time() - self._ctrl_ts_last_seen <= HMI_STATUS_TIMEOUT_S)
+                    time.time() - self._ctrl_ts_last_seen <= HMI_STATUS_TIMEOUT_S and
+                    self._firmware_version_matches_current(self._ctrl_ts_version) and self._ctrl_fw_match)
     def _joystick_input_connected(self):
         if not self._ctrl_connected() or bool(self._ctrl_flags & FLAG_ADS1115_FAULT):
             return False

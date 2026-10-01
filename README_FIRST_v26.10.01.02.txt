@@ -1,4 +1,4 @@
-HV P2P v26.10.01.01 - GITHUB READY SOURCE
+HV P2P v26.10.01.02 - GITHUB READY SOURCE
 
 PURPOSE
 This is the direct bug-fix successor to the authoritative v26.09.29.06 source.
@@ -13,7 +13,7 @@ applications. The workflow builds CTRL-TS first, embeds that exact native image
 and SHA into staged CTRL, then builds CTRL and W1P before creating the matching
 SRVR desktop artifacts and Complete Release.
 
-KEY v26.10.01.01 CHANGES
+KEY v26.10.01.02 CHANGES
 - AI0 E-stop and AI1 joystick reads are explicit verified SGM58031 transactions;
   AI1 restoration is guaranteed after AI0 sampling attempts.
 - Physical CTRL E-stop identity is separated from CTRL-TS/firmware safety faults.
@@ -31,17 +31,17 @@ KEY v26.10.01.01 CHANGES
   RS485, Leadshine and hard-limit protections are retained.
 
 VERSION / BUILD IDENTITY
-Application/release: 26.10.01.01
+Application/release: 26.10.01.02
 macOS short version: 26.10.1
-macOS bundle build: 2610.1.1
+macOS bundle build: 2610.1.2
 
 FIRST COMMISSIONING
 Use the GitHub-produced COMPLETE_RELEASE/FIRMWARE/STAGED_SOURCE folders for any
 manual commissioning flash. Read:
-- INITIAL_BOOTSTRAP_v26.10.01.01.md
-- NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.10.01.01.md
-- CTRL_JOYSTICK_WIRING_v26.10.01.01.md
-- ARDUINO_IDE_SETTINGS_v26.10.01.01.md
+- INITIAL_BOOTSTRAP_v26.10.01.02.md
+- NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.10.01.02.md
+- CTRL_JOYSTICK_WIRING_v26.10.01.02.md
+- ARDUINO_IDE_SETTINGS_v26.10.01.02.md
 
 After flashing, verify AI0 E-stop and AI1 joystick diagnostics, confirm physical
 Left/Right polarity at low speed, prove a fresh boot enters System Un-Calibrated,

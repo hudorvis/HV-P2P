@@ -12,7 +12,7 @@
 #include <mbedtls/sha256.h>
 #include <esp_ota_ops.h>
 
-#define CTRL_TS_SEMVER "v26.10.01.01"
+#define CTRL_TS_SEMVER "v26.10.01.02"
 #define CTRL_TS_VERSION "HV P2P CTRL-TS " CTRL_TS_SEMVER
 #define CTRL_TS_HW_ID "WS-ESP32S3-7"
 #define HMI_BAUD 115200
@@ -86,6 +86,7 @@ static lv_obj_t *boot_canvas = nullptr;
 static lv_obj_t *g_main_scr = nullptr;
 static lv_obj_t *g_fw_connection_lbl = nullptr;
 static bool g_fw_runtime_screen = false;
+static int g_fw_last_display_pct = -1;
 static lv_color_t *boot_canvas_buf = nullptr;
 static lv_color_t *boot_decode_buf = nullptr;
 static int boot_w = 0;
@@ -180,7 +181,7 @@ static float g_last_ramp_near_draw = -999999.0f;
 static float g_last_ramp_far_draw = -999999.0f;
 
 // -------------------- CTRL-TS Settings page --------------------
-// Safe v26.10.01.01 approach: no backlight/brightness writes. This page only
+// Safe v26.10.01.02 approach: no backlight/brightness writes. This page only
 // edits CTRL network settings over UART and therefore should preserve the known
 // Keep the proven splash/boot path; do not write to the backlight controller.
 static lv_obj_t *settings_overlay = nullptr;
@@ -229,7 +230,7 @@ static void force_screen_refresh(){
 }
 
 static void screen_keepalive(){
-  // v26.10.01.01: no periodic full-screen or left-strip invalidation or brightness writes.
+  // v26.10.01.02: no periodic full-screen or left-strip invalidation or brightness writes.
   // The Waveshare/LVGL port refreshes changed objects itself; forcing a full
   // screen refresh every second caused the visible 1-second flicker/glitch.
   if(!g_ui_ready) return;
@@ -240,7 +241,7 @@ static void set_label_text_if_changed(lv_obj_t *lbl, const char *txt){
   const char *cur = lv_label_get_text(lbl);
   if(cur && strcmp(cur, txt) == 0) return;
   lv_label_set_text(lbl, txt);
-  // v26.10.01.01: label-only invalidation. Parent/full-strip invalidation can
+  // v26.10.01.02: label-only invalidation. Parent/full-strip invalidation can
   // cause the known vertical tear on the left AUX area of this panel.
   lv_obj_invalidate(lbl);
 }
@@ -327,15 +328,19 @@ static String fw_connection_text(){
 }
 
 static void fw_ensure_update_screen(){
-  // During boot the existing splash already owns the display. After the normal UI
-  // has started, create one dedicated update screen and keep it loaded until the
-  // verified reboot (or an explicit failure), so normal status rendering cannot
-  // flash through between firmware blocks.
-  if(boot_scr) return;
+  // Firmware transfer always owns a dedicated, opaque, low-redraw screen. In
+  // v26.10.01.01 a transfer that started during boot reused the JPEG splash
+  // canvas; progress redraws over that large canvas produced the vertically
+  // displaced/duplicated splash seen on the real Waveshare panel. Replace the
+  // splash as soon as FW_BEGIN arrives, just as we replace the normal UI at
+  // runtime, and keep this screen loaded until verified reboot/failure.
+  if(g_fw_runtime_screen && boot_scr) return;
   lvgl_port_lock(-1);
+  lv_obj_t *previous_scr = boot_scr;
   const int w = lv_disp_get_hor_res(NULL) > 0 ? lv_disp_get_hor_res(NULL) : 800;
   const int h = lv_disp_get_ver_res(NULL) > 0 ? lv_disp_get_ver_res(NULL) : 480;
-  boot_scr = lv_obj_create(NULL);
+  lv_obj_t *update_scr = lv_obj_create(NULL);
+  boot_scr = update_scr;
   lv_obj_clear_flag(boot_scr, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_bg_color(boot_scr, lv_color_hex(0x06101c), 0);
   lv_obj_set_style_bg_opa(boot_scr, LV_OPA_COVER, 0);
@@ -376,11 +381,13 @@ static void fw_ensure_update_screen(){
   lv_obj_clear_flag(boot_progress_bar, LV_OBJ_FLAG_HIDDEN);
 
   lv_scr_load(boot_scr);
+  if(previous_scr && previous_scr != boot_scr) lv_obj_del(previous_scr);
+  boot_status_bar = nullptr;
+  boot_canvas = nullptr;
+  if(boot_canvas_buf){ free(boot_canvas_buf); boot_canvas_buf = nullptr; }
   g_fw_runtime_screen = true;
+  g_fw_last_display_pct = -1;
   g_boot_status_cache = "";
-#if defined(LV_VERSION_MAJOR) && (LV_VERSION_MAJOR >= 8)
-  lv_refr_now(NULL);
-#endif
   lvgl_port_unlock();
 }
 
@@ -393,7 +400,10 @@ static void fw_set_status_pct(const char *phase, int pct){
     set_label_text_if_changed(g_fw_connection_lbl, conn.c_str());
     lvgl_port_unlock();
   }
-  boot_set_progress(pct);
+  if(pct != g_fw_last_display_pct){
+    boot_set_progress(pct);
+    g_fw_last_display_pct = pct;
+  }
   char status[112];
   snprintf(status, sizeof(status), "CTRL Connected | SRVR %s | %s | %d%%",
            g_boot_srvr_confirmed ? "Connected" : "Waiting", phase ? phase : "Updating CTRL-TS firmware", pct);
@@ -875,7 +885,7 @@ static void confirm_aux_idx(int idx, bool send_command){
   selected_aux = -1;
   g_selected_aux_ms = 0;
   confirmed_aux = idx;
-  clear_confirm_at = now_ms + 2000;  // v26.10.01.01: confirmed AUX tile stays lit for 2 seconds
+  clear_confirm_at = now_ms + 2000;  // v26.10.01.02: confirmed AUX tile stays lit for 2 seconds
   g_aux_suppress_until_ms[idx] = now_ms + 400;
   style_aux(idx,false,true);
   snprintf(msg,sizeof(msg),"AUX %d Confirmed", idx+1);
@@ -937,7 +947,7 @@ static void style_w1p_status_pill(int state){
 }
 
 static void style_estop_pill(bool active){
-  // v26.10.01.01: the middle status banner follows the SRVR-resolved state.
+  // v26.10.01.02: the middle status banner follows the SRVR-resolved state.
   // A local CTRL-TS UART/display gap must not invent "E-Stop CTRL" while SRVR
   // is still sending Status | Active. Real CTRL/W1P E-Stops are still shown
   // immediately when SRVR sends status=E-Stop... / status_level=red.
@@ -970,7 +980,8 @@ static void style_estop_pill(bool active){
   String shown;
   if(level >= 2){
     String detail = text;
-    if(detail.startsWith("E-Stop ")) detail = detail.substring(7);
+    if(detail.startsWith("E-Stop | ") || detail.startsWith("E-Stop / ")) detail = detail.substring(9);
+    else if(detail.startsWith("E-Stop ")) detail = detail.substring(7);
     shown = "◇  E-STOP | " + detail;
   } else {
     shown = "◇  STATE | " + text;
@@ -982,7 +993,7 @@ static void refresh_status_ui(){
   style_status_pill_cached(0,pill_ctrl,lbl_ctrl,"CTRL",g_ctrl_ok);
   if(pill_srvr && lbl_srvr) style_status_pill_cached(1,pill_srvr,lbl_srvr,"SRVR",g_srvr_ok);
   style_w1p_status_pill(g_w1p_health);
-  // v26.10.01.01: do not turn the main middle box red purely because the
+  // v26.10.01.02: do not turn the main middle box red purely because the
   // CTRL-TS local UART/display link hiccuped. The SRVR status packet is the
   // authoritative source for Active / Un-Calibrated / E-Stop display state.
   bool stopped_visual = (g_status_level >= 2) || g_estop_active;
@@ -1438,13 +1449,20 @@ static void apply_hmi_packet(const String &line){
     else g_status_level = 0;
   }
 
-  // v26.10.01.01: if SRVR sends explicit status/status_level, trust it as
+  // v26.10.01.02: if SRVR sends explicit status/status_level, trust it as
   // the authoritative display state. Do not override it locally with a CTRL
   // error just because the touchscreen/CTRL UART side saw a transient gap.
   g_estop_active = packet_estop;
   if(srcField.length()) g_estop_source = srcField;
   else if(g_estop_active) g_estop_source = "CTRL";
   else g_estop_source = "";
+  if(g_estop_active && g_estop_source.length()){
+    String src = g_estop_source;
+    src.replace("+", " & ");
+    g_estop_source = src;
+    g_status_text = "E-Stop " + src;
+    g_status_level = 2;
+  }
 
   if(!statusField.length()){
     if(!g_ctrl_ok){
@@ -1545,7 +1563,7 @@ static void apply_hmi_packet(const String &line){
   if(mode_changed || (prev_status_text != g_status_text) || (prev_status_level != g_status_level) || (prev_estop != g_estop_active) || (prev_estop_source != g_estop_source) || (prev_ctrl != g_ctrl_ok) || (prev_srvr != g_srvr_ok) || (prev_w1p != g_w1p_ok) || (prev_w1p_health != g_w1p_health)) {
     refresh_status_ui();
   }
-  // v26.10.01.01: no left-strip/full-screen invalidation on packets; progress marker animates locally.
+  // v26.10.01.02: no left-strip/full-screen invalidation on packets; progress marker animates locally.
 }
 
 
@@ -1554,7 +1572,7 @@ static void apply_layout_packet(const String &line){
   // on CTRL cannot overwrite the screen title/version or trigger header redraws.
   String hint = getField(line, "hint");
   if(lbl_title) set_label_text_if_changed(lbl_title, "HV P2P\nCTRL-TS");
-  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.01.01");
+  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.01.02");
   if(hint.length() && hint.startsWith("ERROR")) set_touch_debug(hint.c_str());
   for(int i=0;i<AUX_COUNT;i++){
     String key = String("aux") + String(i+1);
@@ -1631,6 +1649,7 @@ static void fw_abort(const char *reason, uint16_t seq=0){
   fw_sha_release();
   g_fw_update_active = false;
   g_fw_finalized = false;
+  g_fw_last_display_pct = -1;
   g_fw_final_size = 0;
   g_fw_final_sha = "";
   g_fw_expected_size = 0;
@@ -1690,6 +1709,7 @@ static void fw_handle_begin(const HVP2PRS485::Frame &frame){
   }
   g_fw_sha_active = true;
   g_fw_update_active = true;
+  g_fw_last_display_pct = -1;
   g_fw_expected_size = imageSize;
   g_fw_received = 0;
   g_fw_expected_sha = sha;
@@ -1884,7 +1904,7 @@ static void create_ui(){
   lv_obj_t *brand=make_panel(frame,SX,HEADER_Y,70,HEADER_H,C_BG,0x63d84e,7);
   lbl_title=make_label(brand,"HV P2P\nCTRL-TS",0,6,&lv_font_montserrat_12,lv_color_hex(C_FG),70);
   lv_obj_set_style_text_line_space(lbl_title,-2,0);
-  lbl_subtitle=make_label(frame,"v26.10.01.01",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
+  lbl_subtitle=make_label(frame,"v26.10.01.02",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
 
   pill_ctrl=make_panel(frame,255,HEADER_Y,126,HEADER_H,C_PANEL,C_BORDER,5);
   dot_ctrl=lv_obj_create(pill_ctrl); lv_obj_set_pos(dot_ctrl,9,15); lv_obj_set_size(dot_ctrl,8,8); lv_obj_set_style_radius(dot_ctrl,LV_RADIUS_CIRCLE,0); lv_obj_set_style_border_width(dot_ctrl,0,0); lv_obj_set_style_bg_color(dot_ctrl,lv_color_hex(0xef5757),0); lv_obj_clear_flag(dot_ctrl,LV_OBJ_FLAG_SCROLLABLE);
@@ -1996,7 +2016,7 @@ static void service_link_state(){
 
   bool link_alive = last_hmi_rx && ((millis() - last_hmi_rx) <= HMI_TIMEOUT_MS);
   if(!link_alive) {
-    // v26.10.01.01: local UART/display timeout is a CTRL-TS link warning, not
+    // v26.10.01.02: local UART/display timeout is a CTRL-TS link warning, not
     // proof of a real CTRL E-Stop. Keep the last SRVR-resolved status banner so
     // the touchscreen cannot randomly show "Status | E-Stop CTRL" while SRVR
     // remains "Status | Active". The CTRL status pill can still show ERROR.

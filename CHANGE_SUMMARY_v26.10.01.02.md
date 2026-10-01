@@ -1,10 +1,30 @@
-# HV P2P v26.10.01.01 change summary
+# HV P2P v26.10.01.02 change summary
 
-v26.10.01.01 is the first 1 October 2026 revision and is built directly from
-the authoritative `HV P2P v26.09.29.06` source. It preserves the approved .06
-UI and the existing RS485, OTA, Leadshine, velocity-watchdog, joystick filtering,
-centre-drift, predictive-stopping and hard-limit architecture except where the
-reported safety/status/update defects required a change.
+v26.10.01.02 is the second 1 October 2026 revision. It is built directly from
+v26.10.01.01, which itself was built from the authoritative v26.09.29.06 source.
+The approved UI and the existing RS485, OTA, Leadshine, velocity-watchdog,
+joystick filtering, centre-drift, predictive-stopping and hard-limit architecture
+remain unchanged except for the field-feedback fixes below.
+
+## v26.10.01.02 hardware-feedback fixes
+
+- CTRL and W1P no longer treat a successful SRVR firmware match as permanent for
+  the whole power session. They re-fetch the small SRVR authority manifest every
+  2 seconds while matched. An unchanged manifest avoids re-hashing flash; a new
+  version/SHA immediately invalidates the old match and enters the existing safe
+  OTA path. A field-node reboot is no longer required to discover a newer SRVR.
+- SRVR independently checks reported node versions against its own release. Old
+  `fw_match=1` state from a previous SRVR session is classified as stale, and the
+  CTRL-TS panel reports **Update required** rather than **Up to date** until the
+  current release is actually installed.
+- CTRL-TS now replaces the JPEG boot splash with the same dedicated opaque update
+  screen used for runtime updates as soon as FW_BEGIN is accepted. The JPEG canvas
+  is deleted/freed before transfer redraws, and the progress bar is only redrawn
+  when the displayed integer percentage changes. This addresses the vertical
+  duplicate/shift flash visible in the supplied bench video.
+- CTRL-TS reconstructs E-stop display text from the delimiter-safe `estop_src`
+  field. The packet sanitisation of `E-Stop | W1P` can therefore no longer render
+  the incorrect `E-STOP | / W1P` status.
 
 ## CTRL AI0 / AI1 acquisition hardening
 
@@ -49,8 +69,8 @@ reported safety/status/update defects required a change.
 
 ## CTRL-TS firmware update display
 
-- A runtime firmware update now creates/owns a dedicated full-screen update view
-  after the normal boot splash has been destroyed.
+- A firmware update creates/owns a dedicated full-screen update view whether it
+  begins during the boot splash or after the normal UI has started.
 - The screen shows CTRL/SRVR connection state plus stable update phase, percentage
   and progress bar.
 - Normal CFG/HMI rendering, link-state drawing and screen keepalive rendering are
@@ -67,6 +87,6 @@ reported safety/status/update defects required a change.
   calibrated state, Virtual-mode W1P readiness bypass and the downstream default
   joystick inversion.
 - macOS bundle metadata is advanced to short version `26.10.1` and build
-  `2610.1.1`; application/release identity is `26.10.01.01`.
+  `2610.1.2`; application/release identity is `26.10.01.02`.
 - GitHub Actions remains the authoritative native Arduino and frozen desktop
   compiler. No local native firmware binary is substituted into this source ZIP.

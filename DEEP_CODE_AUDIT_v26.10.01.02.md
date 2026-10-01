@@ -1,4 +1,17 @@
-# HV P2P v26.10.01.01 deep code audit / closure
+# HV P2P v26.10.01.02 deep code audit / closure
+
+## v26.10.01.02 field-feedback addendum
+
+Bench testing of v26.10.01.01 exposed three additional release-management/display
+defects: matched CTRL/W1P nodes stopped polling SRVR authority until reboot; SRVR
+trusted that stale match when presenting firmware status; and a CTRL-TS update
+that began during boot reused the JPEG splash instead of the dedicated update
+screen. The supplied video also confirmed refresh-time vertical duplication while
+that splash canvas remained active. v26.10.01.02 makes firmware-authority matching
+periodic, makes SRVR independently validate reported versions, replaces the boot
+splash on FW_BEGIN, throttles progress redraws to changed percentages, and rebuilds
+E-stop banner text from `estop_src` so packet delimiter sanitisation cannot produce
+`E-STOP | / W1P`.
 
 ## Scope and baseline
 
@@ -17,7 +30,7 @@ was already on AI1, and `sampleCtrlEstopAI0()` could return on an AI0 read failu
 before restoring AI1. Health/diagnostic readers could also consume whichever mux
 channel happened to be active and assign it a semantic label.
 
-v26.10.01.01 makes channel selection part of each analogue transaction. The mux
+v26.10.01.02 makes channel selection part of each analogue transaction. The mux
 write is read back/verified, enough conversion time is allowed, stale data is
 discarded, and the requested channel is then sampled. AI0 E-stop sampling has a
 guaranteed AI1 restore path. Diagnostic joystick voltage/raw values come from the
@@ -36,7 +49,7 @@ allowing a previous position reference to survive a complete new session. The ma
 SRVR banner also considered only E-stop/safety for green readiness, while a
 separate CTRL-TS packet path already knew about an uncalibrated yellow state.
 
-v26.10.01.01 makes position-reference validity non-persistent authority. SRVR
+v26.10.01.02 makes position-reference validity non-persistent authority. SRVR
 starts uncalibrated regardless of saved `not_calibrated_mode`, and imported Run
 configuration cannot clear that requirement. W1P now publishes a per-boot random
 `BOOT_ID`; a new W1P session or changed boot ID invalidates an established runtime
@@ -58,7 +71,7 @@ SRVR then defaulted `reverse_joystick=True` as a downstream compensation. That
 compensation was not applied consistently to the Value/Percentage readouts and
 could double-invert an explicitly captured Left/Centre/Right calibration.
 
-v26.10.01.01 fixes polarity once at the CTRL input boundary: physical Left maps
+v26.10.01.02 fixes polarity once at the CTRL input boundary: physical Left maps
 to negative axis and physical Right to positive. SRVR defaults to Normal and the
 calibrated readout, joystick request and limit-direction path share that sign.
 The configuration migration preserves identity defaults and sign-migrates actual
@@ -73,7 +86,7 @@ startup those LVGL objects were deleted/null, yet runtime `FW_BEGIN/FW_BLOCK`
 handlers continued attempting to update them while the normal HMI/link timers
 kept rendering. The updater therefore had no persistent post-boot screen owner.
 
-v26.10.01.01 creates a dedicated runtime firmware-update screen when needed and
+v26.10.01.02 creates a dedicated runtime firmware-update screen when needed and
 makes the updater the exclusive display owner from update start through verified
 completion/reboot. It shows connection state, stable phase/percentage and a
 progress bar. Normal CFG/HMI screen updates, link-state drawing and keepalive
