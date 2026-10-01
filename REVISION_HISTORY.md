@@ -1,5 +1,27 @@
 # HV P2P Revision History
 
+## v26.10.01.01
+- Built directly from authoritative v26.09.29.06.
+- Hardened SGM58031 acquisition so CTRL AI0 E-stop and AI1 joystick reads each
+  explicitly select/verify their mux channel; AI1 restore is guaranteed after AI0
+  sampling failures and diagnostics no longer read an unidentified active channel.
+- Split physical CTRL AI0 E-stop from CTRL-TS link/firmware safety bits while
+  retaining fail-safe stop behaviour.
+- Made position reference session-only: SRVR always starts uncalibrated and a new
+  W1P boot/session invalidates reference using W1P `BOOT_ID`. Limit Calibration or
+  existing Slip/re-reference operations establish a new runtime reference.
+- Unified top status priority: red safety/fault/E-stop, then yellow **System
+  Un-Calibrated**, then green **System Ready**. Missing/unsafe W1P is never hidden
+  by Virtual Position Source.
+- Corrected installed AI1 joystick polarity at CTRL so physical Left is negative
+  and Right positive; SRVR now defaults to Normal and migrates prior captured
+  calibration points once.
+- Added exclusive CTRL-TS runtime firmware-update screen ownership with stable
+  CTRL/SRVR connection state and percentage/progress, preventing normal rendering
+  from flashing over an active update.
+- Added regression locks for all of the above and updated macOS bundle metadata to
+  short version `26.10.1`, build `2610.1.1`.
+
 ## v26.09.29.06
 - SRVR CTRL Setup labels are now **Value** and **Percentage**, with a common
   right-aligned value column.

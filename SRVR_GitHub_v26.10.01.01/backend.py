@@ -34,6 +34,8 @@ FLAG_ADS1115_FAULT = 0x0200
 # A7 carries 16-bit flags. AUX5 is a touchscreen/virtual AUX extension that is
 # backward-compatible with v26.06.26.25 controllers which simply leave it clear.
 FLAG_AUX5 = 0x0400
+FLAG_CTRL_HMI_FAULT = 0x0800
+FLAG_CTRL_FW_FAULT = 0x1000
 CTRL_RX_WINDOW_S = 0.75
 CTRL_RX_MIN_PKTS = 2
 JOY_DEADBAND_PCT = 5.0
@@ -219,7 +221,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.09.29.06", smoke_test: bool = False):
+    def __init__(self, version="26.10.01.01", smoke_test: bool = False):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -235,9 +237,10 @@ class HVP2PBackend(QObject):
         self.w1p_ip = "172.20.1.102"
         self.w1p_reported_ip = ""
         self.w1p_port = 5000
-        # Default new/reset installations to the physical direction used by the commissioned CTRL joystick.
-        # Saved/imported configurations remain authoritative and are not silently flipped.
-        self.reverse_joystick = True
+        # CTRL now normalises the installed APEM electrical polarity at the hardware
+        # boundary: physical Left=-1 and Right=+1. The user Invert option remains
+        # available, but the safe/default direction is therefore Normal.
+        self.reverse_joystick = False
         self.reverse_motor = False
         self.joystick_deadband_pct = JOY_DEADBAND_PCT
         # Joystick calibration maps the CTRL raw -1..+1 value onto a corrected
@@ -315,6 +318,7 @@ class HVP2PBackend(QObject):
         self.winch_vel_watchdog_fault = False
         self.winch_service_safety_lock = False
         self._w1p_internal_safety = False
+        self._w1p_boot_id = ""
         self._ctrl_estop = False
         self._srvr_estop = False
         self._not_calibrated = True
@@ -758,6 +762,16 @@ class HVP2PBackend(QObject):
         return len(self._ctrl_rx_times) >= CTRL_RX_MIN_PKTS
 
     # --- W1P parsing / motion ---
+    def _invalidate_position_reference(self, reason: str) -> None:
+        """Require a known-position reference after process/W1P power-session loss."""
+        was_calibrated = not bool(self._not_calibrated)
+        self._not_calibrated = True
+        self._cancel_goto()
+        if was_calibrated:
+            self._log(f"[Calibration] Position reference invalidated: {reason}")
+        self._sync_service_mode_to_winch(force=True)
+        self.stateChanged.emit()
+
     def _invalidate_w1p_status(self):
         # A new peer/session or malformed STATUS must not inherit stale authority,
         # RS485 or safety state from the previous session. Ethernet liveness and
@@ -812,16 +826,20 @@ class HVP2PBackend(QObject):
             self._invalidate_w1p_status()
             return
         if line.startswith("HELLO"):
-            # A HELLO follows a new W1P peer/socket association, including a
-            # deliberate Setup IP readdress reboot. Capture the actual firmware
-            # identity for Setup diagnostics, then re-send the complete live
-            # W1P contract because packets sent while the EdgeBox rebooted may
-            # have been lost.
+            # HELLO represents a new W1P transport/power session. Never inherit a
+            # position reference across that boundary: the cable may have moved
+            # while W1P/drive power was absent. A Slip or Limit Calibration must
+            # explicitly establish the new physical reference.
             self._invalidate_w1p_status()
+            boot_id = ""
             for token in line.split()[1:]:
                 if token.startswith("VER="):
                     self._w1p_fw_version = token.split("=", 1)[1].strip()
-                    break
+                elif token.startswith("BOOT_ID="):
+                    boot_id = token.split("=", 1)[1].strip()
+            if boot_id:
+                self._w1p_boot_id = boot_id
+            self._invalidate_position_reference("W1P session/boot changed")
             if not self.smoke_test:
                 self._sync_w1p_settings()
             return
@@ -842,6 +860,11 @@ class HVP2PBackend(QObject):
         if not required_status.issubset(fields):
             return
         try:
+            boot_id = str(fields.get("BOOT_ID", "")).strip()
+            if boot_id:
+                if self._w1p_boot_id and boot_id != self._w1p_boot_id:
+                    self._invalidate_position_reference("W1P boot identifier changed")
+                self._w1p_boot_id = boot_id
             if "POS_M" in fields and self.position_source != "Virtual":
                 new_pos = float(fields["POS_M"])
                 if self._sanity_accept_winch_position(new_pos, fields):
@@ -1567,7 +1590,7 @@ class HVP2PBackend(QObject):
             status = "Winch Calibration" if self.calibration_type == "Winch" else "Limit Calibration"
             level, source, estop = "yellow", "", 0
         elif self._not_calibrated:
-            status, level, source, estop = "Un-Calibrated", "yellow", "", 0
+            status, level, source, estop = "System Un-Calibrated", "yellow", "", 0
         else:
             status, level, source, estop = "Active", "green", "", 0
 
@@ -1638,24 +1661,25 @@ class HVP2PBackend(QObject):
         self._ctrl_estop = bool(flags & FLAG_ESTOP_PRESSED)
 
         # Fail-safe sources include physical/link/RS485 faults plus W1P local command/service watchdogs.
-        # Not-calibrated and calibration are SERVICE states, not E-stop states.
-        physical_winch_required = self.position_source != "Virtual"
+        # W1P is a required system node for readiness even when SRVR's Virtual
+        # position source is selected; Virtual must never disguise missing hardware
+        # as a ready production system. Not-calibrated remains a yellow service state.
         ctrl_fw_ok = bool(self._ctrl_fw_match and self._ctrl_authority_fresh())
         w1p_fw_ok = bool(self._w1p_fw_match and self._w1p_status_fresh())
+        ctrl_interface_fault = bool(flags & (FLAG_CTRL_HMI_FAULT | FLAG_CTRL_FW_FAULT))
         safety = bool(
             self._srvr_estop
             or self._ctrl_estop
             or bool(flags & FLAG_ADS1115_FAULT)
+            or ctrl_interface_fault
             or (not connected)
             or (not ctrl_fw_ok)
-            or (physical_winch_required and (
-                self._w1p_estop
-                or self._w1p_internal_safety
-                or (not self.w1p.connected)
-                or (not self._w1p_status_fresh())
-                or (not w1p_fw_ok)
-                or (self.winch_rs_status != "Connected")
-            ))
+            or self._w1p_estop
+            or self._w1p_internal_safety
+            or (not self.w1p.connected)
+            or (not self._w1p_status_fresh())
+            or (not w1p_fw_ok)
+            or (self.winch_rs_status != "Connected")
         )
         self.state.estop_active = safety
 
@@ -1707,6 +1731,8 @@ class HVP2PBackend(QObject):
             return
 
         self._update_joystick_centre_drift()
+        # _ctrl_axis already follows the physical Left=- / Right=+ convention.
+        # Apply calibration first, then the optional user Invert exactly once.
         axis = self._calibrated_joystick(self._ctrl_axis) * (-1 if self.reverse_joystick else 1)
         deadband = max(0.0, min(25.0, float(self.joystick_deadband_pct)))
         if self._joystick_neutral_required:
@@ -2450,8 +2476,9 @@ class HVP2PBackend(QObject):
         """Apply transferable Run-only values when Setup Apply is pressed."""
         if not isinstance(c, dict):
             return
-        if "not_calibrated_mode" in c:
-            self._not_calibrated = bool(c.get("not_calibrated_mode"))
+        # Imported Run files may carry legacy reference state, but position
+        # authority is never transferable between sessions/machines.
+        self._not_calibrated = True
         default_names = [f"P{i}" for i in range(1,11)]
         if "preset_names" in c:
             self.preset_names = [str(x or default_names[i]) for i,x in enumerate(self._normalise_list(c.get("preset_names"), default_names, 10))]
@@ -2504,6 +2531,15 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
+        # v26.10.01.01 moves the installed joystick polarity correction into CTRL,
+        # so physical Left/Right is consistent before SRVR calibration. Migrate
+        # older saved captures exactly once. Untouched identity defaults stay as
+        # identity; real captured values are sign-flipped to describe the same
+        # physical Left/Centre/Right positions on the corrected transport axis.
+        try:
+            schema_version = int(c.get("config_schema_version", 0) or 0)
+        except Exception:
+            schema_version = 0
         def set_missing(key, value):
             nonlocal changed
             if key not in c and value is not None:
@@ -2520,6 +2556,21 @@ class HVP2PBackend(QObject):
                 "centre": joy.get("center", 0.0),
                 "right": joy.get("max", 1.0),
             }
+            changed = True
+        if schema_version < 3:
+            jc = c.get("joystick_calibration") if isinstance(c.get("joystick_calibration"), dict) else None
+            if jc:
+                try:
+                    vals = (float(jc.get("left", -1.0)), float(jc.get("centre", 0.0)), float(jc.get("right", 1.0)))
+                    is_identity = all(abs(a-b) < 1e-6 for a,b in zip(vals, (-1.0, 0.0, 1.0)))
+                    if not is_identity:
+                        c["joystick_calibration"] = {"left": -vals[0], "centre": -vals[1], "right": -vals[2]}
+                except Exception:
+                    pass
+            c["reverse_joystick"] = False
+            c["config_schema_version"] = 3
+            c["not_calibrated_mode"] = True
+            c["position_reference_persistent"] = False
             changed = True
         if "acceleration_mode" not in c and "accel_type" in c:
             raw = str(c.get("accel_type", "Speed")).strip().lower()
@@ -2665,7 +2716,9 @@ class HVP2PBackend(QObject):
             except Exception: self.active_drive_mode = 0
             self.acceleration_mode = "Power" if str(c.get("acceleration_mode", "Speed")).lower().startswith("power") else "Speed"
             self.battery_change_mode = bool(c.get("battery_change_mode", False))
-            self._not_calibrated = bool(c.get("not_calibrated_mode", self._not_calibrated))
+            # Position reference is deliberately session-only. Every SRVR start is
+            # uncalibrated regardless of the previous saved state.
+            self._not_calibrated = True
             self._apply_active_drive_profile(sync=False)
 
             default_names = [f"P{i}" for i in range(1,11)]
@@ -2768,8 +2821,9 @@ class HVP2PBackend(QObject):
             else:
                 freed_snap = dict(self._saved_freed_snapshot)
             c = {
-                "config_schema_version": 2,
-                "not_calibrated_mode": bool(self._not_calibrated),
+                "config_schema_version": 3,
+                "not_calibrated_mode": True,
+                "position_reference_persistent": False,
                 "ctrl_ip": self.ctrl_ip,
                 "w1p_ip": self.w1p_ip,
                 "reverse_joystick": self.reverse_joystick,
@@ -2908,34 +2962,38 @@ class HVP2PBackend(QObject):
     def joystickCentreTrimPercentage(self):
         span = self._joystick_min_cal_span()
         return float(100.0 * self._joystick_centre_trim_raw / max(span, 1e-6))
+    @Property(int, notify=stateChanged)
+    def systemStatusLevel(self):
+        # 2=red safety/fault, 1=yellow service/unreferenced, 0=green ready.
+        if self.state.estop_active:
+            return 2
+        if self._not_calibrated:
+            return 1
+        return 0
     @Property(bool, notify=stateChanged)
-    def systemReady(self): return not self.state.estop_active
+    def systemReady(self): return self.systemStatusLevel == 0
     @Property(str, notify=stateChanged)
     def bannerText(self):
         if not self.state.estop_active:
-            return "SYSTEM READY"
+            return "System Un-Calibrated" if self._not_calibrated else "System Ready"
 
-        # Operator-facing source names are intentionally limited to the three
-        # system nodes used everywhere else in the SRVR UI.  A CTRL hardware
-        # fault (including the joystick analogue-input fault) is reported as CTRL; a W1P/RS485 fault is
-        # reported as W1P.  Do not expose lower-level RS485/ADS implementation
-        # names in the top safety banner.
+        # Operator-facing source names are intentionally limited to SRVR/CTRL/W1P.
+        # The physical AI0 E-stop bit is no longer overloaded with CTRL-TS/firmware
+        # faults, but all CTRL safety faults still aggregate under the CTRL source.
         ctrl_fault = bool(
             self._ctrl_estop
-            or (self._ctrl_flags & FLAG_ADS1115_FAULT)
+            or (self._ctrl_flags & (FLAG_ADS1115_FAULT | FLAG_CTRL_HMI_FAULT | FLAG_CTRL_FW_FAULT))
             or (not self._ctrl_connected())
             or (not self._ctrl_fw_match)
             or (not self._ctrl_authority_fresh())
         )
         w1p_fault = bool(
-            self.position_source != "Virtual" and (
-                self._w1p_estop
-                or self._w1p_internal_safety
-                or (not self.w1p.connected)
-                or (not self._w1p_status_fresh())
-                or (not self._w1p_fw_match)
-                or (self.winch_rs_status != "Connected")
-            )
+            self._w1p_estop
+            or self._w1p_internal_safety
+            or (not self.w1p.connected)
+            or (not self._w1p_status_fresh())
+            or (not self._w1p_fw_match)
+            or (self.winch_rs_status != "Connected")
         )
 
         parts = []

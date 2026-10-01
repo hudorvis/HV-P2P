@@ -16,7 +16,7 @@
 static bool g_ads_inited = false;
 static uint8_t ADS_ADDR = 0x48;
 
-#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.09.29.06"
+#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.10.01.01"
 #define CTRL_HMI_ARCH "EdgeBox ESP-100 + isolated RS485 Waveshare thin HMI"
 
 IPAddress local_IP(172,20,1,101);
@@ -71,6 +71,8 @@ static const uint8_t CTRL_ESTOP_HEALTHY_CONFIRM_SAMPLES = 3;
 #define FLAG_AUX4                 0x0100
 #define FLAG_ADS1115_FAULT        0x0200  // wire-compatible name; now means CTRL analogue-input fault
 #define FLAG_AUX5                 0x0400
+#define FLAG_CTRL_HMI_FAULT       0x0800  // CTRL-TS RS485/compatibility safety fault (not physical E-stop)
+#define FLAG_CTRL_FW_FAULT        0x1000  // SRVR firmware-authority safety fault (not physical E-stop)
 
 NetworkUDP udp;
 HardwareSerial HMI(1);
@@ -204,7 +206,7 @@ static uint32_t lastHmiLayoutForward = 0;
 #define HMI_LAYOUT_MAX_LEN 2200
 static const char* HMI_LAYOUT_NVS_NS = "hmiui";
 static const char* HMI_LAYOUT_NVS_KEY = "layout";
-static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.09.29.06|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
+static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.10.01.01|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
 
 
 
@@ -229,10 +231,10 @@ static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_CTRL";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL_TS,W1P,W1P_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_CTRL_v*.ino.bin firmware. CTRL-TS and W1P files are rejected.";
 static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=CTRL;";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.09.29.06;";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.01.01;";
 static const char* HV_AUTH_ROLE = "CTRL";
 static const char* HV_AUTH_TARGET = "EDGEBOX_ESP100";
-static const char* HV_AUTH_VERSION = "v26.09.29.06";
+static const char* HV_AUTH_VERSION = "v26.10.01.01";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
@@ -491,7 +493,7 @@ static void hvLoadHmiLayoutConfig() {
     int nl = stored.indexOf('\n');
     if(nl >= 0) stored = stored.substring(0, nl);
     stored.trim();
-    // v26.09.29.06 migration: older CTRL NVS layouts were main4/aux1-aux4.
+    // v26.10.01.01 migration: older CTRL NVS layouts were main4/aux1-aux4.
     // Preserve the operator's stored labels/settings but expose the new AUX5 tile.
     if(stored.indexOf("|layout=main4") >= 0) stored.replace("|layout=main4", "|layout=main5");
     if(stored.indexOf("|aux5=") < 0) stored += "|aux5=AUX 5";
@@ -602,6 +604,8 @@ static const uint8_t JOY_SAMPLES = 8;  // trimmed mean: discard one high + one l
 static const float EDGEBOX_JOY_5V_COUNTS = 13333.3f;
 static float g_joy_filtered = 0.0f;
 static bool g_joy_ready = false;
+static int16_t g_joyLastRaw = 0;
+static float g_joyLastFieldV = 0.0f;
 static bool g_ctrlEstopActive = true;
 static float g_ctrlEstopFieldV = 0.0f;
 static uint8_t g_ctrlEstopHealthySamples = 0;
@@ -683,6 +687,35 @@ static bool sgmReadConversion(int16_t &raw) {
   return true;
 }
 
+static bool sgmSelectChannelVerified(uint16_t expectedConfig, const char *label) {
+  if(!sgmWriteRegister(SGM_REG_CONFIG, expectedConfig)) {
+    Serial.printf("[AI] Failed selecting %s channel\n", label ? label : "ADC");
+    return false;
+  }
+  uint16_t actual = 0;
+  if(!sgmReadRegister(SGM_REG_CONFIG, actual) ||
+     ((actual & 0x7FFFu) != (expectedConfig & 0x7FFFu))) {
+    Serial.printf("[AI] %s mux verify failed cfg=0x%04X expected=0x%04X\n",
+                  label ? label : "ADC", unsigned(actual), unsigned(expectedConfig));
+    return false;
+  }
+  // After any mux change, discard the old conversion and wait >2 fresh 800-SPS periods.
+  delayMicroseconds(3000);
+  int16_t discard = 0;
+  if(!sgmReadConversion(discard)) return false;
+  delayMicroseconds(1400);
+  return true;
+}
+
+static void failAnalogueUnsafe(const char *reason) {
+  g_ads_inited = false;
+  g_joy_ready = false;
+  g_joy_filtered = 0.0f;
+  g_ctrlEstopActive = true;
+  g_ctrlEstopHealthySamples = 0;
+  if(reason) Serial.println(reason);
+}
+
 static bool detectSgm58031() {
   ADS_ADDR = 0x48;
   if(!i2cProbe(ADS_ADDR)) {
@@ -718,6 +751,8 @@ static bool detectSgm58031() {
 
   g_ads_inited = true;
   g_joy_ready = true;
+  g_joyLastRaw = first;
+  g_joyLastFieldV = float(first) * (6.144f / 32768.0f) * 2.0f;
   g_joy_filtered = rawJoystickTransportAxis(first);
   Serial.printf("[AI] EdgeBox SGM58031 OK @0x48 AI1 joystick continuous 800SPS FS=+/-6.144V chip=0x%04X%s\n",
                 unsigned(chip), idOk ? "" : " (ID read unavailable)");
@@ -729,10 +764,16 @@ static void refreshAdsHealth() {
   if((now - g_lastAdsHealthCheckMs) < ADS_HEALTH_CHECK_INTERVAL_MS) return;
   g_lastAdsHealthCheckMs = now;
   if(g_ads_inited) {
-    int16_t raw = 0;
-    if(!i2cProbe(ADS_ADDR) || !sgmReadConversion(raw)) {
-      g_ads_inited = false; g_joy_ready = false; g_joy_filtered = 0.0f;
-      Serial.println("[AI] SGM58031 LOST/read failed - joystick neutral + analogue fault flag");
+    uint16_t cfg = 0;
+    if(!i2cProbe(ADS_ADDR) || !sgmReadRegister(SGM_REG_CONFIG, cfg)) {
+      failAnalogueUnsafe("[AI] SGM58031 LOST/config read failed - joystick neutral + analogue/E-stop fault");
+      return;
+    }
+    const uint16_t mux = cfg & 0x7000u;
+    const uint16_t ai0Mux = SGM_CONFIG_AI0_CONT_800SPS_6V144 & 0x7000u;
+    const uint16_t ai1Mux = SGM_CONFIG_AI1_CONT_800SPS_6V144 & 0x7000u;
+    if(mux != ai0Mux && mux != ai1Mux) {
+      failAnalogueUnsafe("[AI] SGM58031 mux entered an unexpected channel - fail unsafe");
     }
     return;
   }
@@ -742,27 +783,32 @@ static void refreshAdsHealth() {
 }
 
 static float rawJoystickTransportAxis(int16_t raw) {
-  float axis = (2.0f * (float(raw) / EDGEBOX_JOY_5V_COUNTS)) - 1.0f;
+  // SRVR calibration authoritative: Set Left / Set Centre / Set Right captures remain authoritative.
+  // Installed APEM wiring is electrically high at physical Left and low at Right.
+  // Normalise at the hardware boundary so every downstream consumer uses the same
+  // physical convention: Left=-1, Centre=0, Right=+1.
+  float axis = 1.0f - (2.0f * (float(raw) / EDGEBOX_JOY_5V_COUNTS));
   return constrain(axis, -1.0f, 1.0f);
 }
 
 static float readJoystickAxis() {
   if(!g_ads_inited || !g_joy_ready) return 0.0f;
 
-  // At 800 SPS each fresh conversion is ~1.25 ms. Take eight genuinely spaced
-  // samples, discard the single highest and lowest conversion, average the
-  // remaining six, then retain the proven light 0.70/0.30 IIR. This rejects
-  // one-sample spikes and reduces random ADC noise without making the operator
-  // control noticeably sluggish. SRVR remains the calibration/deadband authority.
+  // Never trust the converter's previous mux state. Select and verify AI1 for
+  // every joystick transaction, then accept only conversions produced after the
+  // verified switch. This makes AI0 E-stop samples unable to leak into joystick.
+  if(!sgmSelectChannelVerified(SGM_CONFIG_AI1_CONT_800SPS_6V144, "AI1 joystick")) {
+    failAnalogueUnsafe("[AI] AI1 joystick select/verify failed - fail unsafe");
+    return 0.0f;
+  }
+
   int32_t sum = 0;
   int16_t minRaw = 32767;
   int16_t maxRaw = -32768;
   for(uint8_t i=0; i<JOY_SAMPLES; ++i) {
     int16_t raw = 0;
     if(!sgmReadConversion(raw)) {
-      g_ads_inited = false; g_joy_ready = false; g_joy_filtered = 0.0f;
-      g_ctrlEstopActive = true; g_ctrlEstopHealthySamples = 0;
-      Serial.println("[AI] SGM58031 sample read failed - joystick neutral + analogue/E-stop fault");
+      failAnalogueUnsafe("[AI] AI1 joystick sample read failed - joystick neutral + analogue/E-stop fault");
       return 0.0f;
     }
     sum += raw;
@@ -772,6 +818,8 @@ static float readJoystickAxis() {
   }
   const int32_t trimmedSum = sum - int32_t(minRaw) - int32_t(maxRaw);
   const int16_t raw = int16_t(trimmedSum / int32_t(JOY_SAMPLES - 2));
+  g_joyLastRaw = raw;
+  g_joyLastFieldV = float(raw) * (6.144f / 32768.0f) * 2.0f;
   const float axis = rawJoystickTransportAxis(raw);
   g_joy_filtered = (0.70f * g_joy_filtered) + (0.30f * axis);
   return constrain(g_joy_filtered, -1.0f, 1.0f);
@@ -784,54 +832,43 @@ static void sampleCtrlEstopAI0() {
     return;
   }
 
-  // Switch briefly from the continuously-running AI1 joystick channel to AI0.
-  // Wait for more than two 800-SPS conversion periods, average two conversions,
-  // then immediately restore AI1 so it has the rest of the 50 ms control period
-  // to settle before the next joystick sample.
-  if(!sgmWriteRegister(SGM_REG_CONFIG, SGM_CONFIG_AI0_CONT_800SPS_6V144)) {
-    g_ads_inited = false; g_joy_ready = false; g_joy_filtered = 0.0f;
-    g_ctrlEstopActive = true; g_ctrlEstopHealthySamples = 0;
-    Serial.println("[AI] Failed selecting AI0 E-stop channel - fail unsafe");
-    return;
-  }
-  delayMicroseconds(3000);
-
+  bool sampleOk = sgmSelectChannelVerified(SGM_CONFIG_AI0_CONT_800SPS_6V144, "AI0 E-stop");
   int32_t sum = 0;
-  for(uint8_t i=0; i<2; ++i) {
-    int16_t raw = 0;
-    if(!sgmReadConversion(raw)) {
-      g_ads_inited = false; g_joy_ready = false; g_joy_filtered = 0.0f;
-      g_ctrlEstopActive = true; g_ctrlEstopHealthySamples = 0;
-      Serial.println("[AI] AI0 E-stop sample failed - fail unsafe");
-      return;
+  if(sampleOk) {
+    for(uint8_t i=0; i<2; ++i) {
+      int16_t raw = 0;
+      if(!sgmReadConversion(raw)) { sampleOk = false; break; }
+      sum += raw;
+      if(i == 0) delayMicroseconds(1400);
     }
-    sum += raw;
-    if(i == 0) delayMicroseconds(1400);
   }
-  const int16_t raw = int16_t(sum / 2);
-  const float adcV = float(raw) * (6.144f / 32768.0f);
-  g_ctrlEstopFieldV = adcV * 2.0f;
-  const bool healthyVoltage = (g_ctrlEstopFieldV >= CTRL_ESTOP_HEALTHY_MIN_V &&
-                               g_ctrlEstopFieldV <= CTRL_ESTOP_HEALTHY_MAX_V);
 
-  if(healthyVoltage) {
-    if(g_ctrlEstopHealthySamples < CTRL_ESTOP_HEALTHY_CONFIRM_SAMPLES) ++g_ctrlEstopHealthySamples;
-    if(g_ctrlEstopHealthySamples >= CTRL_ESTOP_HEALTHY_CONFIRM_SAMPLES) g_ctrlEstopActive = false;
+  if(sampleOk) {
+    const int16_t raw = int16_t(sum / 2);
+    const float adcV = float(raw) * (6.144f / 32768.0f);
+    g_ctrlEstopFieldV = adcV * 2.0f;
+    const bool healthyVoltage = (g_ctrlEstopFieldV >= CTRL_ESTOP_HEALTHY_MIN_V &&
+                                 g_ctrlEstopFieldV <= CTRL_ESTOP_HEALTHY_MAX_V);
+    if(healthyVoltage) {
+      if(g_ctrlEstopHealthySamples < CTRL_ESTOP_HEALTHY_CONFIRM_SAMPLES) ++g_ctrlEstopHealthySamples;
+      if(g_ctrlEstopHealthySamples >= CTRL_ESTOP_HEALTHY_CONFIRM_SAMPLES) g_ctrlEstopActive = false;
+    } else {
+      // E-stop assertion is immediate. Only clearing requires consecutive healthy samples.
+      g_ctrlEstopHealthySamples = 0;
+      g_ctrlEstopActive = true;
+    }
   } else {
-    // E-stop assertion is immediate. Only clearing requires consecutive healthy samples.
-    g_ctrlEstopHealthySamples = 0;
     g_ctrlEstopActive = true;
+    g_ctrlEstopHealthySamples = 0;
+    Serial.println("[AI] AI0 E-stop select/sample failed - fail unsafe");
   }
 
-  if(!sgmWriteRegister(SGM_REG_CONFIG, SGM_CONFIG_AI1_CONT_800SPS_6V144)) {
-    g_ads_inited = false; g_joy_ready = false; g_joy_filtered = 0.0f;
-    g_ctrlEstopActive = true; g_ctrlEstopHealthySamples = 0;
-    Serial.println("[AI] Failed restoring AI1 joystick channel - fail unsafe");
-    return;
+  // Always restore and verify AI1, even when the AI0 transaction failed. This
+  // removes the .06 early-return path that could strand the converter on AI0.
+  const bool restored = sgmSelectChannelVerified(SGM_CONFIG_AI1_CONT_800SPS_6V144, "AI1 joystick restore");
+  if(!sampleOk || !restored) {
+    failAnalogueUnsafe(!restored ? "[AI] Failed restoring/verifying AI1 joystick channel - fail unsafe" : nullptr);
   }
-  // Guarantee the next fast loop diagnostics cannot accidentally observe the
-  // previous AI0 conversion before AI1 has produced a fresh sample.
-  delayMicroseconds(1600);
 }
 
 static void printAdsDiagnostics() {
@@ -839,12 +876,8 @@ static void printAdsDiagnostics() {
   const uint32_t now = millis();
   if(now - g_lastAdsDiagMs < ADS_DIAG_INTERVAL_MS) return;
   g_lastAdsDiagMs = now;
-  int16_t a0 = 0;
-  if(!sgmReadConversion(a0)) return;
-  const float adcV = float(a0) * (6.144f / 32768.0f);
-  const float fieldV = adcV * 2.0f;
-  Serial.printf("[AI] SGM58031 AI1_JOY=%d adc=%.3fV field~=%.3fV transport_axis=%.4f ESTOP_AI0=%.3fV %s (SRVR calibration authoritative)\n",
-                int(a0), adcV, fieldV, rawJoystickTransportAxis(a0),
+  Serial.printf("[AI] SGM58031 AI1_JOY=%d field~=%.3fV transport_axis=%.4f ESTOP_AI0=%.3fV %s (cached channel-bound samples)\n",
+                int(g_joyLastRaw), g_joyLastFieldV, rawJoystickTransportAxis(g_joyLastRaw),
                 g_ctrlEstopFieldV, g_ctrlEstopActive ? "ACTIVE/FAULT" : "HEALTHY");
 }
 
@@ -852,12 +885,9 @@ static void handleSerialJoystickCommands() {
   while(Serial.available()) {
     char c = char(Serial.read());
     if(c=='j' || c=='J') {
-      int16_t raw = 0;
-      const bool ok = g_ads_inited && sgmReadConversion(raw);
-      const float adcV = float(raw) * (6.144f / 32768.0f);
-      const float fieldV = adcV * 2.0f;
-      Serial.printf("[JOY] ok=%d AI1=%d field~=%.3fV axis=%.4f; use SRVR Set Left/Centre/Right wizard\n",
-                    ok ? 1 : 0, int(raw), fieldV, ok ? rawJoystickTransportAxis(raw) : 0.0f);
+      const bool ok = g_ads_inited && g_joy_ready;
+      Serial.printf("[JOY] ok=%d AI1=%d field~=%.3fV axis=%.4f; cached channel-bound sample; use SRVR Set Left/Centre/Right wizard\n",
+                    ok ? 1 : 0, int(g_joyLastRaw), g_joyLastFieldV, ok ? rawJoystickTransportAxis(g_joyLastRaw) : 0.0f);
     }
   }
 }
@@ -895,7 +925,7 @@ static void sendHmiStatusToSrvr()
   uint32_t age = g_lastHmiRxMs ? (now - g_lastHmiRxMs) : 999999;
   String line = "HMI_STATUS";
   line += "|ctrl_ts=" + String(hmiLinkConnected() ? 1 : 0);
-  line += "|ctrl_version=v26.09.29.06";
+  line += "|ctrl_version=v26.10.01.01";
   line += "|fw_match=" + String(g_srvrFirmwareMatched ? 1 : 0);
   line += "|fw_authority=" + g_srvrFirmwareState;
   line += "|fw_required=" + (g_srvrRequiredVersion.length() ? g_srvrRequiredVersion : String("unknown"));
@@ -958,13 +988,16 @@ static String buildFallbackDisplayPacket(uint16_t flags_now)
   line += "|ref_vis=0";
   // Fail-safe: if SRVR is not online, the displayed system state must be E-Stop active.
   const bool ctrl_estop = (flags_now & FLAG_ESTOP_PRESSED);
+  const bool ctrl_interface_fault = (flags_now & (FLAG_CTRL_HMI_FAULT | FLAG_CTRL_FW_FAULT));
   const bool srvr_missing_estop = !srvrOnline;
   const bool ads_fault = !g_ads_inited;
-  line += "|estop=" + String((ctrl_estop || srvr_missing_estop || ads_fault) ? 1 : 0);
+  const bool ctrl_safety = ctrl_estop || ctrl_interface_fault || ads_fault;
+  line += "|estop=" + String((ctrl_safety || srvr_missing_estop) ? 1 : 0);
   line += "|estop_src=";
-  line += (ctrl_estop ? "CTRL" : (srvr_missing_estop ? "SRVR" : ""));
+  line += (ctrl_safety ? "CTRL" : (srvr_missing_estop ? "SRVR" : ""));
   if (ctrl_estop) line += "|status=E-Stop CTRL|status_level=red";
   else if (ads_fault) line += "|status=CTRL Analogue Input Fault|status_level=red";
+  else if (ctrl_interface_fault) line += "|status=CTRL Safety Fault|status_level=red";
   else if (srvr_missing_estop) line += "|status=E-Stop|status_level=red";
   else line += "|status=Active|status_level=blue";
   line += "|ctrl=1";
@@ -1037,7 +1070,7 @@ static void handleUdpRx()
     g_lastSrvrDisplayMs = millis();
     g_latestDisplayPacket = line;
     g_latestDisplayPacket.replace("DSP1|", "HMI1|");
-    // v26.09.29.06: store latest SRVR display packet only. The UART
+    // v26.10.01.01: store latest SRVR display packet only. The UART
     // forward is rate-limited in loop() so CTRL-TS is not flooded and the
     // left-side LVGL elements do not flicker from repeated redraw pressure.
   }
@@ -1053,7 +1086,12 @@ static void pollButtonsAndUpdateLatches(uint16_t &flags_out)
   const bool estop_active = g_ctrlEstopActive;
   const bool hmi_safety = !hmiLinkConnected();
   const bool firmware_safety = !g_srvrFirmwareMatched;
-  if(estop_active || hmi_safety || firmware_safety) flags_out |= FLAG_ESTOP_PRESSED;
+  // Preserve source identity on the wire: physical AI0 alone owns the physical
+  // E-stop bit. CTRL-TS and firmware-authority faults remain equally fail-safe,
+  // but use dedicated bits so SRVR diagnostics cannot mislabel them as AI0.
+  if(estop_active) flags_out |= FLAG_ESTOP_PRESSED;
+  if(hmi_safety) flags_out |= FLAG_CTRL_HMI_FAULT;
+  if(firmware_safety) flags_out |= FLAG_CTRL_FW_FAULT;
 
   if(now < g_virtualAuxUntil[0]) flags_out |= FLAG_AUX1;
   if(now < g_virtualAuxUntil[1]) flags_out |= FLAG_AUX2;
@@ -1574,7 +1612,7 @@ void loop()
     g_latestDisplayPacket = "";
   }
 
-  // v26.09.29.06: do not resend UIL1 layout on a timer.
+  // v26.10.01.01: do not resend UIL1 layout on a timer.
   // Some Waveshare/LVGL builds visibly flicker when the layout header/config
   // is resent periodically. Layout is now sent only at boot, upload/reset,
   // and in response to a CTRL-TS PING/reconnect request.

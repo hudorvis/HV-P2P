@@ -38,24 +38,24 @@ from backend import (
 )
 
 app = QCoreApplication.instance() or QCoreApplication([])
-b = HVP2PBackend(version="26.09.29.06", smoke_test=True)
-assert b.reverse_joystick is True, "New/reset CTRL joystick direction must default to Inverted"
+b = HVP2PBackend(version="26.10.01.01", smoke_test=True)
+assert b.reverse_joystick is False, "New/reset CTRL joystick direction must default to Normal"
 
 def healthy_ctrl_status(*, ctrl_ts=1, ads=1, version="vTEST", compatible=1):
     now = time.time()
     b._ctrl_rx_times.clear()
     b._ctrl_rx_times.extend([now - 0.05, now])
     b._handle_ctrl_hmi_status(
-        f"HMI_STATUS|ctrl_ts={int(ctrl_ts)}|ctrl_version=v26.09.29.06|"
-        f"fw_match=1|fw_authority=matched|fw_required=v26.09.29.06|"
-        f"version={version}|required=v26.09.29.06|fw_state=idle|image=1|"
+        f"HMI_STATUS|ctrl_ts={int(ctrl_ts)}|ctrl_version=v26.10.01.01|"
+        f"fw_match=1|fw_authority=matched|fw_required=v26.10.01.01|"
+        f"version={version}|required=v26.10.01.01|fw_state=idle|image=1|"
         f"compatible={int(compatible)}|age_ms=12|ads={int(ads)}"
     )
 
-def healthy_w1p_status(*, pos=0.0, vel=0.0, ip="172.20.1.102"):
+def healthy_w1p_status(*, pos=0.0, vel=0.0, ip="172.20.1.102", boot_id="A1B2C3D4"):
     b.w1p.last_seen = time.time()
     b._parse_w1p(
-        f"STATUS POS_M={pos} VEL_MPS={vel} IP={ip} FW=v26.09.29.06 "
+        f"STATUS POS_M={pos} VEL_MPS={vel} IP={ip} FW=v26.10.01.01 BOOT_ID={boot_id} "
         "FW_MATCH=1 FW_AUTH=matched ESTOP=0 VEL_WD=0 SERVICE_LOCK=0 "
         "WRITE_EN=0 SW_SRVON=0 SW_SRVON_INHIBIT=1 BRAKE_OUT=0 "
         "RS_STAT=CONNECTED LEAD_CFG=OK MODBUS=1 READY=1 POS_READ=1 "
@@ -112,10 +112,10 @@ try:
     # controller interface and must not be confused with the binary control stream.
     now = time.time()
     b._ctrl_rx_times.extend([now - 0.05, now])
-    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=1|ctrl_version=v26.09.29.06|fw_match=1|fw_authority=matched|fw_required=v26.09.29.06|version=vTEST|required=v26.09.29.06|fw_state=idle|image=1|compatible=1|age_ms=12|ads=1")
+    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=1|ctrl_version=v26.10.01.01|fw_match=1|fw_authority=matched|fw_required=v26.10.01.01|version=vTEST|required=v26.10.01.01|fw_state=idle|image=1|compatible=1|age_ms=12|ads=1")
     assert b.ctrlTsConnected and b.ads1115Connected
     assert b._ctrl_ts_version == "vTEST" and b._ctrl_ts_age_ms == 12
-    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=0|ctrl_version=v26.09.29.06|fw_match=1|fw_authority=matched|fw_required=v26.09.29.06|version=vTEST|required=v26.09.29.06|fw_state=idle|image=1|compatible=0|age_ms=20|ads=0")
+    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=0|ctrl_version=v26.10.01.01|fw_match=1|fw_authority=matched|fw_required=v26.10.01.01|version=vTEST|required=v26.10.01.01|fw_state=idle|image=1|compatible=0|age_ms=20|ads=0")
     assert not b.ctrlTsConnected and not b.ads1115Connected
     # Old CTRL firmware without a fresh explicit ads= field remains compatible:
     # live joystick packets + no ADS fault bit infer a healthy ADS link.
@@ -133,16 +133,25 @@ try:
     # liveness but must invalidate prior W1P authority/RS485 state until a new
     # complete STATUS arrives.
     healthy_ctrl_status(); healthy_w1p_status()
-    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=1|ctrl_version=v26.09.29.06|version=vTEST|age_ms=12|ads=1")
+    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=1|ctrl_version=v26.10.01.01|version=vTEST|age_ms=12|ads=1")
     b._ctrl_axis = 0.0; b._ctrl_flags = 0; b._motion_tick()
     assert b.state.estop_active and not b._ctrl_fw_match, "Missing CTRL FW_MATCH did not fail closed"
     healthy_ctrl_status(); healthy_w1p_status()
     b._parse_w1p("STATUS FW_MATCH=1 ESTOP=0 VEL_WD=0 SERVICE_LOCK=0 WRITE_EN=0")
     assert not b._w1p_status_fresh() and not b._w1p_fw_match and b.winch_rs_status == "Disconnected"
     healthy_w1p_status()
-    b._parse_w1p("HELLO VER=v26.09.29.06")
+    b._parse_w1p("HELLO VER=v26.10.01.01")
     assert not b._w1p_status_fresh() and not b._w1p_fw_match and b.winch_rs_status == "Disconnected"
     healthy_w1p_status()
+    b._not_calibrated = False
+    b._parse_w1p("HELLO VER=v26.10.01.01 BOOT_ID=DEADBEEF")
+    assert b._not_calibrated, "W1P HELLO/reboot did not invalidate position reference"
+    healthy_w1p_status(boot_id="DEADBEEF")
+    b._not_calibrated = False
+    healthy_w1p_status(boot_id="CAFEBABE")
+    assert b._not_calibrated, "W1P BOOT_ID change did not invalidate position reference"
+    # Slip/Limit Calibration are the only intended ways to restore reference.
+    b._not_calibrated = False
     # Clear the deliberate safety transition through the required neutral gate
     # so later motion tests start from a genuinely re-armed healthy state.
     b._ctrl_axis = 0.0; b._ctrl_flags = 0; b._motion_tick()
@@ -178,6 +187,14 @@ try:
     b._motion_tick()
     assert not b.state.estop_active, "Not Calibrated incorrectly triggered E-stop"
     assert 0.0 < abs(b.requested_speed_mps) <= (5.0 / 3.6 + 1e-6), b.requested_speed_mps
+    # CTRL transport convention is now physical: Left=-1, Right=+1. With the
+    # default Normal direction, SRVR readout and requested velocity must agree.
+    b._ctrl_axis = -0.5
+    b._motion_tick()
+    assert b.joystickPercentage < 0.0 and b.requested_speed_mps < 0.0
+    b._ctrl_axis = 0.5
+    b._motion_tick()
+    assert b.joystickPercentage > 0.0 and b.requested_speed_mps > 0.0
 
     # Predictive stopping produces a monotonic speed envelope before the hard
     # boundary and still reaches zero at the fixed safety margin. W1P repeats
@@ -309,6 +326,12 @@ try:
     assert migrated["preset_positions"][:2] == [12.5,25.0]
     assert migrated["free_d"]["cable_weight_kg100m"] == 4.8 and migrated["free_d"]["cable_tension_kg"] == 1200.0
     assert migrated["geometry"][2]["x"] == 50.0 and migrated["geometry"][2]["y"] == 8.0
+    assert migrated["config_schema_version"] == 3 and migrated["not_calibrated_mode"] is True
+    assert migrated["position_reference_persistent"] is False and migrated["reverse_joystick"] is False
+    # Legacy captured electrical values are sign-migrated once to preserve their
+    # physical Left/Centre/Right meaning under the corrected CTRL transport.
+    jc = migrated["joystick_calibration"]
+    assert abs(jc["left"] - 0.9) < 1e-9 and abs(jc["centre"] + 0.02) < 1e-9 and abs(jc["right"] + 0.95) < 1e-9
 
     # Limit calibration establishes Near->Far as the positive system axis even
     # when physical rope/winch threading initially makes the Far move negative.
@@ -393,9 +416,8 @@ try:
     b.resetSetupSettings()
     assert b.setupDraft["drive_modes"][0]["name"] == "Run Saved Mode"
 
-    # v26.09.29.06 Virtual Position Source is a true SRVR demo mode. Setup must
-    # stage it, Apply must activate it, CTRL input may move the simulated position
-    # without W1P/EL7 health, and physical W1P feedback must not overwrite it.
+    # Virtual remains an SRVR simulation source and still inhibits physical W1P
+    # velocity output, but it must not disguise a missing production W1P as Ready.
     assert b.positionSource == "Encoder"
     b.beginSetupEdit()
     b.setSetupPositionSource("Virtual")
@@ -404,8 +426,6 @@ try:
     assert b.positionSource == "Virtual" and b._safety_servo_inhibited
     healthy_ctrl_status()
     b._invalidate_w1p_status(); b.w1p.last_seen = 0.0; b._ctrl_flags = 0
-    # Isolate the Virtual demo assertion from direction/calibration/service state
-    # deliberately exercised by earlier tests in this same backend instance.
     b.reverse_joystick = False
     b._not_calibrated = False
     b.calibration_open = False; b.calibration_type = ""
@@ -415,8 +435,14 @@ try:
     b._ctrl_axis = 0.5; b.state.pos_m = 50.0
     b._safety_active_last = False; b._joystick_neutral_required = False
     b._motion_tick()
-    assert not b.state.estop_active, "Virtual demo incorrectly required physical W1P/EL7 health"
-    assert b.requested_speed_mps > 0.0 and b.current_speed_mps > 0.0
+    assert b.state.estop_active and "W1P" in b.bannerText, "Virtual source hid missing W1P readiness fault"
+    assert abs(b.requested_speed_mps) < 1e-9 and abs(b.last_winch_output) < 1e-9
+    # With W1P healthy, Virtual may simulate position while still emitting no
+    # physical non-zero VEL and ignoring W1P position/velocity feedback.
+    healthy_w1p_status()
+    b._not_calibrated = False; b._safety_active_last = False; b._joystick_neutral_required = False
+    b._motion_tick()
+    assert not b.state.estop_active and b.requested_speed_mps > 0.0 and b.current_speed_mps > 0.0
     assert abs(b.last_winch_output) < 1e-9 and abs(b.last_sent_vel) < 1e-9
     old_pos = float(b.state.pos_m)
     b._virtual_last_tick = time.monotonic() - 0.10
@@ -634,6 +660,13 @@ try:
     assert b.bannerText == "E-Stop | W1P", b.bannerText
     b._ctrl_rx_times.clear()
     assert b.bannerText == "E-Stop | CTRL & W1P", b.bannerText
+    # When safety is healthy, startup/reference state is yellow and only a
+    # known-position Slip/Limit Calibration may promote the system to green Ready.
+    healthy_ctrl_status(); healthy_w1p_status(); b._ctrl_flags = 0
+    b.state.estop_active = False; b._not_calibrated = True
+    assert b.systemStatusLevel == 1 and not b.systemReady and b.bannerText == "System Un-Calibrated"
+    b._not_calibrated = False
+    assert b.systemStatusLevel == 0 and b.systemReady and b.bannerText == "System Ready"
     # Restore healthy authoritative links for the remaining tests.
     healthy_ctrl_status(); healthy_w1p_status()
 
@@ -864,6 +897,13 @@ try:
     b.slipLimit("Ref")
     assert abs(float(b.state.pos_m) - 60.0) < 1e-9
     assert not b._not_calibrated
+    # The runtime reference must never be persisted as authority. The saved
+    # config explicitly records non-persistence, and a fresh backend starts yellow.
+    saved_cfg = json.loads(b._config_path.read_text())
+    assert saved_cfg["not_calibrated_mode"] is True and saved_cfg["position_reference_persistent"] is False
+    b2 = HVP2PBackend(version="26.10.01.01", smoke_test=True)
+    assert b2._not_calibrated and b2.bannerText != "System Ready"
+    b2.shutdown()
 
     # Battery Change only auto-cancels after going outside then safely returning.
     b.state.near_limit.position_m = 0.0
@@ -1021,7 +1061,7 @@ try:
     assert backup_cfg.is_file()
     expected_backup = json.loads(backup_cfg.read_text())
     b._config_path.write_text('{broken-json', encoding='utf-8')
-    b2 = HVP2PBackend(version="26.09.29.06", smoke_test=True)
+    b2 = HVP2PBackend(version="26.10.01.01", smoke_test=True)
     try:
         assert json.loads(b2._config_path.read_text()) == expected_backup
     finally:

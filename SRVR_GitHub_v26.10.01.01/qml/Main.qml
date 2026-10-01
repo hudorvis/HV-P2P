@@ -124,8 +124,10 @@ ApplicationWindow {
 
         Rectangle {
             width:parent.width-parent.leftPadding-parent.rightPadding; height:f(48); radius:f(5)
-            color:backend.systemReady?"#16331a":"#3a1619"; border.color:backend.systemReady?"#34783b":"#8b3b42"; border.width:1
-            Text { anchors.centerIn:parent; text:(backend.systemReady?"♢  ":"◇  ")+backend.bannerText; color:backend.systemReady?green:red; font.pixelSize:f(25); font.letterSpacing:f(1.4); font.weight:Font.Medium }
+            readonly property int statusLevel: backend.systemStatusLevel
+            color:statusLevel===0?"#16331a":(statusLevel===1?"#3a3216":"#3a1619")
+            border.color:statusLevel===0?"#34783b":(statusLevel===1?"#8d7b32":"#8b3b42"); border.width:1
+            Text { anchors.centerIn:parent; text:(parent.statusLevel===0?"♢  ":"◇  ")+backend.bannerText; color:parent.statusLevel===0?green:(parent.statusLevel===1?"#e7c94a":red); font.pixelSize:f(25); font.letterSpacing:f(1.4); font.weight:Font.Medium }
             MouseArea { anchors.fill:parent; cursorShape:Qt.PointingHandCursor; onClicked:backend.toggleSrvrEStop() }
         }
 

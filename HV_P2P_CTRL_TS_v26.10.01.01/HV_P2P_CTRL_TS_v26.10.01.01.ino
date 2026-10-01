@@ -12,7 +12,7 @@
 #include <mbedtls/sha256.h>
 #include <esp_ota_ops.h>
 
-#define CTRL_TS_SEMVER "v26.09.29.06"
+#define CTRL_TS_SEMVER "v26.10.01.01"
 #define CTRL_TS_VERSION "HV P2P CTRL-TS " CTRL_TS_SEMVER
 #define CTRL_TS_HW_ID "WS-ESP32S3-7"
 #define HMI_BAUD 115200
@@ -83,6 +83,9 @@ static lv_obj_t *boot_status_bar = nullptr;
 static lv_obj_t *boot_status_lbl = nullptr;
 static lv_obj_t *boot_progress_bar = nullptr;
 static lv_obj_t *boot_canvas = nullptr;
+static lv_obj_t *g_main_scr = nullptr;
+static lv_obj_t *g_fw_connection_lbl = nullptr;
+static bool g_fw_runtime_screen = false;
 static lv_color_t *boot_canvas_buf = nullptr;
 static lv_color_t *boot_decode_buf = nullptr;
 static int boot_w = 0;
@@ -177,7 +180,7 @@ static float g_last_ramp_near_draw = -999999.0f;
 static float g_last_ramp_far_draw = -999999.0f;
 
 // -------------------- CTRL-TS Settings page --------------------
-// Safe v26.09.29.06 approach: no backlight/brightness writes. This page only
+// Safe v26.10.01.01 approach: no backlight/brightness writes. This page only
 // edits CTRL network settings over UART and therefore should preserve the known
 // Keep the proven splash/boot path; do not write to the backlight controller.
 static lv_obj_t *settings_overlay = nullptr;
@@ -226,7 +229,7 @@ static void force_screen_refresh(){
 }
 
 static void screen_keepalive(){
-  // v26.09.29.06: no periodic full-screen or left-strip invalidation or brightness writes.
+  // v26.10.01.01: no periodic full-screen or left-strip invalidation or brightness writes.
   // The Waveshare/LVGL port refreshes changed objects itself; forcing a full
   // screen refresh every second caused the visible 1-second flicker/glitch.
   if(!g_ui_ready) return;
@@ -237,7 +240,7 @@ static void set_label_text_if_changed(lv_obj_t *lbl, const char *txt){
   const char *cur = lv_label_get_text(lbl);
   if(cur && strcmp(cur, txt) == 0) return;
   lv_label_set_text(lbl, txt);
-  // v26.09.29.06: label-only invalidation. Parent/full-strip invalidation can
+  // v26.10.01.01: label-only invalidation. Parent/full-strip invalidation can
   // cause the known vertical tear on the left AUX area of this panel.
   lv_obj_invalidate(lbl);
 }
@@ -302,7 +305,9 @@ static void boot_set_status(const char *txt){
   String next = String(txt ? txt : "");
   // Firmware transfer owns the splash status region. Generic boot/link messages
   // must not overwrite progress between FW_BLOCK packets.
-  if((g_fw_update_active || g_fw_finalized || g_fw_reboot_due_ms) && !next.startsWith("Updating CTRL-TS firmware") && !next.startsWith("Firmware") && !next.startsWith("Verifying CTRL-TS firmware")) return;
+  if((g_fw_update_active || g_fw_finalized || g_fw_reboot_due_ms) &&
+     !next.startsWith("Updating CTRL-TS firmware") && !next.startsWith("Firmware") &&
+     !next.startsWith("Verifying CTRL-TS firmware") && !next.startsWith("CTRL Connected | SRVR")) return;
   if(next == g_boot_status_cache) return;
   g_boot_status_cache = next;
   if(!boot_status_lbl) return;
@@ -311,6 +316,88 @@ static void boot_set_status(const char *txt){
   lv_obj_invalidate(boot_status_lbl);
   lvgl_port_unlock();
   Serial.print("[BOOT] "); Serial.println(next);
+}
+
+static bool fw_display_owned(){
+  return bool(g_fw_update_active || g_fw_finalized || g_fw_reboot_due_ms);
+}
+
+static String fw_connection_text(){
+  return String("CTRL Connected | SRVR ") + (g_boot_srvr_confirmed ? "Connected" : "Waiting");
+}
+
+static void fw_ensure_update_screen(){
+  // During boot the existing splash already owns the display. After the normal UI
+  // has started, create one dedicated update screen and keep it loaded until the
+  // verified reboot (or an explicit failure), so normal status rendering cannot
+  // flash through between firmware blocks.
+  if(boot_scr) return;
+  lvgl_port_lock(-1);
+  const int w = lv_disp_get_hor_res(NULL) > 0 ? lv_disp_get_hor_res(NULL) : 800;
+  const int h = lv_disp_get_ver_res(NULL) > 0 ? lv_disp_get_ver_res(NULL) : 480;
+  boot_scr = lv_obj_create(NULL);
+  lv_obj_clear_flag(boot_scr, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_bg_color(boot_scr, lv_color_hex(0x06101c), 0);
+  lv_obj_set_style_bg_opa(boot_scr, LV_OPA_COVER, 0);
+
+  lv_obj_t *title = lv_label_create(boot_scr);
+  lv_label_set_text(title, "HV P2P CTRL-TS\nFirmware Update");
+  lv_obj_set_style_text_font(title, &lv_font_montserrat_24, 0);
+  lv_obj_set_style_text_color(title, lv_color_hex(0xf0f2f1), 0);
+  lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_width(title, w);
+  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 105);
+
+  g_fw_connection_lbl = lv_label_create(boot_scr);
+  lv_label_set_text(g_fw_connection_lbl, fw_connection_text().c_str());
+  lv_obj_set_style_text_font(g_fw_connection_lbl, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(g_fw_connection_lbl, lv_color_hex(0x72ed21), 0);
+  lv_obj_set_style_text_align(g_fw_connection_lbl, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_width(g_fw_connection_lbl, w);
+  lv_obj_align(g_fw_connection_lbl, LV_ALIGN_TOP_MID, 0, 205);
+
+  boot_status_lbl = lv_label_create(boot_scr);
+  lv_label_set_text(boot_status_lbl, "Preparing firmware update | 0%");
+  lv_obj_set_style_text_font(boot_status_lbl, &lv_font_montserrat_18, 0);
+  lv_obj_set_style_text_color(boot_status_lbl, lv_color_hex(0xd8ecff), 0);
+  lv_obj_set_style_text_align(boot_status_lbl, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_width(boot_status_lbl, w);
+  lv_obj_align(boot_status_lbl, LV_ALIGN_TOP_MID, 0, 258);
+
+  boot_progress_bar = lv_bar_create(boot_scr);
+  lv_obj_set_size(boot_progress_bar, w - 160, 18);
+  lv_obj_align(boot_progress_bar, LV_ALIGN_TOP_MID, 0, 315);
+  lv_bar_set_range(boot_progress_bar, 0, 100);
+  lv_bar_set_value(boot_progress_bar, 0, LV_ANIM_OFF);
+  lv_obj_set_style_bg_color(boot_progress_bar, lv_color_hex(0x203142), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(boot_progress_bar, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(boot_progress_bar, lv_color_hex(0x49d8ff), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_opa(boot_progress_bar, LV_OPA_COVER, LV_PART_INDICATOR);
+  lv_obj_clear_flag(boot_progress_bar, LV_OBJ_FLAG_HIDDEN);
+
+  lv_scr_load(boot_scr);
+  g_fw_runtime_screen = true;
+  g_boot_status_cache = "";
+#if defined(LV_VERSION_MAJOR) && (LV_VERSION_MAJOR >= 8)
+  lv_refr_now(NULL);
+#endif
+  lvgl_port_unlock();
+}
+
+static void fw_set_status_pct(const char *phase, int pct){
+  pct = constrain(pct, 0, 100);
+  fw_ensure_update_screen();
+  if(g_fw_connection_lbl){
+    String conn = fw_connection_text();
+    lvgl_port_lock(-1);
+    set_label_text_if_changed(g_fw_connection_lbl, conn.c_str());
+    lvgl_port_unlock();
+  }
+  boot_set_progress(pct);
+  char status[112];
+  snprintf(status, sizeof(status), "CTRL Connected | SRVR %s | %s | %d%%",
+           g_boot_srvr_confirmed ? "Connected" : "Waiting", phase ? phase : "Updating CTRL-TS firmware", pct);
+  boot_set_status(status);
 }
 
 static String boot_get_field(const String &line, const char *key){
@@ -788,7 +875,7 @@ static void confirm_aux_idx(int idx, bool send_command){
   selected_aux = -1;
   g_selected_aux_ms = 0;
   confirmed_aux = idx;
-  clear_confirm_at = now_ms + 2000;  // v26.09.29.06: confirmed AUX tile stays lit for 2 seconds
+  clear_confirm_at = now_ms + 2000;  // v26.10.01.01: confirmed AUX tile stays lit for 2 seconds
   g_aux_suppress_until_ms[idx] = now_ms + 400;
   style_aux(idx,false,true);
   snprintf(msg,sizeof(msg),"AUX %d Confirmed", idx+1);
@@ -850,7 +937,7 @@ static void style_w1p_status_pill(int state){
 }
 
 static void style_estop_pill(bool active){
-  // v26.09.29.06: the middle status banner follows the SRVR-resolved state.
+  // v26.10.01.01: the middle status banner follows the SRVR-resolved state.
   // A local CTRL-TS UART/display gap must not invent "E-Stop CTRL" while SRVR
   // is still sending Status | Active. Real CTRL/W1P E-Stops are still shown
   // immediately when SRVR sends status=E-Stop... / status_level=red.
@@ -895,7 +982,7 @@ static void refresh_status_ui(){
   style_status_pill_cached(0,pill_ctrl,lbl_ctrl,"CTRL",g_ctrl_ok);
   if(pill_srvr && lbl_srvr) style_status_pill_cached(1,pill_srvr,lbl_srvr,"SRVR",g_srvr_ok);
   style_w1p_status_pill(g_w1p_health);
-  // v26.09.29.06: do not turn the main middle box red purely because the
+  // v26.10.01.01: do not turn the main middle box red purely because the
   // CTRL-TS local UART/display link hiccuped. The SRVR status packet is the
   // authoritative source for Active / Un-Calibrated / E-Stop display state.
   bool stopped_visual = (g_status_level >= 2) || g_estop_active;
@@ -1351,7 +1438,7 @@ static void apply_hmi_packet(const String &line){
     else g_status_level = 0;
   }
 
-  // v26.09.29.06: if SRVR sends explicit status/status_level, trust it as
+  // v26.10.01.01: if SRVR sends explicit status/status_level, trust it as
   // the authoritative display state. Do not override it locally with a CTRL
   // error just because the touchscreen/CTRL UART side saw a transient gap.
   g_estop_active = packet_estop;
@@ -1458,7 +1545,7 @@ static void apply_hmi_packet(const String &line){
   if(mode_changed || (prev_status_text != g_status_text) || (prev_status_level != g_status_level) || (prev_estop != g_estop_active) || (prev_estop_source != g_estop_source) || (prev_ctrl != g_ctrl_ok) || (prev_srvr != g_srvr_ok) || (prev_w1p != g_w1p_ok) || (prev_w1p_health != g_w1p_health)) {
     refresh_status_ui();
   }
-  // v26.09.29.06: no left-strip/full-screen invalidation on packets; progress marker animates locally.
+  // v26.10.01.01: no left-strip/full-screen invalidation on packets; progress marker animates locally.
 }
 
 
@@ -1467,7 +1554,7 @@ static void apply_layout_packet(const String &line){
   // on CTRL cannot overwrite the screen title/version or trigger header redraws.
   String hint = getField(line, "hint");
   if(lbl_title) set_label_text_if_changed(lbl_title, "HV P2P\nCTRL-TS");
-  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.09.29.06");
+  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.01.01");
   if(hint.length() && hint.startsWith("ERROR")) set_touch_debug(hint.c_str());
   for(int i=0;i<AUX_COUNT;i++){
     String key = String("aux") + String(i+1);
@@ -1487,6 +1574,15 @@ static void process_text_from_ctrl(String line, bool boot_phase){
   last_hmi_rx = millis();
   if(boot_phase){
     boot_process_line(line);
+    return;
+  }
+  if(fw_display_owned()){
+    // Firmware transfer owns the screen. We may update connection truth from a
+    // valid HMI packet, but must not apply normal layout/status widgets.
+    if(is_valid_hmi_packet(line)){
+      g_boot_ctrl_confirmed = getFieldBool(line, "ctrl", g_boot_ctrl_confirmed);
+      g_boot_srvr_confirmed = getFieldBool(line, "srvr", g_boot_srvr_confirmed);
+    }
     return;
   }
   if(line.startsWith("CFG1|")) {
@@ -1600,8 +1696,7 @@ static void fw_handle_begin(const HVP2PRS485::Frame &frame){
   g_fw_expected_version = version;
   g_fw_last_rx_ms = millis();
   g_ctrl_fw_compatible = false;
-  boot_set_progress(0);
-  boot_set_status("Updating CTRL-TS firmware | 0%");
+  fw_set_status_pct("Updating CTRL-TS firmware", 0);
   Serial.printf("[FW RX] begin version=%s size=%u sha=%s\n", version.c_str(), (unsigned)imageSize, sha.c_str());
   fw_send_text(HVP2PRS485::FW_READY, frame.seq, "ok=1|next=0");
 }
@@ -1634,9 +1729,7 @@ static void fw_handle_block(const HVP2PRS485::Frame &frame){
   g_fw_received += wrote;
   g_fw_last_rx_ms = millis();
   int pct = g_fw_expected_size ? int((100ULL * g_fw_received) / g_fw_expected_size) : 0;
-  char status[64]; snprintf(status,sizeof(status),"Updating CTRL-TS firmware | %d%%", pct);
-  boot_set_progress(pct);
-  boot_set_status(status);
+  fw_set_status_pct("Updating CTRL-TS firmware", pct);
   fw_send_text(HVP2PRS485::FW_ACK, frame.seq, String("ok=1|next=") + String((unsigned)g_fw_received));
 }
 
@@ -1652,8 +1745,7 @@ static void fw_handle_end(const HVP2PRS485::Frame &frame){
     fw_send_text(HVP2PRS485::FW_RESULT, frame.seq, String("ok=0|received=") + String((unsigned)g_fw_received));
     return;
   }
-  boot_set_progress(100);
-  boot_set_status("Verifying CTRL-TS firmware...");
+  fw_set_status_pct("Verifying CTRL-TS firmware", 100);
   uint8_t digest[32];
   if(!g_fw_sha_active || mbedtls_sha256_finish(&g_fw_sha_ctx, digest) != 0){
     fw_abort("sha_finish_failed");
@@ -1694,8 +1786,7 @@ static void fw_handle_end(const HVP2PRS485::Frame &frame){
   g_fw_final_size = g_fw_received;
   g_fw_final_sha = actualSha;
   Serial.printf("[FW RX] complete %u bytes; reboot requested by CTRL next\n", (unsigned)g_fw_received);
-  boot_set_progress(100);
-  boot_set_status("Firmware verified | waiting to reboot");
+  fw_set_status_pct("Firmware verified - waiting to reboot", 100);
   fw_send_text(HVP2PRS485::FW_RESULT, frame.seq, String("ok=1|size=") + String((unsigned)g_fw_final_size) + "|sha256=" + g_fw_final_sha);
 }
 
@@ -1704,8 +1795,7 @@ static void fw_handle_reboot(const HVP2PRS485::Frame &frame){
     fw_send_text(HVP2PRS485::ERROR_MSG, frame.seq, "reboot_without_verified_image");
     return;
   }
-  boot_set_progress(100);
-  boot_set_status("Firmware verified | restarting CTRL-TS...");
+  fw_set_status_pct("Firmware verified - restarting CTRL-TS", 100);
   fw_send_text(HVP2PRS485::ACK, frame.seq, "rebooting");
   if(g_fw_reboot_due_ms == 0) g_fw_reboot_due_ms = millis() + 250;
 }
@@ -1794,7 +1884,7 @@ static void create_ui(){
   lv_obj_t *brand=make_panel(frame,SX,HEADER_Y,70,HEADER_H,C_BG,0x63d84e,7);
   lbl_title=make_label(brand,"HV P2P\nCTRL-TS",0,6,&lv_font_montserrat_12,lv_color_hex(C_FG),70);
   lv_obj_set_style_text_line_space(lbl_title,-2,0);
-  lbl_subtitle=make_label(frame,"v26.09.29.06",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
+  lbl_subtitle=make_label(frame,"v26.10.01.01",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
 
   pill_ctrl=make_panel(frame,255,HEADER_Y,126,HEADER_H,C_PANEL,C_BORDER,5);
   dot_ctrl=lv_obj_create(pill_ctrl); lv_obj_set_pos(dot_ctrl,9,15); lv_obj_set_size(dot_ctrl,8,8); lv_obj_set_style_radius(dot_ctrl,LV_RADIUS_CIRCLE,0); lv_obj_set_style_border_width(dot_ctrl,0,0); lv_obj_set_style_bg_color(dot_ctrl,lv_color_hex(0xef5757),0); lv_obj_clear_flag(dot_ctrl,LV_OBJ_FLAG_SCROLLABLE);
@@ -1906,7 +1996,7 @@ static void service_link_state(){
 
   bool link_alive = last_hmi_rx && ((millis() - last_hmi_rx) <= HMI_TIMEOUT_MS);
   if(!link_alive) {
-    // v26.09.29.06: local UART/display timeout is a CTRL-TS link warning, not
+    // v26.10.01.01: local UART/display timeout is a CTRL-TS link warning, not
     // proof of a real CTRL E-Stop. Keep the last SRVR-resolved status banner so
     // the touchscreen cannot randomly show "Status | E-Stop CTRL" while SRVR
     // remains "Status | Active". The CTRL status pill can still show ERROR.
@@ -1952,6 +2042,7 @@ void setup(){
   lvgl_port_lock(-1);
   lv_obj_t *old_boot_scr = boot_scr;
   lv_obj_t *main_scr = lv_obj_create(NULL);
+  g_main_scr = main_scr;
   lv_obj_clear_flag(main_scr, LV_OBJ_FLAG_SCROLLABLE);
   lv_scr_load(main_scr);
   if(old_boot_scr) lv_obj_del(old_boot_scr);
@@ -1959,6 +2050,8 @@ void setup(){
   boot_status_bar = nullptr;
   boot_status_lbl = nullptr;
   boot_progress_bar = nullptr;
+  g_fw_connection_lbl = nullptr;
+  g_fw_runtime_screen = false;
   boot_canvas = nullptr;
   if(boot_canvas_buf){
     free(boot_canvas_buf);
@@ -1980,8 +2073,10 @@ void loop(){
   fw_service_reboot();
   lvgl_port_lock(-1);
   handle_hmi_rx();
-  service_link_state();
-  screen_keepalive();
+  if(!fw_display_owned()){
+    service_link_state();
+    screen_keepalive();
+  }
   lvgl_port_unlock();
   fw_service_timeout();
   delay(20);
