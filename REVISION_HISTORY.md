@@ -1,24 +1,36 @@
 # HV P2P Revision History
 
+## v26.10.01.03
+- Built directly from v26.10.01.02 after additional CTRL joystick bench testing.
+- Fixed 1-2 second periodic joystick/telemetry stalls caused by v26.10.01.02's
+  blocking two-second HTTP firmware-manifest checks in the healthy CTRL/W1P main
+  loops. SRVR now sends lightweight UDP release beacons; matched nodes perform no
+  HTTP, and only enter the existing fail-closed HTTP/SHA/OTA path after detecting
+  a release mismatch.
+- Joystick Left/Centre/Right wizard completion now immediately activates and
+  persists the new calibration. Setup Value/Percentage uses that calibrated range
+  immediately, with the existing neutral-return motion interlock retained.
+- Removed Settings and Free-D Apply/Reset footer buttons. Accepted edits auto-save;
+  text editors commit on Enter/focus loss rather than each keystroke.
+- Setup auto-save no longer clears CTRL receive history or reconfigures W1P for
+  unrelated changes; network side effects occur only when the relevant address
+  changes. Safe transactional W1P IP readdress is retained.
+- Load Config now validates/applies/persists the imported full configuration
+  immediately. Save Config exports the current auto-saved state.
+- Added regression locks for non-blocking release beacons, calibrated percentage,
+  calibration auto-commit and Settings/Free-D auto-save.
+- macOS bundle build metadata advanced to `2610.1.3`.
+
 ## v26.10.01.02
 - Built directly from v26.10.01.01 after first hardware bench feedback.
-- Fixed CTRL and W1P firmware authority so an already-matched running node
-  re-checks the active SRVR manifest every 2 seconds. Launching a newer SRVR now
-  invalidates the stale match and starts the normal safe automatic OTA path
-  without requiring a CTRL/W1P reboot.
-- SRVR now independently compares reported CTRL/W1P/CTRL-TS firmware versions
-  against its own running release. An old node can no longer make Setup report
-  **Up to date** merely because it matched a previous SRVR session.
-- CTRL-TS now switches to the dedicated opaque firmware-update screen even when
-  FW_BEGIN arrives during the boot splash. The large JPEG splash canvas is
-  removed before transfer progress is rendered, and progress redraws occur only
-  when the integer percentage changes, addressing the vertical flash/tear seen
-  in the supplied hardware video.
-- Fixed CTRL-TS E-stop status formatting so delimiter sanitisation cannot produce
-  `E-STOP | / W1P`; the banner is reconstructed from the dedicated `estop_src`
-  field and remains backward-compatible with slash-normalised older packets.
-- Added regression locks for all four field-feedback behaviours and advanced
-  macOS bundle build metadata to `2610.1.2`.
+- Fixed automatic firmware convergence so running CTRL/W1P notice a newer SRVR
+  release without requiring a controller reboot, and made SRVR reject stale
+  old-release firmware-match claims.
+- CTRL-TS now switches from the JPEG boot splash to the dedicated opaque update
+  screen before firmware progress is rendered, with percentage redraw throttling.
+- Fixed CTRL-TS E-stop formatting so `E-STOP | / W1P` cannot be produced; sources
+  are reconstructed from the delimiter-safe `estop_src` field.
+- macOS bundle build metadata was `2610.1.2`.
 
 ## v26.10.01.01
 - Built directly from authoritative v26.09.29.06.

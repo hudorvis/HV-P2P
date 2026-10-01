@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "26.10.01.02"
+VERSION = "26.10.01.03"
 ERRORS: list[str] = []
 
 
@@ -168,7 +168,6 @@ for token in (
     'backend.setFreeDNetwork', 'backend.setFreeDOffset', 'backend.setFreeDInvert',
     'backend.setGeometryPoint', 'backend.setWeightValue', 'backend.setWeightUnit',
     'backend.setLensCalibration', 'backend.captureLens',
-    'backend.applyFreeDSettings', 'backend.resetFreeDSettings',
 ):
     require(token in qml_main, f"editable UI action not wired: {token}")
 for token in ("Parameter", "Raw", "Decoded", "Offset", "Invert", "Input Rate", "Output Rate"):
@@ -183,8 +182,8 @@ require("FreeDGeometryDiagram" not in qml_main and "FreeDGeometryDiagram.qml" no
         "Run and Free-D must use the same SpanDiagram component")
 require("@Property('QVariantList', notify=configChanged)" in backend,
         "editable list models still use the fast telemetry signal")
-require("self._saved_freed_snapshot" in backend and "resetFreeDSettings" in backend,
-        "Free-D Apply/Reset staging support missing")
+require("def _commit_freed_draft" in backend and "def _refresh_freed_mirror" in backend,
+        "Free-D auto-save commit/mirror support missing")
 require("_kg_to_lb" in backend and "_lb_to_kg" in backend,
         "kg/lbs automatic conversion support missing")
 require("skate_per_line" in backend and "point_drop" in backend and "highline_mode" in backend,
@@ -200,8 +199,8 @@ require('P1 and P5 are reference points, not endpoints' in backend and
 require('P1 (Near)' not in backend and 'P5 (Far)' not in backend and
         'P1 (Near)' not in qml_main and 'P5 (Far)' not in qml_main,
         "P1/P5 are still semantically locked to Near/Far endpoints")
-require('getattr(self, "_saved_freed_snapshot"' in backend and 'def _send_freed' in backend,
-        "live Free-D output is not using the last-applied settings snapshot")
+require('def _send_freed' in backend and 'applied = self._freed_snapshot()' in backend,
+        "live Free-D output is not using the current auto-saved settings snapshot")
 
 # Requested v09 fixes: preset tab commit isolation, one shared calculated cable
 # profile, simplified safety source naming, and fully visible cable-weight unit.
@@ -233,8 +232,8 @@ require('parts.append("RS485")' not in backend and 'parts.append("ADS1115")' not
 require(re.search(r'model\s*:\s*\[\s*"kg/100m"\s*,\s*"lbs/100m"\s*\]', qml_main) is not None and
         re.search(r'width\s*:\s*f\(108\)', qml_main) is not None,
         "Cable Weight kg/100m unit control is missing or too narrow")
-require(re.search(r'onTextEdited\s*:\s*\{[\s\S]{0,300}?setWeightValue\(\s*"Tension"\s*,\s*n\s*\)', qml_main) is not None,
-        "Cable Tension does not live-preview the calculated sag while editing")
+require(re.search(r'onCommit\s*:\s*function\(v\)\s*\{[\s\S]{0,300}?setWeightValue\(\s*"Tension"\s*,\s*n\s*\)', qml_main) is not None,
+        "Cable Tension is not auto-saved when its editor is committed")
 require('editCommitSink.forceActiveFocus()' in qml_main and 'function changeShortcutTab' in qml_main,
         "page/tab changes do not explicitly commit the active editor first")
 
@@ -272,8 +271,10 @@ for token in ("LOG VIEW", "SEVERITY", "SEARCH", "ACTIONS", "LIVE LOG", "SYSTEM S
     require(token in qml_log, f"final Log content missing: {token}")
 require('width:(parent.width-root.f(10))*0.245' in qml_log and 'width:(parent.width-root.f(30))*0.245' in qml_log,
         "Log System Summary is not aligned to the Actions panel width ratio")
-require('visible:window.page===1 || window.page===2' in qml_main,
-        "footer Apply/Reset must be visible on Setup and Free-D only")
+require('text:"Apply"' not in qml_main and 'text:"Reset"' not in qml_main and
+        'backend.applySetupSettings' not in qml_main and 'backend.resetSetupSettings' not in qml_main and
+        'backend.applyFreeDSettings' not in qml_main and 'backend.resetFreeDSettings' not in qml_main,
+        "Setup/Free-D footer Apply/Reset controls must remain removed")
 require('SRVR Time:' in qml_main and 'Uptime:' in qml_main,
         "shared footer time/uptime placement missing")
 for token in (
@@ -350,7 +351,7 @@ require('width:parent.width*.22' in qml_main and
 require(qml_main.count('width:f(72)') >= 2 and 'parent.width-f(48+72+66)' in qml_main,
         "Free-D lens decoded percentage width fix is missing")
 
-# v26.10.01.02 locked Run/Setup revision. Keep the approved panel geometry and
+# v26.10.01.03 locked Run/Setup revision. Keep the approved panel geometry and
 # setting semantics while guarding only the requested presentation/interaction deltas.
 require('text:"HV P2P\\nSRVR"' in qml_main and 'HV P2P  |  SRVR' not in qml_main and 'P2P°\\nSRVR' not in qml_main,
         "locked two-line HV P2P/SRVR logo/header revision is missing")
@@ -440,58 +441,64 @@ for i in range(1, 11):
     require(f'"Preset {i} Save"' in qml_setup, f"AUX assignment option missing: Preset {i} Save")
 require('property var auxChoices:' in qml_setup and
         'backend.setSetupAuxAssignment("CTRL",index,currentText)' in qml_setup,
-        "CTRL-TS AUX assignment panel is not using the shared staged choice list")
+        "CTRL-TS AUX assignment panel is not using the shared choice list")
 require('backend.setSetupAuxAssignment("W1P",index,currentText)' not in qml_setup,
         "obsolete W1P-TS AUX assignment UI remains exposed")
 
-# Setup must bind/edit the draft only. Live telemetry/status indicators are
-# allowed, but editable Setup controls may not call the old immediate-save API.
+# Setup keeps a QML mirror for stable bindings, but every accepted edit is
+# committed and persisted immediately. Live telemetry/status indicators remain
+# separate, and old Run-page immediate APIs are not used by Setup controls.
 require('backend.setupDraft' in qml_setup and qml_setup.count('backend.setupDraft') >= 12,
-        "Setup editable controls are not consistently bound to setupDraft")
+        "Setup editable controls are not consistently bound to setupDraft mirror")
 for forbidden in ('backend.renameDriveMode(', 'backend.setDriveModeValue(',
                   'backend.setJoystickDeadband(', 'backend.setAuxAssignment('):
-    require(forbidden not in qml_setup, f"Setup contains immediate live-write binding: {forbidden}")
+    require(forbidden not in qml_setup, f"Setup contains wrong live-write binding: {forbidden}")
 for required in ('backend.renameSetupDriveMode(', 'backend.setSetupDriveModeValue(',
                  'backend.setSetupJoystickDeadband(', 'backend.setSetupAuxAssignment(',
                  'backend.setSetupNetwork(', 'backend.setSetupDirection(',
                  'backend.setSetupUnitsPerM(', 'backend.setSetupPositionSource(',
                  'backend.setSetupAccelerationMode(', 'backend.setSetupBatteryChange('):
-    require(required in qml_setup, f"Setup staged editor binding missing: {required}")
-require('self._setup_draft_dirty = True' in backend and
+    require(required in qml_setup, f"Setup auto-save editor binding missing: {required}")
+require('def _commit_setup_draft' in backend and
         'draft = copy.deepcopy(self._setup_draft)' in backend and
         'self._restore_setup_snapshot(draft)' in backend and
-        'def resetSetupSettings' in backend,
-        "Setup draft Apply/Reset backend is incomplete")
-require('if not getattr(self, "_setup_draft_dirty", False):' in backend,
-        "Setup page navigation can discard unapplied staged edits")
+        'self._save_config()' in backend and
+        'def _refresh_setup_mirror' in backend,
+        "Setup auto-save backend is incomplete")
+require('if self.ctrl_ip != old_ctrl_ip:' in backend and
+        'if self.w1p_ip != old_w1p_ip:' in backend,
+        "Setup auto-save can unnecessarily reset healthy controller links")
 
-# Free-D controls likewise bind to freeDDraft and only commit through Apply.
+# Free-D controls use a stable mirror but every setter commits it immediately.
 require('property var fdDraft: backend.freeDDraft' in qml_main,
-        "Free-D page is not bound to freeDDraft")
-require('self._freed_draft_dirty = True' in backend and
+        "Free-D page is not bound to freeDDraft mirror")
+require('def _commit_freed_draft' in backend and
         'self._restore_freed_snapshot(copy.deepcopy(self._freed_draft))' in backend and
-        'if not getattr(self, "_freed_draft_dirty", False):' in backend,
-        "Free-D draft Apply/Reset/navigation backend is incomplete")
+        'self._save_config()' in backend and 'def _refresh_freed_mirror' in backend,
+        "Free-D auto-save backend is incomplete")
 require('backend.freeDPreviewCableProfile' in qml_main and
         'backend.freeDInputPreview' in qml_main and 'backend.freeDOutputPreview' in qml_main,
-        "Free-D staged visual preview path is incomplete")
+        "Free-D live visual preview path is incomplete")
 require('def exportConfigFile' in backend and 'def stageConfigFile' in backend and
-        'self._pending_import_config' in backend and '_apply_imported_run_config' in backend,
+        '_apply_imported_run_config' in backend,
         "transferable configuration import/export backend is incomplete")
 require('currently APPLIED full configuration' in backend and
-        'Load a transfer file into Setup/Free-D drafts' in backend,
-        "config transfer does not document applied-export/staged-import semantics")
+        'immediately apply and persist a transferable config' in backend,
+        "config transfer does not document auto-save/import semantics")
 
-# The joystick wizard is a Setup setting: completion must stage calibration and
-# Apply is the only path that commits it to the live calibrated axis/config.
+# The joystick wizard's final Right capture is the commit point: it must make the
+# new calibration live and persistent immediately, so Value/Percentage use the
+# captured Left/Centre/Right range without another button press.
 joy_start = backend.find('def joystickCalibrationNext')
 joy_end = backend.find('@Slot(str,bool)', joy_start)
 joy_src = backend[joy_start:joy_end if joy_end > joy_start else None]
 require('self._setup_draft["joystick_calibration"]' in joy_src and
-        'self._setup_draft_dirty = True' in joy_src,
-        "Joystick wizard completion is not staged in Setup")
-require('self._save_config' not in joy_src,
-        "Joystick wizard bypasses Setup Apply by saving immediately")
+        'self._commit_setup_draft(notify=False)' in joy_src and
+        'Joystick calibration saved' in joy_src,
+        "Joystick wizard completion does not immediately auto-save calibration")
+require('def joystickPercentage' in backend and
+        'self._calibrated_joystick(self._ctrl_axis) * 100.0' in backend,
+        "Joystick Percentage is not based on the active calibrated range")
 
 # Motion Profiles row must contain both six-row mode tables before the divider;
 # this is the screenshot-derived Stop Deceleration/divider overlap fix.
@@ -529,7 +536,7 @@ require('profileValue(Number(gp.x), key)' in span_qml and
         'var gv=root.sideView ? Number(gp.y)' not in span_qml,
         "Free-D geometry markers are not pinned to the exact calculated cable profile")
 
-# v26.10.01.02 integration contract: fifth CTRL-TS AUX travels in the spare A7
+# v26.10.01.03 integration contract: fifth CTRL-TS AUX travels in the spare A7
 # 16-bit flag, and display packets expose all five state-aware labels.
 require("FLAG_AUX5 = 0x0400" in backend, "AUX5 controller flag missing")
 require('f"aux5={labels[4]}"' in backend, "DSP1 AUX5 field missing")
@@ -585,7 +592,7 @@ require('cp assets/HV_P2P_SRVR_icon.png "$STAGE/HV_P2P_SRVR_icon.png"' in workfl
         "P2P SRVR bundle icon is not restored during packaging")
 require('CFBundleDisplayName' in workflow and "HV P2P SRVR'" in workflow,
         "HV P2P SRVR bundle display metadata is not enforced")
-require(all(token in workflow for token in ('CFBundleIdentifier', 'com.hvp2p.srvr', 'CFBundleShortVersionString', 'CFBundleVersion', 'HVP2PReleaseVersion', "BUNDLE_BUILD_VERSION: '2610.1.2'")),
+require(all(token in workflow for token in ('CFBundleIdentifier', 'com.hvp2p.srvr', 'CFBundleShortVersionString', 'CFBundleVersion', 'HVP2PReleaseVersion', "BUNDLE_BUILD_VERSION: '2610.1.3'")),
         "HV P2P SRVR stable bundle identity/version metadata is not enforced")
 require('three untouched native ZIPs' in workflow and 'SHA256SUMS.txt' in workflow and 'Complete Release.zip.sha256' in workflow,
         "complete release does not preserve/hash all native SRVR ZIPs and authoritative release ZIP")
@@ -604,9 +611,9 @@ require('Nuitka==4.2' in workflow and '--assume-yes-for-downloads' in workflow,
         "Windows CI does not pin Nuitka and permit required non-interactive dependency-tool downloads")
 require("Select-String -Path deploy-dry-run.txt -SimpleMatch '--assume-yes-for-downloads'" in workflow,
         "Windows deploy dry-run does not prove the actual Nuitka command is non-interactive")
-require('HV-P2P-SRVR-v26.10.01.02-macOS-Intel' in workflow and
-        'HV-P2P-SRVR-v26.10.01.02-macOS-Apple-Silicon' in workflow and
-        'HV-P2P-SRVR-v26.10.01.02-Windows-x64' in workflow,
+require('HV-P2P-SRVR-v26.10.01.03-macOS-Intel' in workflow and
+        'HV-P2P-SRVR-v26.10.01.03-macOS-Apple-Silicon' in workflow and
+        'HV-P2P-SRVR-v26.10.01.03-Windows-x64' in workflow,
         "native SRVR artifact names are incomplete")
 require('def _app_data_dir' in backend and 'LOCALAPPDATA' in backend and 'XDG_CONFIG_HOME' in backend,
         "cross-platform private config directory mapping is missing")
@@ -616,7 +623,7 @@ require('path_text[2] == ":"' in backend and 'parsed.netloc' in backend,
 require('text: "Skate Weight:"' in qml_main, "Free-D must label the suspended package as Skate Weight")
 require('text: "Static Weight:"' not in qml_main, "obsolete Static Weight label remains in Free-D")
 require('freeDPage.fdDraft.skate_weight_value' in qml_main and 'setWeightValue("Skate", n)' in qml_main,
-        "staged Skate Weight editor is not wired to the Free-D draft backend")
+        "auto-save Skate Weight editor is not wired to the Free-D mirror backend")
 require('Text { width:f(150); anchors.verticalCenter:parent.verticalCenter; text:"Drive Mode"' in qml_main,
         "System Drive Mode row is not aligned to the common 150px control column")
 # Virtual is a safety mode even when CI/smoke-test suppresses hardware writes.
@@ -626,14 +633,14 @@ require('self._safety_servo_inhibited = True' in _virtual_branch,
         "Virtual Position Source does not latch the local Servo Enable inhibit independently of hardware I/O")
 require('fillText("SKATE"' not in span_qml, "Top/Side span diagrams still draw the SKATE text label")
 
-# v26.10.01.02 CTRL joystick readout labels/geometry and global preset-name mode.
+# v26.10.01.03 CTRL joystick readout labels/geometry and global preset-name mode.
 setup=(ROOT/"qml/pages/SetupPage.qml").read_text()
 require('text:"Value"' in setup and 'text:"Percentage"' in setup,
         "CTRL Setup uses Value / Percentage labels")
-require('text:Number(backend.joystickValue).toFixed(2);horizontalAlignment:Text.AlignRight' in setup and
-        'text:Number(backend.joystickPercentage).toFixed(1)+" %";horizontalAlignment:Text.AlignRight' in setup and
+require('text:Number(backend.setupJoystickValue).toFixed(2);horizontalAlignment:Text.AlignRight' in setup and
+        'text:Number(backend.setupJoystickPercentage).toFixed(1)+" %";horizontalAlignment:Text.AlignRight' in setup and
         setup.count('width:root.f(72);anchors.verticalCenter:parent.verticalCenter') >= 2,
-        "CTRL Setup Value / Percentage readouts share the same right-aligned value column")
+        "CTRL Setup calibrated Value / Percentage readouts share the same right-aligned value column")
 require('text:"Preset Names"' in qml_main and 'text:"Short Names"' in qml_main and 'text:"Long Names"' in qml_main and
         'backend.setPresetNameMode("Short Names")' in qml_main and 'backend.setPresetNameMode("Long Names")' in qml_main,
         "Run Shortcuts exposes global Short Names / Long Names preset display selection")

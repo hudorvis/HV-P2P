@@ -221,11 +221,17 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.01.02", smoke_test: bool = False):
+    def __init__(self, version="26.10.01.03", smoke_test: bool = False):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
         self.started = time.time()
+        # A short per-process authority session token is advertised to CTRL/W1P on
+        # their existing real-time links. A new SRVR process therefore causes one
+        # fail-safe manifest re-verification without any periodic blocking HTTP poll
+        # inside either field node's motion loop.
+        self._firmware_authority_session = f"{os.getpid():x}{time.time_ns() & 0xFFFFFFFF:x}"[-16:]
+        self._last_w1p_fw_beacon = 0.0
         self._lock = threading.RLock()
         self._logs = deque(maxlen=1200)
         # Keep the proven plain-text log untouched for disk export while also
@@ -445,9 +451,9 @@ class HVP2PBackend(QObject):
         self._load_config()
         self._saved_freed_snapshot = self._freed_snapshot()
         self._saved_setup_snapshot = self._setup_snapshot()
-        # Setup and Free-D are explicit Apply/Reset pages. Their editable values
-        # live in independent drafts so typing never changes the live motion,
-        # networking or Free-D state until Apply is deliberately pressed.
+        # Setup and Free-D retain mirror dictionaries for stable QML bindings, but
+        # edits are committed to live state and persistent config immediately. Text
+        # fields commit on Enter/focus loss; buttons/combos commit on activation.
         self._setup_draft = copy.deepcopy(self._saved_setup_snapshot)
         self._freed_draft = copy.deepcopy(self._saved_freed_snapshot)
         self._pending_import_config = None
@@ -746,18 +752,11 @@ class HVP2PBackend(QObject):
         elif abs(observed_trim) < max_trim * 0.8:
             self._joystick_centre_warned = False
 
-    def _calibrated_joystick(self, raw: float) -> float:
-        """Piecewise-normalise a raw joystick sample around the effective centre.
-
-        The captured calibration remains authoritative. The only automatic
-        adjustment is the tightly bounded runtime centre trim above; endpoints are
-        never moved. Physical Left always maps to -1 and Right to +1, with the
-        separate CTRL Direction setting applied afterwards.
-        """
+    @staticmethod
+    def _normalise_joystick_calibration(raw: float, left: float, centre: float, right: float) -> float:
+        """Piecewise-normalise one sample against explicit Left/Centre/Right captures."""
         raw = max(-1.0, min(1.0, float(raw)))
-        left = float(self.joystick_cal_left)
-        centre = self._effective_joystick_centre()
-        right = float(self.joystick_cal_right)
+        left, centre, right = float(left), float(centre), float(right)
         lspan = left - centre
         rspan = right - centre
         if abs(lspan) < 1e-6 or abs(rspan) < 1e-6 or lspan * rspan >= 0.0:
@@ -767,6 +766,34 @@ class HVP2PBackend(QObject):
         else:
             value = (raw - centre) / rspan
         return max(-1.0, min(1.0, float(value)))
+
+    def _calibrated_joystick(self, raw: float) -> float:
+        """Normalise a live sample around the applied calibration/effective centre.
+
+        The captured calibration remains authoritative. The only automatic
+        adjustment is the tightly bounded runtime centre trim above; endpoints are
+        never moved. Physical Left always maps to -1 and Right to +1, with the
+        separate CTRL Direction setting applied afterwards.
+        """
+        return self._normalise_joystick_calibration(
+            raw, self.joystick_cal_left, self._effective_joystick_centre(), self.joystick_cal_right
+        )
+
+    def _setup_preview_joystick(self) -> float:
+        """Normalise the live sample using the Setup mirror calibration.
+
+        Setup edits auto-commit, so this normally matches the live calibrated axis.
+        Keeping the mirror-based helper preserves stable QML bindings during edits.
+        """
+        draft = getattr(self, "_setup_draft", {})
+        cal = draft.get("joystick_calibration", {}) if isinstance(draft, dict) else {}
+        try:
+            left = float(cal.get("left", self.joystick_cal_left))
+            centre = float(cal.get("centre", self.joystick_cal_centre))
+            right = float(cal.get("right", self.joystick_cal_right))
+        except Exception:
+            left, centre, right = self.joystick_cal_left, self.joystick_cal_centre, self.joystick_cal_right
+        return self._normalise_joystick_calibration(self._ctrl_axis, left, centre, right)
 
     def _ctrl_connected(self):
         now = time.time()
@@ -1071,7 +1098,7 @@ class HVP2PBackend(QObject):
 
         The request is sent to the currently connected W1P address and waits for
         the EdgeBox's post-safety-gate acknowledgement. If it cannot prove the
-        change was accepted, Setup remains unapplied rather than orphaning W1P.
+        change was accepted, the requested auto-save change is rejected rather than orphaning W1P.
         """
         new_ip = self._normalise_ipv4(new_ip)
         old_ip = self._normalise_ipv4(self.w1p_ip)
@@ -1632,6 +1659,7 @@ class HVP2PBackend(QObject):
             f"ref_vis={1 if ref_set else 0}", f"estop={estop}",
             f"estop_src={self._display_field(source)}", f"status={self._display_field(status)}",
             f"status_level={level}", f"ctrl={1 if ctrl_ok else 0}", "srvr=1",
+            f"srvr_fw={self._current_firmware_version()}", f"fw_session={self._firmware_authority_session}",
             f"w1p={1 if w1p_ok else 0}", f"w1p_state={w1p_state}",
             f"service={1 if self._service_override_active() else 0}", f"flags={int(self._ctrl_flags)}",
             f"aux1={labels[0]}", f"aux2={labels[1]}", f"aux3={labels[2]}", f"aux4={labels[3]}", f"aux5={labels[4]}",
@@ -1668,6 +1696,18 @@ class HVP2PBackend(QObject):
         except Exception:
             # Display/status telemetry must never disturb the motion/safety loop.
             pass
+
+    def _send_w1p_firmware_beacon(self) -> None:
+        """Advertise SRVR authority identity over W1P's existing non-blocking UDP path."""
+        if self.smoke_test:
+            return
+        now = time.time()
+        if now - float(self._last_w1p_fw_beacon or 0.0) < 0.50:
+            return
+        self._last_w1p_fw_beacon = now
+        self.w1p.send(
+            f"SRVR_FW|version={self._current_firmware_version()}|session={self._firmware_authority_session}"
+        )
 
     def _motion_tick(self):
         self._virtual_motion_step()
@@ -2025,7 +2065,7 @@ class HVP2PBackend(QObject):
         moving_skate_path=True so each sample answers "what is the cable/skate Y
         when the skate is at this X?". That full-run camera path remains useful
         while the rig is offline or parked at a support and makes all sag inputs
-        visible during staged Free-D configuration.
+        visible while Free-D settings are edited.
         """
         cfg = snap if isinstance(snap, dict) else None
         geometry = [dict(p) for p in (cfg.get("geometry", self.geometry) if cfg else self.geometry)]
@@ -2079,10 +2119,9 @@ class HVP2PBackend(QObject):
         )
 
     def _send_freed(self):
-        # The Free-D page has explicit Apply/Reset controls. Network output uses
-        # the last-applied snapshot so staged edits cannot alter the live packet
-        # stream until Apply is pressed.
-        applied = dict(getattr(self, "_saved_freed_snapshot", {}) or self._freed_snapshot())
+        # Free-D edits auto-commit. Build each packet from the current live snapshot
+        # so a committed adjustment is reflected without a separate Apply action.
+        applied = self._freed_snapshot()
         if not bool(applied.get("output_enabled", self.freed_output_enabled)):
             return
         now = time.perf_counter()
@@ -2126,7 +2165,7 @@ class HVP2PBackend(QObject):
             for _ in range(100):
                 try: self._parse_w1p(self._w1p_rx.get_nowait())
                 except queue.Empty: break
-            self._motion_tick(); self._send_freed(); self._send_controller_display_packet(); self.stateChanged.emit()
+            self._motion_tick(); self._send_freed(); self._send_controller_display_packet(); self._send_w1p_firmware_beacon(); self.stateChanged.emit()
         except Exception as exc: self._log(f"[SRVR] tick: {exc}")
 
     # --- config ---
@@ -2339,6 +2378,18 @@ class HVP2PBackend(QObject):
         }
 
     def _restore_setup_snapshot(self, snap: dict) -> None:
+        # Auto-save means this function can run for a single UI edit. Do not
+        # disturb healthy controller links unless the edit actually changed a
+        # network/W1P control setting. In particular, joystick calibration or a
+        # label edit must never clear the 20 Hz CTRL receive history.
+        old_ctrl_ip = str(self.ctrl_ip)
+        old_w1p_ip = str(self.w1p_ip)
+        old_w1p_sync = (
+            bool(self.reverse_motor), float(self.winch_units_per_m),
+            copy.deepcopy(self.drive_modes), int(self.active_drive_mode),
+            str(self.acceleration_mode), bool(self.battery_change_mode),
+        )
+
         self.ctrl_ip = str(snap.get("ctrl_ip", self.ctrl_ip))
         self.w1p_ip = str(snap.get("w1p_ip", self.w1p_ip))
         self.reverse_joystick = bool(snap.get("reverse_joystick", self.reverse_joystick))
@@ -2350,8 +2401,14 @@ class HVP2PBackend(QObject):
             centre = float(joy_cal.get("centre", self.joystick_cal_centre))
             right = float(joy_cal.get("right", self.joystick_cal_right))
             if abs(left-centre) >= 0.05 and abs(right-centre) >= 0.05 and (left-centre)*(right-centre) < 0.0:
+                changed_cal = (
+                    abs(left-self.joystick_cal_left) > 1e-12 or
+                    abs(centre-self.joystick_cal_centre) > 1e-12 or
+                    abs(right-self.joystick_cal_right) > 1e-12
+                )
                 self.joystick_cal_left, self.joystick_cal_centre, self.joystick_cal_right = left, centre, right
-                self._reset_joystick_centre_drift()
+                if changed_cal:
+                    self._reset_joystick_centre_drift()
         except Exception:
             pass
         self._apply_position_source_runtime(snap.get("position_source", self.position_source), send_safety=not self.smoke_test)
@@ -2363,9 +2420,18 @@ class HVP2PBackend(QObject):
         self.ctrl_aux_assignments = [str(x) for x in self._normalise_list(snap.get("ctrl_aux_assignments"), self.ctrl_aux_assignments, 5)]
         self.w1p_aux_assignments = [str(x) for x in self._normalise_list(snap.get("w1p_aux_assignments"), self.w1p_aux_assignments, 5)]
         self._apply_active_drive_profile(sync=False)
-        self._ctrl_rx_times.clear()
-        self.w1p.reconfigure(self.w1p_ip, self.w1p_port)
-        if not self.smoke_test:
+
+        if self.ctrl_ip != old_ctrl_ip:
+            self._ctrl_rx_times.clear()
+        if self.w1p_ip != old_w1p_ip:
+            self.w1p.reconfigure(self.w1p_ip, self.w1p_port)
+
+        new_w1p_sync = (
+            bool(self.reverse_motor), float(self.winch_units_per_m),
+            copy.deepcopy(self.drive_modes), int(self.active_drive_mode),
+            str(self.acceleration_mode), bool(self.battery_change_mode),
+        )
+        if not self.smoke_test and (self.w1p_ip != old_w1p_ip or new_w1p_sync != old_w1p_sync):
             self._sync_w1p_settings()
             self._sync_service_mode_to_winch(force=True)
 
@@ -2489,7 +2555,7 @@ class HVP2PBackend(QObject):
         return Path(text).expanduser()
 
     def _apply_imported_run_config(self, c: dict) -> None:
-        """Apply transferable Run-only values when Setup Apply is pressed."""
+        """Apply transferable Run-only values during an automatic config import."""
         if not isinstance(c, dict):
             return
         # Imported Run files may carry legacy reference state, but position
@@ -2540,14 +2606,14 @@ class HVP2PBackend(QObject):
 
         Migration is deliberately non-destructive: canonical values already in a
         newer file always win. The returned object is safe for normal Setup and
-        Free-D Apply/Reset semantics and can be saved by the current release.
+        Free-D auto-save semantics and can be saved by the current release.
         """
         if not isinstance(config, dict):
             return {}, False
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.01.02 moves the installed joystick polarity correction into CTRL,
+        # v26.10.01.03 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same
@@ -2830,12 +2896,10 @@ class HVP2PBackend(QObject):
 
     def _save_config(self, include_staged_freed: bool = False, make_backup: bool = True):
         try:
-            # Free-D has explicit Apply/Reset semantics. Unrelated saves (preset,
-            # drive mode, etc.) must not accidentally commit staged Free-D edits.
-            if include_staged_freed or not hasattr(self, "_saved_freed_snapshot"):
-                freed_snap = self._freed_snapshot()
-            else:
-                freed_snap = dict(self._saved_freed_snapshot)
+            # Setup/Free-D are auto-save pages. Persist the current live Free-D
+            # snapshot on every config save. The legacy argument is retained for
+            # compatibility with older internal callers/tests.
+            freed_snap = self._freed_snapshot()
             c = {
                 "config_schema_version": 3,
                 "not_calibrated_mode": True,
@@ -2984,6 +3048,10 @@ class HVP2PBackend(QObject):
         return float(self._calibrated_joystick(self._ctrl_axis) * 100.0)
     @Property(float, notify=stateChanged)
     def joystickRawValue(self): return float(self._ctrl_axis)
+    @Property(float, notify=stateChanged)
+    def setupJoystickValue(self): return float(self._setup_preview_joystick())
+    @Property(float, notify=stateChanged)
+    def setupJoystickPercentage(self): return float(self._setup_preview_joystick() * 100.0)
     @Property(float, notify=stateChanged)
     def joystickCentreTrimPercentage(self):
         span = self._joystick_min_cal_span()
@@ -3674,69 +3742,75 @@ class HVP2PBackend(QObject):
         self.winch_units_per_m = max(1.0,float(v))
         self._sync_w1p_settings(); self._save_config(); self._notify_config()
 
-    @Slot()
-    def beginSetupEdit(self):
-        """Refresh Setup from live values only when there are no unapplied edits."""
-        if self._pending_import_config is not None and not self._pending_import_setup_handled:
-            return
-        if not getattr(self, "_setup_draft_dirty", False):
-            self._saved_setup_snapshot = self._setup_snapshot()
-            self._setup_draft = copy.deepcopy(self._saved_setup_snapshot)
-            self._notify_config()
+    def _refresh_setup_mirror(self) -> None:
+        self._saved_setup_snapshot = self._setup_snapshot()
+        self._setup_draft = copy.deepcopy(self._saved_setup_snapshot)
+        self._setup_draft_dirty = False
 
-    @Slot()
-    def beginFreeDEdit(self):
-        """Refresh Free-D from live values only when there are no unapplied edits."""
-        if self._pending_import_config is not None and not self._pending_import_freed_handled:
-            return
-        if not getattr(self, "_freed_draft_dirty", False):
-            self._saved_freed_snapshot = self._freed_snapshot()
-            self._freed_draft = copy.deepcopy(self._saved_freed_snapshot)
-            self._notify_config()
+    def _refresh_freed_mirror(self) -> None:
+        self._saved_freed_snapshot = self._freed_snapshot()
+        self._freed_draft = copy.deepcopy(self._saved_freed_snapshot)
+        self._freed_draft_dirty = False
 
-    @Slot()
-    def applySetupSettings(self):
-        """Atomically commit the Setup draft; no Setup editor writes are live before this."""
+    def _commit_setup_draft(self, *, notify: bool = True) -> bool:
+        """Validate, apply and persist the current Setup mirror immediately."""
         draft = copy.deepcopy(self._setup_draft)
         try:
             new_w1p_ip = self._normalise_ipv4(draft.get("w1p_ip", self.w1p_ip))
-            draft["w1p_ip"] = new_w1p_ip
-            draft["ctrl_ip"] = self._normalise_ipv4(draft.get("ctrl_ip", self.ctrl_ip))
+            new_ctrl_ip = self._normalise_ipv4(draft.get("ctrl_ip", self.ctrl_ip))
         except ValueError as exc:
-            self._log(f"[Config] Setup apply refused: {exc}")
-            return
-        if new_w1p_ip == draft["ctrl_ip"]:
-            self._log("[Config] Setup apply refused: CTRL and W1P cannot use the same IP address")
-            return
+            self._log(f"[Config] Setup change refused: {exc}")
+            self._refresh_setup_mirror()
+            if notify: self._notify_config()
+            return False
+        if new_w1p_ip == new_ctrl_ip:
+            self._log("[Config] Setup change refused: CTRL and W1P cannot use the same IP address")
+            self._refresh_setup_mirror()
+            if notify: self._notify_config()
+            return False
+        draft["w1p_ip"], draft["ctrl_ip"] = new_w1p_ip, new_ctrl_ip
         if new_w1p_ip != self.w1p_ip and not self._request_w1p_readdress(new_w1p_ip):
-            self._log("[Config] Setup apply refused because W1P local IP was not safely changed")
-            return
+            self._log("[Config] Setup change refused because W1P local IP was not safely changed")
+            self._refresh_setup_mirror()
+            if notify: self._notify_config()
+            return False
         self._restore_setup_snapshot(draft)
-        if self._pending_import_config is not None and not self._pending_import_setup_handled:
-            self._apply_imported_run_config(self._pending_import_config)
-            self._pending_import_setup_handled = True
-        self._save_config(include_staged_freed=False)
-        self._saved_setup_snapshot = self._setup_snapshot()
-        self._setup_draft = copy.deepcopy(self._saved_setup_snapshot)
-        self._setup_draft_dirty = False
-        self._finish_pending_import_if_handled()
-        self._log("[Config] Setup settings applied")
+        self._save_config()
+        self._refresh_setup_mirror()
+        if notify: self._notify_config()
+        return True
+
+    def _commit_freed_draft(self, *, restart_input: bool = False, notify: bool = True) -> bool:
+        """Apply and persist the current Free-D mirror immediately."""
+        self._restore_freed_snapshot(copy.deepcopy(self._freed_draft))
+        self._refresh_freed_mirror()
+        self._save_config()
+        if restart_input and not self.smoke_test:
+            self._start_freed_input()
+        if notify: self._notify_config()
+        return True
+
+    @Slot()
+    def beginSetupEdit(self):
+        """Refresh Setup controls from the current live auto-saved state."""
+        self._refresh_setup_mirror()
         self._notify_config()
 
     @Slot()
-    def resetSetupSettings(self):
-        """Discard Setup draft edits and show the last applied/saved values."""
-        # Live Setup state is always the last applied/saved state because staged
-        # Setup editors never write to it. This also picks up legitimate Run-page
-        # changes (for example a Mode name) made since Setup was first opened.
-        self._saved_setup_snapshot = self._setup_snapshot()
-        self._setup_draft = copy.deepcopy(self._saved_setup_snapshot)
-        self._setup_draft_dirty = False
-        if self._pending_import_config is not None and not self._pending_import_setup_handled:
-            self._pending_import_setup_handled = True
-            self._finish_pending_import_if_handled()
-        self._log("[Config] Setup staged edits reset")
+    def beginFreeDEdit(self):
+        """Refresh Free-D controls from the current live auto-saved state."""
+        self._refresh_freed_mirror()
         self._notify_config()
+
+    # Legacy slots retained for compatibility with old integrations. The current
+    # UI has no Apply/Reset buttons because each edit already commits itself.
+    @Slot()
+    def applySetupSettings(self):
+        self._commit_setup_draft()
+
+    @Slot()
+    def resetSetupSettings(self):
+        self._refresh_setup_mirror(); self._notify_config()
 
     @Slot(str, result=str)
     def exportConfigFile(self, value):
@@ -3759,25 +3833,40 @@ class HVP2PBackend(QObject):
 
     @Slot(str, result=bool)
     def stageConfigFile(self, value):
-        """Load a transfer file into Setup/Free-D drafts; Apply buttons remain authoritative."""
+        """Load, validate, immediately apply and persist a transferable config."""
         try:
             path = self._dialog_path(value)
             c = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(c, dict):
                 raise ValueError("config root must be an object")
             c, migrated = self._migrate_config_dict(c)
-            self._setup_draft = self._setup_snapshot_from_config(c)
-            self._freed_draft = self._freed_snapshot_from_config(c)
-            self._pending_import_config = copy.deepcopy(c)
-            self._pending_import_setup_handled = False
-            self._pending_import_freed_handled = False
-            self._setup_draft_dirty = True
-            self._freed_draft_dirty = True
-            self._log(f"[Config] loaded into pending Setup/Free-D drafts: {path}")
+            setup = self._setup_snapshot_from_config(c)
+            freed = self._freed_snapshot_from_config(c)
+            new_w1p_ip = self._normalise_ipv4(setup.get("w1p_ip", self.w1p_ip))
+            new_ctrl_ip = self._normalise_ipv4(setup.get("ctrl_ip", self.ctrl_ip))
+            if new_w1p_ip == new_ctrl_ip:
+                raise ValueError("CTRL and W1P cannot use the same IP address")
+            setup["w1p_ip"], setup["ctrl_ip"] = new_w1p_ip, new_ctrl_ip
+            if new_w1p_ip != self.w1p_ip and not self._request_w1p_readdress(new_w1p_ip):
+                raise ValueError("W1P local IP was not safely changed")
+            self._restore_setup_snapshot(setup)
+            self._apply_imported_run_config(c)
+            self._restore_freed_snapshot(freed)
+            self._refresh_setup_mirror()
+            self._refresh_freed_mirror()
+            self._pending_import_config = None
+            self._pending_import_setup_handled = True
+            self._pending_import_freed_handled = True
+            self._save_config()
+            if not self.smoke_test:
+                self._start_freed_input()
+            self._log(f"[Config] imported, applied and saved: {path}")
             self._notify_config()
             return True
         except Exception as exc:
+            self._refresh_setup_mirror(); self._refresh_freed_mirror()
             self._log(f"[Config] transfer load failed: {exc}")
+            self._notify_config()
             return False
 
     # Legacy internal save/load slots retained for compatibility. They operate on
@@ -3813,9 +3902,8 @@ class HVP2PBackend(QObject):
         self._notify_config()
 
     # Legacy live-edit slots retained for compatibility with older internal
-    # callers/tests and external integrations. The locked Setup QML never calls
-    # these: Setup uses the setSetup* draft API so its values remain unapplied
-    # until the operator presses Apply.
+    # callers/tests and external integrations. Current Setup QML uses setSetup*
+    # methods, which auto-commit through the same persistent configuration.
     @Slot(float)
     def setJoystickDeadband(self, value):
         self.joystick_deadband_pct = max(0.0, min(25.0, float(value)))
@@ -3855,41 +3943,35 @@ class HVP2PBackend(QObject):
     def setSetupNetwork(self, which, value):
         key = "ctrl_ip" if str(which).upper().startswith("CTRL") else "w1p_ip"
         self._setup_draft[key] = str(value).strip()
-        self._setup_draft_dirty = True
-        self._notify_config()
+        self._commit_setup_draft()
 
     @Slot(str,bool)
     def setSetupDirection(self, which, inverted):
         key = "reverse_joystick" if str(which).upper().startswith("CTRL") else "reverse_motor"
         self._setup_draft[key] = bool(inverted)
-        self._setup_draft_dirty = True
-        self._notify_config()
+        self._commit_setup_draft()
 
     @Slot(float)
     def setSetupUnitsPerM(self, value):
         self._setup_draft["units_per_m"] = max(1.0, float(value))
-        self._setup_draft_dirty = True
-        self._notify_config()
+        self._commit_setup_draft()
 
     @Slot(float)
     def setSetupJoystickDeadband(self, value):
         self._setup_draft["joystick_deadband_pct"] = max(0.0, min(25.0, float(value)))
-        self._setup_draft_dirty = True
-        self._notify_config()
+        self._commit_setup_draft()
 
     @Slot(str)
     def setSetupPositionSource(self, value):
         self._setup_draft["position_source"] = self._normalise_position_source(value)
-        self._setup_draft_dirty = True
-        self._notify_config()
+        self._commit_setup_draft()
 
     @Slot(int,str)
     def renameSetupDriveMode(self, index, name):
         i = int(index)
         if i in (0,1):
             self._setup_draft["drive_modes"][i]["name"] = str(name).strip() or f"Mode {i+1}"
-            self._setup_draft_dirty = True
-            self._notify_config()
+            self._commit_setup_draft()
 
     @Slot(int,str,float)
     def setSetupDriveModeValue(self, index, key, value):
@@ -3901,20 +3983,17 @@ class HVP2PBackend(QObject):
         dm[key] = v
         if key == "max_speed_mps": dm["goto_speed_mps"] = min(float(dm["goto_speed_mps"]), v)
         elif key == "goto_speed_mps": dm[key] = min(v, float(dm["max_speed_mps"]))
-        self._setup_draft_dirty = True
-        self._notify_config()
+        self._commit_setup_draft()
 
     @Slot(str)
     def setSetupAccelerationMode(self, mode):
         self._setup_draft["acceleration_mode"] = "Power" if str(mode).lower().startswith("power") else "Speed"
-        self._setup_draft_dirty = True
-        self._notify_config()
+        self._commit_setup_draft()
 
     @Slot(bool)
     def setSetupBatteryChange(self, on):
         self._setup_draft["battery_change_mode"] = bool(on)
-        self._setup_draft_dirty = True
-        self._notify_config()
+        self._commit_setup_draft()
 
     @Slot(str,int,str)
     def setSetupAuxAssignment(self, which, index, value):
@@ -3922,8 +4001,7 @@ class HVP2PBackend(QObject):
         if not 0 <= i < 5: return
         key = "ctrl_aux_assignments" if str(which).upper().startswith("CTRL") else "w1p_aux_assignments"
         self._setup_draft[key][i] = str(value)
-        self._setup_draft_dirty = True
-        self._notify_config()
+        self._commit_setup_draft()
 
     @Slot()
     def openJoystickCalibration(self):
@@ -3990,60 +4068,65 @@ class HVP2PBackend(QObject):
             self.joystick_calibration_error = ""
             self.joystick_calibration_open = False
             self._reset_joystick_centre_drift()
-            # Setup uses explicit Apply/Reset semantics. Completing the wizard
-            # stages the new raw calibration only; the live joystick mapping and
-            # persistent config are unchanged until Setup Apply is pressed.
+            # Completing the wizard is the commit point: make the captured range
+            # live immediately and persist it, with no separate Setup Apply step.
             self._setup_draft["joystick_calibration"] = {"left":left, "centre":centre, "right":right}
-            self._setup_draft_dirty = True
-            self._log(f"[Calibration] Joystick calibration staged L={left:.4f} C={centre:.4f} R={right:.4f}; press Apply to commit")
+            self._commit_setup_draft(notify=False)
+            self._log(f"[Calibration] Joystick calibration saved L={left:.4f} C={centre:.4f} R={right:.4f}")
         self._cancel_goto()
         self._send_velocity(0.0, force=True)
         self.joystickCalibrationChanged.emit(); self.configChanged.emit(); self.stateChanged.emit()
 
     @Slot(str,bool)
     def setFreeDEnabled(self, which, enabled):
-        key = "input_enabled" if str(which).lower().startswith("in") else "output_enabled"
+        is_input = str(which).lower().startswith("in")
+        key = "input_enabled" if is_input else "output_enabled"
         self._freed_draft[key] = bool(enabled)
-        self._freed_draft_dirty = True
-        self._notify_config()
+        self._commit_freed_draft(restart_input=is_input)
 
     @Slot(str,str,str)
     def setFreeDNetwork(self, which, field, value):
         which, field = str(which).lower(), str(field).lower()
+        restart_input = False
         try:
             if which.startswith("in"):
                 if field == "ip": self._freed_draft["input_bind_ip"] = str(value).strip() or "0.0.0.0"
                 elif field == "port": self._freed_draft["input_port"] = max(1, min(65535, int(float(value))))
+                else: return
+                restart_input = True
             else:
                 if field == "ip": self._freed_draft["target_ip"] = str(value).strip()
                 elif field == "port": self._freed_draft["target_port"] = max(1, min(65535, int(float(value))))
                 elif field in ("fps","rate"): self._freed_draft["rate_hz"] = max(1.0, min(100.0, float(value)))
+                else: return
         except Exception as exc:
-            self._log(f"[Free-D] invalid staged {which} {field}: {value} ({exc})")
-        self._freed_draft_dirty = True
-        self._notify_config()
+            self._log(f"[Free-D] invalid {which} {field}: {value} ({exc})")
+            self._refresh_freed_mirror(); self._notify_config(); return
+        self._commit_freed_draft(restart_input=restart_input)
 
     @Slot(str,str,float)
     def setFreeDOffset(self, side, axis, value):
         if str(side).lower().startswith("in"):
             axis = str(axis).title()
-            if axis in ("Pan","Tilt","Roll"): self._freed_draft["input_offsets"][axis] = float(value)
+            if axis not in ("Pan","Tilt","Roll"): return
+            self._freed_draft["input_offsets"][axis] = float(value)
         else:
             axis = str(axis).upper()
-            if axis in ("X","Y","Z"): self._freed_draft["output_offsets"][axis] = float(value)
-        self._freed_draft_dirty = True
-        self._notify_config()
+            if axis not in ("X","Y","Z"): return
+            self._freed_draft["output_offsets"][axis] = float(value)
+        self._commit_freed_draft()
 
     @Slot(str,str,bool)
     def setFreeDInvert(self, side, axis, enabled):
         if str(side).lower().startswith("in"):
             axis = str(axis).title()
-            if axis in ("Pan","Tilt","Roll","Zoom","Focus"): self._freed_draft["input_inverts"][axis] = bool(enabled)
+            if axis not in ("Pan","Tilt","Roll","Zoom","Focus"): return
+            self._freed_draft["input_inverts"][axis] = bool(enabled)
         else:
             axis = str(axis).upper()
-            if axis in ("X","Y","Z"): self._freed_draft["output_inverts"][axis] = bool(enabled)
-        self._freed_draft_dirty = True
-        self._notify_config()
+            if axis not in ("X","Y","Z"): return
+            self._freed_draft["output_inverts"][axis] = bool(enabled)
+        self._commit_freed_draft()
 
     @Slot(int,str,float)
     def setGeometryPoint(self, index, axis, value):
@@ -4055,8 +4138,7 @@ class HVP2PBackend(QObject):
             span0, span1 = self._cable_span_bounds()
             v = max(span0, min(span1, v))
         self._freed_draft["geometry"][i][axis] = v
-        self._freed_draft_dirty = True
-        self._notify_config()
+        self._commit_freed_draft()
 
     @Slot(str,float)
     def setWeightValue(self, which, value):
@@ -4068,8 +4150,8 @@ class HVP2PBackend(QObject):
         elif which.startswith("tension"):
             kg = self._lb_to_kg(v) if self._freed_draft.get("cable_tension_unit") == "lbs" else v
             self._freed_draft["cable_tension_kg"] = max(0.01, kg)
-        self._freed_draft_dirty = True
-        self._notify_config()
+        else: return
+        self._commit_freed_draft()
 
     @Slot(str,str)
     def setWeightUnit(self, which, unit):
@@ -4080,49 +4162,29 @@ class HVP2PBackend(QObject):
             self._freed_draft["cable_weight_unit"] = "lbs/100m" if unit.lower().startswith("lb") else "kg/100m"
         elif which.startswith("tension"):
             self._freed_draft["cable_tension_unit"] = "lbs" if unit.lower().startswith("lb") else "kg"
-        self._freed_draft_dirty = True
-        self._notify_config()
+        else: return
+        self._commit_freed_draft()
 
     @Slot(str)
     def setHighlineMode(self, mode):
         self._freed_draft["highline_mode"] = "Dual Highline" if str(mode).lower().startswith("dual") else "Single Highline"
-        self._freed_draft_dirty = True
-        self._notify_config()
+        self._commit_freed_draft()
 
     @Slot(str,float)
     def setLensCalibration(self, which, value):
         key = str(which)
         if key in self._freed_draft["lens_cal"]:
             self._freed_draft["lens_cal"][key] = float(value)
-            self._freed_draft_dirty = True
-            self._notify_config()
+            self._commit_freed_draft()
 
+    # Legacy slots retained for compatibility; current Free-D UI auto-saves.
     @Slot()
     def applyFreeDSettings(self):
-        """Atomically commit the Free-D draft and restart the input listener."""
-        self._restore_freed_snapshot(copy.deepcopy(self._freed_draft))
-        self._save_config(include_staged_freed=True)
-        self._saved_freed_snapshot = self._freed_snapshot()
-        self._freed_draft = copy.deepcopy(self._saved_freed_snapshot)
-        self._freed_draft_dirty = False
-        if self._pending_import_config is not None and not self._pending_import_freed_handled:
-            self._pending_import_freed_handled = True
-            self._finish_pending_import_if_handled()
-        if not self.smoke_test: self._start_freed_input()
-        self._log("[Free-D] settings applied")
-        self._notify_config()
+        self._commit_freed_draft(restart_input=True)
 
     @Slot()
     def resetFreeDSettings(self):
-        """Discard Free-D draft edits and show the last applied/saved values."""
-        self._saved_freed_snapshot = self._freed_snapshot()
-        self._freed_draft = copy.deepcopy(self._saved_freed_snapshot)
-        self._freed_draft_dirty = False
-        if self._pending_import_config is not None and not self._pending_import_freed_handled:
-            self._pending_import_freed_handled = True
-            self._finish_pending_import_if_handled()
-        self._log("[Free-D] staged edits reset")
-        self._notify_config()
+        self._refresh_freed_mirror(); self._notify_config()
 
     @Slot(result=str)
     def saveLog(self):
@@ -4151,22 +4213,19 @@ class HVP2PBackend(QObject):
         t = str(t)
         if t in ("i16","u16","i24","u24"):
             self._freed_draft["lens_type"] = t
-            self._freed_draft_dirty = True
-            self._notify_config()
+            self._commit_freed_draft()
 
     @Slot(str)
     def setLensScale(self,s):
         self._freed_draft["lens_scale_mode"] = self._normalise_lens_scale(s)
-        self._freed_draft_dirty = True
-        self._notify_config()
+        self._commit_freed_draft()
 
     @Slot(str,float)
     def captureLens(self,which,value):
         key = str(which)
         if key in self._freed_draft["lens_cal"]:
             self._freed_draft["lens_cal"][key] = float(value)
-            self._freed_draft_dirty = True
-            self._notify_config()
+            self._commit_freed_draft()
 
     @Slot()
     def shutdown(self):

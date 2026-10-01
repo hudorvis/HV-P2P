@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""v26.10.01.02 contracts for joystick drift, preset naming and predictive stops."""
+"""v26.10.01.03 contracts for joystick drift, preset naming and predictive stops."""
 from __future__ import annotations
 from pathlib import Path
 import math
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-SR = ROOT / 'SRVR_GitHub_v26.10.01.02'
+SR = ROOT / 'SRVR_GitHub_v26.10.01.03'
 BACKEND = (SR / 'backend.py').read_text(encoding='utf-8')
 MAIN = (SR / 'qml' / 'Main.qml').read_text(encoding='utf-8')
 SETUP = (SR / 'qml' / 'pages' / 'SetupPage.qml').read_text(encoding='utf-8')
 SPAN = (SR / 'qml' / 'components' / 'SpanDiagram.qml').read_text(encoding='utf-8')
-W1P = (ROOT / 'HV_P2P_W1P_EDGEBOX_v26.10.01.02' / 'HV_P2P_W1P_EDGEBOX_v26.10.01.02.ino').read_text(encoding='utf-8')
+W1P = (ROOT / 'HV_P2P_W1P_EDGEBOX_v26.10.01.03' / 'HV_P2P_W1P_EDGEBOX_v26.10.01.03.ino').read_text(encoding='utf-8')
 
 
 def py_const(name: str) -> float:
@@ -38,8 +38,9 @@ def py_method(name: str) -> str:
 # 1) Requested SRVR joystick readout labels + exact common value column.
 assert 'text:"Value"' in SETUP and 'text:"Percentage"' in SETUP
 assert 'Current Value' not in SETUP and 'Current Percentage' not in SETUP
-assert 'text:Number(backend.joystickValue).toFixed(2);horizontalAlignment:Text.AlignRight' in SETUP
-assert 'text:Number(backend.joystickPercentage).toFixed(1)+" %";horizontalAlignment:Text.AlignRight' in SETUP
+assert 'text:Number(backend.setupJoystickValue).toFixed(2);horizontalAlignment:Text.AlignRight' in SETUP
+assert 'text:Number(backend.setupJoystickPercentage).toFixed(1)+" %";horizontalAlignment:Text.AlignRight' in SETUP
+assert 'def setupJoystickPercentage' in BACKEND and 'def _setup_preview_joystick' in BACKEND
 assert SETUP.count('width:root.f(72);anchors.verticalCenter:parent.verticalCenter') >= 2
 
 # 2) Short/Long preset name selection is global and reaches both SRVR diagrams and CTRL-TS packet.

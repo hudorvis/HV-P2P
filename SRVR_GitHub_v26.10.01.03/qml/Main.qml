@@ -428,11 +428,6 @@ ApplicationWindow {
                                                 bindModel: true
                                                 modelText: parent.gp ? Number(parent.gp.x).toFixed(3) : "0.000"
                                                 horizontalAlignment: TextInput.AlignHCenter
-                                                onTextEdited: {
-                                                    var n = parseFloat(text)
-                                                    if (!isNaN(n))
-                                                        backend.setGeometryPoint(index, "x", n)
-                                                }
                                                 onCommit: function(v) {
                                                     var n = parseFloat(v)
                                                     if (!isNaN(n))
@@ -445,11 +440,6 @@ ApplicationWindow {
                                                 bindModel: true
                                                 modelText: parent.gp ? Number(parent.gp.y).toFixed(3) : "0.000"
                                                 horizontalAlignment: TextInput.AlignHCenter
-                                                onTextEdited: {
-                                                    var n = parseFloat(text)
-                                                    if (!isNaN(n))
-                                                        backend.setGeometryPoint(index, "y", n)
-                                                }
                                                 onCommit: function(v) {
                                                     var n = parseFloat(v)
                                                     if (!isNaN(n))
@@ -463,13 +453,6 @@ ApplicationWindow {
                                                 readOnly: index !== 0 && index !== 4
                                                 modelText: (index === 0 || index === 4) && parent.gp ? Number(parent.gp.z).toFixed(3) : "—"
                                                 horizontalAlignment: TextInput.AlignHCenter
-                                                onTextEdited: {
-                                                    if (index === 0 || index === 4) {
-                                                        var n = parseFloat(text)
-                                                        if (!isNaN(n))
-                                                            backend.setGeometryPoint(index, "z", n)
-                                                    }
-                                                }
                                                 onCommit: function(v) {
                                                     if (index === 0 || index === 4) {
                                                         var n = parseFloat(v)
@@ -490,11 +473,6 @@ ApplicationWindow {
                                             height: parent.height
                                             bindModel: true
                                             modelText: Number(freeDPage.fdDraft.skate_weight_value).toFixed(2)
-                                            onTextEdited: {
-                                                var n = parseFloat(text)
-                                                if (!isNaN(n))
-                                                    backend.setWeightValue("Skate", n)
-                                            }
                                             onCommit: function(v) {
                                                 var n = parseFloat(v)
                                                 if (!isNaN(n))
@@ -518,11 +496,6 @@ ApplicationWindow {
                                             height: parent.height
                                             bindModel: true
                                             modelText: Number(freeDPage.fdDraft.cable_weight_value).toFixed(2)
-                                            onTextEdited: {
-                                                var n = parseFloat(text)
-                                                if (!isNaN(n))
-                                                    backend.setWeightValue("Cable", n)
-                                            }
                                             onCommit: function(v) {
                                                 var n = parseFloat(v)
                                                 if (!isNaN(n))
@@ -546,11 +519,6 @@ ApplicationWindow {
                                             height: parent.height
                                             bindModel: true
                                             modelText: Number(freeDPage.fdDraft.cable_tension_value).toFixed(2)
-                                            onTextEdited: {
-                                                var n = parseFloat(text)
-                                                if (!isNaN(n))
-                                                    backend.setWeightValue("Tension", n)
-                                            }
                                             onCommit: function(v) {
                                                 var n = parseFloat(v)
                                                 if (!isNaN(n))
@@ -616,17 +584,11 @@ ApplicationWindow {
             }
         }
 
-        // Locked footer. Apply/Reset are centred on Setup and Free-D only.
+        // Locked footer. Setup and Free-D settings auto-save on commit/activation.
         Panel {
             width:parent.width-parent.leftPadding-parent.rightPadding; height:f(42)
             Text { anchors.left:parent.left; anchors.leftMargin:f(14); anchors.verticalCenter:parent.verticalCenter; text:"SRVR Time:   "+backend.srvrTime; color:"#d7dbd9"; font.pixelSize:f(12) }
             Text { anchors.right:parent.right; anchors.rightMargin:f(14); anchors.verticalCenter:parent.verticalCenter; text:"Uptime:   "+backend.uptime; color:"#d7dbd9"; font.pixelSize:f(12) }
-            Row {
-                visible:window.page===1 || window.page===2
-                anchors.centerIn:parent; spacing:f(20)
-                HVButton{width:f(145);height:f(30);text:"Apply";onClicked:{editCommitSink.forceActiveFocus();if(window.page===1)backend.applySetupSettings();else backend.applyFreeDSettings()}}
-                HVButton{width:f(145);height:f(30);text:"Reset";onClicked:{editCommitSink.forceActiveFocus();if(window.page===1)backend.resetSetupSettings();else backend.resetFreeDSettings()}}
-            }
         }
     }
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER="26.10.01.02"
+VER="26.10.01.03"
 W=(ROOT/f"HV_P2P_W1P_EDGEBOX_v{VER}/HV_P2P_W1P_EDGEBOX_v{VER}.ino").read_text()
 C=(ROOT/f"HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino").read_text()
 T=(ROOT/f"HV_P2P_CTRL_TS_v{VER}/HV_P2P_CTRL_TS_v{VER}.ino").read_text()
@@ -23,7 +23,7 @@ edgebox_fqbn = N[N.index('EDGEBOX_FQBN'):N.index('HMI_FQBN')]
 assert 'PartitionScheme=app3M_fat9M_16MB' in edgebox_fqbn
 assert 'PartitionScheme=custom' not in edgebox_fqbn
 
-# v26.10.01.02 operator input / safety refinements.
+# v26.10.01.03 operator input / safety refinements.
 assert 'self.reverse_joystick = False' in B
 assert 'VEL_KEEPALIVE_S = 0.15' in B
 assert 'def joystickPercentage' in B
@@ -36,9 +36,9 @@ assert 'sgmSelectChannelVerified(SGM_CONFIG_AI0_CONT_800SPS_6V144, "AI0 E-stop")
 assert 'sgmSelectChannelVerified(SGM_CONFIG_AI1_CONT_800SPS_6V144, "AI1 joystick")' in C
 assert 'Always restore and verify AI1' in C
 assert 'CTRL_ESTOP_HEALTHY_MIN_V = 3.5f' in C and 'CTRL_ESTOP_HEALTHY_CONFIRM_SAMPLES = 3' in C
-# v26.10.01.02 direction-regression guard: CTRL normalises physical Left/Right
+# v26.10.01.03 direction-regression guard: CTRL normalises physical Left/Right
 # before SRVR, so the default backend direction is Normal and sign is preserved.
-BT=(ROOT/'SRVR_GitHub_v26.10.01.02/tools/test_backend_logic.py').read_text()
+BT=(ROOT/'SRVR_GitHub_v26.10.01.03/tools/test_backend_logic.py').read_text()
 assert 'assert b.reverse_joystick is False' in BT
 assert 'physical Left=-1' in B
 assert 'b.requested_speed_mps < 0.0' in BT
@@ -54,15 +54,21 @@ assert 'g_boot_session_id' in W and 'BOOT_ID=' in W
 assert 'fw_ensure_update_screen' in T and 'fw_display_owned' in T
 assert 'if(!fw_display_owned())' in T and 'Firmware transfer owns the screen' in T
 
-# v26.10.01.02 field-feedback regressions: a newer SRVR must be noticed without
-# power-cycling field nodes, SRVR must not trust a stale old-session match, the
-# CTRL-TS updater must replace the JPEG splash even when FW_BEGIN arrives during
-# boot, and E-stop source formatting must never render "| / W1P".
+# v26.10.01.03 field-feedback regressions: a newer SRVR must be noticed without
+# power-cycling field nodes *and without periodic HTTP in the healthy real-time
+# loops*. SRVR's normal UDP beacons invalidate an old match; only the already
+# fail-closed unmatched/update path may perform HTTP/SHA/OTA work.
 for node in (C, W):
-    assert 'if(g_srvrFirmwareMatched) return;' not in node
-    assert 'FW_AUTH_MATCHED_RECHECK_MS = 2000' in node
-    assert 'authorityUnchanged' in node and 'previousVersion' in node
-assert 'previousSha' in C and 'previousSha' in W
+    assert 'if(g_srvrFirmwareMatched) return;' in node
+    assert 'FW_AUTH_MATCHED_RECHECK_MS' not in node
+    assert 'authorityUnchanged' not in node and 'previousVersion' not in node
+assert 'const String srvrFw = hvGetPipeField(line, "srvr_fw");' in C
+assert 'g_srvrFirmwareMatched = false;' in C[C.index('const String srvrFw = hvGetPipeField(line, "srvr_fw");'):C.index('const String srvrFw = hvGetPipeField(line, "srvr_fw");')+900]
+assert 'if (line.startsWith("SRVR_FW|"))' in W
+w_beacon = W[W.index('if (line.startsWith("SRVR_FW|"))'):W.index('if (line.startsWith("SRVR_FW|"))')+1200]
+assert 'driveStopNow();' in w_beacon and 'requestSoftwareSrvonInhibit(true, "SRVR_FW_CHANGED")' in w_beacon
+assert 'f"srvr_fw={self._current_firmware_version()}"' in B
+assert 'def _send_w1p_firmware_beacon' in B and 'SRVR_FW|version=' in B
 assert 'stale_release_report' in B
 assert 'reported_match and version_current and authority_current' in B
 assert 'reported_w1p_match and self._firmware_version_matches_current' in B
@@ -74,5 +80,19 @@ assert 'lv_obj_del(previous_scr)' in T
 assert 'if(pct != g_fw_last_display_pct)' in T
 assert 'g_status_text = "E-Stop " + src;' in T
 assert 'detail.startsWith("E-Stop / ")' in T
+
+# Settings and Free-D are auto-save pages. No footer Apply/Reset interaction is
+# permitted to return, and joystick-wizard completion immediately activates the
+# captured range so both live Value and Percentage use the calibrated endpoints.
+Q=(ROOT/f"SRVR_GitHub_v{VER}/qml/Main.qml").read_text()
+assert 'text:"Apply"' not in Q and 'text:"Reset"' not in Q
+assert 'backend.applySetupSettings' not in Q and 'backend.resetSetupSettings' not in Q
+assert 'backend.applyFreeDSettings' not in Q and 'backend.resetFreeDSettings' not in Q
+assert 'def _commit_setup_draft' in B and 'def _commit_freed_draft' in B
+joy=B[B.index('def joystickCalibrationNext'):B.index('@Slot(str,bool)', B.index('def joystickCalibrationNext'))]
+assert 'self._commit_setup_draft(notify=False)' in joy
+assert 'Joystick calibration saved' in joy
+assert 'def joystickPercentage' in B and 'self._calibrated_joystick(self._ctrl_axis) * 100.0' in B
+assert 'freed_snap = self._freed_snapshot()' in B
 
 print('AUDIT_REGRESSIONS_PASS')

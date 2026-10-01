@@ -1,4 +1,4 @@
-# HV P2P v26.10.01.02 Native Build and Bench Checklist
+# HV P2P v26.10.01.03 Native Build and Bench Checklist
 
 ## GitHub Actions gates
 
@@ -28,6 +28,35 @@
 - Confirm AI0 is healthy high when the E-stop is released and goes unsafe when
   pressed/open/faulted.
 - Confirm CTRL serial diagnostics show SGM58031 at 0x48 and no analogue fault.
+
+## Joystick telemetry / calibrated readout bench
+
+1. With CTRL and matching SRVR connected, move the joystick repeatedly through
+   centre and both directions for at least 30 seconds. The SRVR Value/Percentage
+   display must track continuously with no periodic 1-2 second freezes.
+2. Leave SRVR running long enough to cross many former two-second authority-poll
+   intervals. CTRL must remain responsive; matched operation must not issue HTTP
+   authority requests from the real-time loop.
+3. Run Left/Centre/Right joystick calibration. Immediately after the final Right
+   capture, verify the Setup display reads approximately -100% at captured Left,
+   0% at captured Centre and +100% at captured Right without pressing Apply.
+4. Close/reopen Settings and restart SRVR; the saved calibration must remain the
+   active percentage mapping, while winch *position reference* still correctly
+   starts Un-Calibrated after a new session.
+
+## Settings / Free-D auto-save
+
+- Confirm there are no bottom Apply or Reset buttons on Settings or Free-D.
+- Change representative button/combo settings and leave/re-enter the page; each
+  accepted change must remain saved.
+- Edit representative numeric/text fields, then press Enter or move focus away;
+  the committed value must persist after SRVR restart.
+- Confirm an incomplete text edit is not written character-by-character.
+- Change Free-D output IP/port/rate and geometry/weight values and verify output
+  and diagrams use the committed values immediately.
+- Exercise W1P IP change only under safe commissioning conditions and verify the
+  existing transactional readdress succeeds or the edit is rejected without
+  orphaning W1P.
 
 ## Joystick centre-drift commissioning
 

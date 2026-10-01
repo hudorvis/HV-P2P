@@ -1,5 +1,5 @@
 // ============================================================
-// HV P2P W1P EdgeBox v26.10.01.02
+// HV P2P W1P EdgeBox v26.10.01.03
 // Seeed EdgeBox-ESP-100 Leadshine EL7-RS2000P commissioning interface
 //
 // Purpose:
@@ -47,11 +47,11 @@
 
 // -------------------- Version / identity --------------------
 static const char* FW_NAME    = "HV P2P W1P";
-static const char* FW_VERSION = "v26.10.01.02";
+static const char* FW_VERSION = "v26.10.01.03";
 static const char* NODE_BANNER = "HV_P2P_W1P";
 static const char* HV_AUTH_ROLE = "W1P";
 static const char* HV_AUTH_TARGET = "EDGEBOX_ESP100";
-static const char* HV_AUTH_VERSION = "v26.10.01.02";
+static const char* HV_AUTH_VERSION = "v26.10.01.03";
 
 // -------------------- Network defaults --------------------
 static IPAddress LOCAL_IP(172, 20, 1, 102);
@@ -236,7 +236,7 @@ static const int LOCAL_ESTOP_HEALTHY_LEVEL = HIGH;
 static const int PIN_STATUS_LED = -1;
 
 // -------------------- Leadshine Servo Enable strategy --------------------
-// v26.10.01.02: EdgeBox W5500 + isolated native RS485; corrected EL7 SRV-ON configuration to PA4.00 / P04.00
+// v26.10.01.03: EdgeBox W5500 + isolated native RS485; corrected EL7 SRV-ON configuration to PA4.00 / P04.00
 // Input Selection DI1. MotionStudio confirmed the usable no-extra-wire setup
 // is DI1 = Servo ON Input (SRV-ON), Normally Closed, which reads/writes as
 // 0x83. Do not use the old DI5 / P04.04 path; do not use Normally Open
@@ -352,7 +352,7 @@ static const uint32_t MODBUS_FAULT_POLL_MS = 150;
 static const uint32_t MODBUS_REPLY_TIMEOUT_MS = 50;
 static const uint8_t  MODBUS_READ_RETRIES = 3;
 static const uint32_t MODBUS_INTERFRAME_GAP_US = 2000; // > Modbus fixed 1.75 ms t3.5 recommendation above 19.2 kbps
-// v26.10.01.02: EdgeBox W5500 + isolated native RS485; fail the physical link after two consecutive invalid/no-reply
+// v26.10.01.03: EdgeBox W5500 + isolated native RS485; fail the physical link after two consecutive invalid/no-reply
 // transactions, with a 250 ms stale-reply backstop. Require two valid replies
 // before recovering. The 50 ms reply timeout is still generous at 115200 baud,
 // while reducing the time for a removed CN3 lead to become a safety fault.
@@ -387,7 +387,7 @@ static const float MAX_PROFILE_ACCEL_MPS2 = 20.0f;
 static const float MOTION_ZERO_EPS_MPS = 0.005f;
 static const float DYNAMIC_LEAD_TIME_S = 0.50f;
 static const float DYNAMIC_MIN_LEAD_MPS = 0.05f;
-// v26.10.01.02: EdgeBox W5500 + isolated native RS485; Dynamic mode is a closed cable-speed hold. Joystick sets
+// v26.10.01.03: EdgeBox W5500 + isolated native RS485; Dynamic mode is a closed cable-speed hold. Joystick sets
 // target line speed; this PI trim lets the command nudge above/below the shaped
 // target to hold measured feedback speed more precisely under changing load.
 static const float DYNAMIC_SPEED_KP = 0.14f;
@@ -556,7 +556,7 @@ static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_W1P";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL,CTRL_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_W1P_v*.ino.bin firmware. CTRL/CTRL-TS files are rejected.";
 static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=W1P;";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=W1P;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.01.02;";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=W1P;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.01.03;";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
@@ -573,7 +573,6 @@ static String g_srvrRequiredVersion;
 static String g_srvrRequiredSha;
 static uint32_t g_fwAuthorityLastAttemptMs = 0;
 static uint32_t g_fwAuthorityRetryDelayMs = 1500;
-static const uint32_t FW_AUTH_MATCHED_RECHECK_MS = 2000;
 
 // Read-only commissioning diagnostic for EL7 drives still at factory framing.
 static bool g_factoryCommsDetected = false;
@@ -2038,7 +2037,7 @@ static bool driveAutoEnableReady() {
   if (g.no_motion_feedback_fault && requestingMotion) return false;
 
   if (!g.drive_writes_enabled) {
-    // v26.10.01.02: EdgeBox W5500 + isolated native RS485; only arm from WAIT on a fresh, non-zero joystick command.
+    // v26.10.01.03: EdgeBox W5500 + isolated native RS485; only arm from WAIT on a fresh, non-zero joystick command.
     // Do not re-arm from stale VEL state, and do not arm while the motor is still
     // coasting from a previous PR stop. Once armed, do not drop writes just because
     // feedback velocity becomes non-zero; that caused the observed step/pulse motion.
@@ -2159,7 +2158,7 @@ static void serviceMotionProfile() {
     g.vel_request_mps = 0.0f;
   }
   float target = constrain(g.vel_request_mps, -MAX_CMD_VEL_MPS, MAX_CMD_VEL_MPS);
-  // v26.10.01.02: EdgeBox W5500 + isolated native RS485; predictive hard-limit guard.  SRVR also tapers before
+  // v26.10.01.03: EdgeBox W5500 + isolated native RS485; predictive hard-limit guard.  SRVR also tapers before
   // Near/Far, but W1P applies the same stopping-distance rule locally so a
   // delayed network packet cannot keep driving past an end limit.
   target = limitVelocityForSoftLimits(g.pos_m, target);
@@ -2550,6 +2549,24 @@ static void handleCommand(const String& rawLine) {
 
   float val = 0.0f;
 
+  if (line.startsWith("SRVR_FW|")) {
+    const String srvrFw = hvGetPipeField(line, "version");
+    if(srvrFw.length() && srvrFw != HV_AUTH_VERSION && g_srvrFirmwareMatched) {
+      // Stop locally before any subsequent HTTP/OTA work. The independent
+      // velocity watchdog remains active, but authority mismatch is immediate.
+      g_srvrFirmwareMatched = false;
+      g_srvrFirmwareState = "authority_changed";
+      g_fwAuthorityLastAttemptMs = 0;
+      g_fwAuthorityRetryDelayMs = 0;
+      driveStopNow();
+      g.drive_writes_enabled = false;
+      requestSoftwareSrvonInhibit(true, "SRVR_FW_CHANGED");
+      Serial.printf("[FW AUTH] SRVR beacon changed %s -> %s; stopped and entering update path\n",
+                    HV_AUTH_VERSION, srvrFw.c_str());
+    }
+    return;
+  }
+
   if (line.startsWith("DSP1|")) {
     g.client_connected = true;
     g_lastSrvrDisplayMs = millis();
@@ -2935,25 +2952,17 @@ static void servicePeerTimeout() {
 }
 
 static void serviceSrvrFirmwareAuthority() {
+  // Healthy matched operation never performs HTTP in the real-time drive loop.
+  // SRVR_FW beacons clear the match when SRVR advances to a new release.
+  if(g_srvrFirmwareMatched) return;
   if(ETH.localIP() == IPAddress(0,0,0,0) || !ETH.linkUp()) return;
   const uint32_t now = millis();
   if(g_fwAuthorityLastAttemptMs && (now - g_fwAuthorityLastAttemptMs) < g_fwAuthorityRetryDelayMs) return;
   g_fwAuthorityLastAttemptMs = now;
 
-  // A matched W1P must still notice when SRVR is replaced by a newer release.
-  // Poll the small manifest periodically, but skip the expensive running-image
-  // hash while the authoritative version/SHA are unchanged.
-  const bool wasMatched = g_srvrFirmwareMatched;
-  const String previousVersion = g_srvrRequiredVersion;
-  const String previousSha = g_srvrRequiredSha;
-
   HVP2PAuthorityOTA::Manifest manifest;
   String err;
   if(!HVP2PAuthorityOTA::fetchManifest(SRVR_IP, HV_AUTH_ROLE, manifest, err)) {
-    if(wasMatched) {
-      g_fwAuthorityRetryDelayMs = FW_AUTH_MATCHED_RECHECK_MS;
-      return;
-    }
     g_srvrFirmwareState = String("authority_") + err;
     g_fwAuthorityRetryDelayMs = 5000;
     return;
@@ -2964,19 +2973,8 @@ static void serviceSrvrFirmwareAuthority() {
     g_fwAuthorityRetryDelayMs = 10000;
     return;
   }
-  const bool authorityUnchanged = wasMatched && previousVersion == manifest.version && previousSha == manifest.sha256;
   g_srvrRequiredVersion = manifest.version;
   g_srvrRequiredSha = manifest.sha256;
-  if(authorityUnchanged) {
-    g_srvrFirmwareState = "matched";
-    g_fwAuthorityRetryDelayMs = FW_AUTH_MATCHED_RECHECK_MS;
-    return;
-  }
-  if(wasMatched) {
-    g_srvrFirmwareMatched = false;
-    g_srvrFirmwareState = "authority_changed";
-    Serial.printf("[FW AUTH] W1P SRVR authority changed %s -> %s; re-verifying now\n", previousVersion.c_str(), manifest.version.c_str());
-  }
   bool versionOk = false;
   const int relation = HVP2PAuthorityOTA::compareVersions(HV_AUTH_VERSION, manifest.version, versionOk);
   if(!versionOk) { g_srvrFirmwareState = "version_parse_error"; g_fwAuthorityRetryDelayMs = 10000; return; }
@@ -2991,7 +2989,7 @@ static void serviceSrvrFirmwareAuthority() {
     if(HVP2PAuthorityOTA::hashRunningPrefix(manifest.size, runningSha, err) && runningSha == manifest.sha256) {
       g_srvrFirmwareMatched = true;
       g_srvrFirmwareState = "matched";
-      g_fwAuthorityRetryDelayMs = FW_AUTH_MATCHED_RECHECK_MS;
+      g_fwAuthorityRetryDelayMs = 1500;
       Serial.printf("[FW AUTH] W1P exact SRVR image verified %s sha=%s\n", manifest.version.c_str(), runningSha.c_str());
       return;
     }
@@ -3045,7 +3043,7 @@ void setup() {
   Serial.printf("%s %s\n", FW_NAME, FW_VERSION);
   Serial.printf("[OTA] Build identity: %s\n", HV_UPDATE_BUILD_TOKEN);
   Serial.println("Leadshine EL7-RS2000P command interface (auto-enable under SRVR safety gate)");
-  Serial.println("v26.10.01.02: retains .07 motion/service/OTA safety and adds coordinated safe W1P IP readdress; existing SRVR/safety + joystick-neutral re-arm retained");
+  Serial.println("v26.10.01.03: retains .07 motion/service/OTA safety and adds coordinated safe W1P IP readdress; existing SRVR/safety + joystick-neutral re-arm retained");
   Serial.println("============================================================");
 
   pinMode(PIN_LOCAL_ESTOP, INPUT);
