@@ -14,7 +14,7 @@
 #include <esp_system.h>
 #include <esp_attr.h>
 
-#define CTRL_TS_SEMVER "v26.10.02.03"
+#define CTRL_TS_SEMVER "v26.10.02.04"
 #define CTRL_TS_VERSION "HV P2P CTRL-TS " CTRL_TS_SEMVER
 #define CTRL_TS_HW_ID "WS-ESP32S3-7"
 #define HMI_BAUD 115200
@@ -209,7 +209,7 @@ static float g_last_ramp_near_draw = -999999.0f;
 static float g_last_ramp_far_draw = -999999.0f;
 
 // -------------------- CTRL-TS Settings page --------------------
-// Safe v26.10.02.03 approach: no backlight/brightness writes. This page only
+// Safe v26.10.02.04 approach: no backlight/brightness writes. This page only
 // edits CTRL network settings over UART and therefore should preserve the known
 // Keep the proven splash/boot path; do not write to the backlight controller.
 static lv_obj_t *settings_overlay = nullptr;
@@ -258,7 +258,7 @@ static void force_screen_refresh(){
 }
 
 static void screen_keepalive(){
-  // v26.10.02.03: no periodic full-screen or left-strip invalidation or brightness writes.
+  // v26.10.02.04: no periodic full-screen or left-strip invalidation or brightness writes.
   // The Waveshare/LVGL port refreshes changed objects itself; forcing a full
   // screen refresh every second caused the visible 1-second flicker/glitch.
   if(!g_ui_ready) return;
@@ -697,23 +697,14 @@ static void fw_clear_headless_update_state(){
 }
 
 static bool fw_headless_blackout(){
-  // Initialize only the CH422G IO expander. Do NOT start the RGB bus, allocate
-  // PSRAM framebuffers or create LVGL while self-flash is active.
-  pinMode(GPIO_INPUT_IO_4, OUTPUT);
-  expander = new ESP_IOExpander_CH422G((i2c_port_t)I2C_MASTER_NUM,
-                                      ESP_IO_EXPANDER_I2C_CH422G_ADDRESS_000,
-                                      I2C_MASTER_SCL_IO, I2C_MASTER_SDA_IO);
-  if(!expander){
-    Serial.println("[FW SAFE] IO expander allocation failed");
-    return false;
-  }
-  expander->init();
-  expander->begin();
-  expander->pinMode(LCD_BL, OUTPUT);
-  expander->pinMode(LCD_RST, OUTPUT);
-  expander->digitalWrite(LCD_BL, LOW);
-  expander->digitalWrite(LCD_RST, LOW);
-  Serial.println("[FW SAFE] RGB/LVGL not started; LCD reset asserted and backlight off");
+  // The normal runtime already drove LCD_BL LOW and LCD_RST LOW through the
+  // known-good Waveshare/CH422G instance immediately before ESP.restart().
+  // Do NOT instantiate or re-initialize the CH422G here: on this board that
+  // would create a second I2C/display bring-up path before the Waveshare stack
+  // exists, which can itself stall/crash the safe-update boot. The CH422G is
+  // external to the ESP32 and retains its output latch across a software reset.
+  // Headless safety comes from *not starting* RGB/LVGL/PSRAM at all on this boot.
+  Serial.println("[FW SAFE] headless boot: RGB/LVGL/PSRAM display stack remains uninitialized");
   return true;
 }
 
@@ -732,11 +723,12 @@ static void fw_service_headless_idle_return(){
 }
 
 static String fw_identity_line(){
-  // safe_ota=1 is a capability bit introduced in v26.10.02.03. CTRL must never
-  // send a self-update stream to an older CTRL-TS that lacks this bit, because
-  // pre-.03 receivers program flash while the RGB/PSRAM display is live.
+  // safe_ota is a protocol capability LEVEL, not a boolean. Level 1 was the
+  // first .03 headless-updater attempt; level 2 fixes its reboot/discovery race
+  // and removes the risky second CH422G initialization on the headless boot.
+  // CTRL .04+ therefore streams self-update data only to level 2 or newer.
   return String("hw=") + CTRL_TS_HW_ID + "|proto=" + String(HVP2PRS485::PROTOCOL_VERSION) +
-         "|version=" + String(CTRL_TS_SEMVER) + "|hash=" + g_fw_image_hash + "|safe_ota=1";
+         "|version=" + String(CTRL_TS_SEMVER) + "|hash=" + g_fw_image_hash + "|safe_ota=2";
 }
 
 static bool boot_get_bool(const String &line, const char *key, bool def){
@@ -1126,7 +1118,7 @@ static void confirm_aux_idx(int idx, bool send_command){
   selected_aux = -1;
   g_selected_aux_ms = 0;
   confirmed_aux = idx;
-  clear_confirm_at = now_ms + 2000;  // v26.10.02.03: confirmed AUX tile stays lit for 2 seconds
+  clear_confirm_at = now_ms + 2000;  // v26.10.02.04: confirmed AUX tile stays lit for 2 seconds
   g_aux_suppress_until_ms[idx] = now_ms + 400;
   style_aux(idx,false,true);
   snprintf(msg,sizeof(msg),"AUX %d Confirmed", idx+1);
@@ -1188,7 +1180,7 @@ static void style_w1p_status_pill(int state){
 }
 
 static void style_estop_pill(bool active){
-  // v26.10.02.03: the middle status banner follows the SRVR-resolved state.
+  // v26.10.02.04: the middle status banner follows the SRVR-resolved state.
   // A local CTRL-TS UART/display gap must not invent "E-Stop CTRL" while SRVR
   // is still sending Status | Active. Real CTRL/W1P E-Stops are still shown
   // immediately when SRVR sends status=E-Stop... / status_level=red.
@@ -1236,7 +1228,7 @@ static void refresh_status_ui(){
   style_status_pill_cached(0,pill_ctrl,lbl_ctrl,"CTRL",g_ctrl_ok);
   if(pill_srvr && lbl_srvr) style_status_pill_cached(1,pill_srvr,lbl_srvr,"SRVR",g_srvr_ok);
   style_w1p_status_pill(g_w1p_health);
-  // v26.10.02.03: do not turn the main middle box red purely because the
+  // v26.10.02.04: do not turn the main middle box red purely because the
   // CTRL-TS local UART/display link hiccuped. The SRVR status packet is the
   // authoritative source for Active / Un-Calibrated / E-Stop display state.
   bool stopped_visual = (g_status_level >= 2) || g_estop_active;
@@ -1763,7 +1755,7 @@ static void apply_hmi_packet(const String &line){
     else g_status_level = 0;
   }
 
-  // v26.10.02.03: if SRVR sends explicit status/status_level, trust it as
+  // v26.10.02.04: if SRVR sends explicit status/status_level, trust it as
   // the authoritative display state. Do not override it locally with a CTRL
   // error just because the touchscreen/CTRL UART side saw a transient gap.
   g_estop_active = packet_estop;
@@ -1888,7 +1880,7 @@ static void apply_hmi_packet(const String &line){
   if(mode_changed || (prev_status_text != g_status_text) || (prev_status_level != g_status_level) || (prev_estop != g_estop_active) || (prev_estop_source != g_estop_source) || (prev_ctrl != g_ctrl_ok) || (prev_srvr != g_srvr_ok) || (prev_w1p != g_w1p_ok) || (prev_w1p_health != g_w1p_health)) {
     refresh_status_ui();
   }
-  // v26.10.02.03: no left-strip/full-screen invalidation on packets; progress marker animates locally.
+  // v26.10.02.04: no left-strip/full-screen invalidation on packets; progress marker animates locally.
 }
 
 
@@ -1897,7 +1889,7 @@ static void apply_layout_packet(const String &line){
   // on CTRL cannot overwrite the screen title/version or trigger header redraws.
   String hint = getField(line, "hint");
   if(lbl_title) set_label_text_if_changed(lbl_title, "HV P2P\nCTRL-TS");
-  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.02.03");
+  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.02.04");
   if(hint.length() && hint.startsWith("ERROR")) set_touch_debug(hint.c_str());
   for(int i=0;i<AUX_COUNT;i++){
     String key = String("aux") + String(i+1);
@@ -2044,6 +2036,14 @@ static void fw_handle_begin(const HVP2PRS485::Frame &frame){
   }
   if(g_fw_headless_mode && (version != g_fw_headless_target_version || !sha.equalsIgnoreCase(g_fw_headless_target_sha))){
     fw_send_text(HVP2PRS485::ERROR_MSG, frame.seq, "fw_begin_pending_target_mismatch");
+    return;
+  }
+  if(g_fw_safe_reboot_due_ms){
+    // CTRL may rediscover the still-running UI before this scheduled reboot has
+    // fired. A duplicate FW_BEGIN must acknowledge the same transition WITHOUT
+    // moving the deadline; otherwise repeated discovery can postpone the reboot
+    // forever and leave the dashboard stuck at 0%.
+    fw_send_text(HVP2PRS485::ERROR_MSG, frame.seq, "fw_safe_reboot_retry");
     return;
   }
   if(g_fw_finalized){
@@ -2299,7 +2299,7 @@ static void create_ui(){
   lv_obj_t *brand=make_panel(frame,SX,HEADER_Y,70,HEADER_H,C_BG,0x63d84e,7);
   lbl_title=make_label(brand,"HV P2P\nCTRL-TS",0,6,&lv_font_montserrat_12,lv_color_hex(C_FG),70);
   lv_obj_set_style_text_line_space(lbl_title,-2,0);
-  lbl_subtitle=make_label(frame,"v26.10.02.03",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
+  lbl_subtitle=make_label(frame,"v26.10.02.04",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
 
   pill_ctrl=make_panel(frame,255,HEADER_Y,126,HEADER_H,C_PANEL,C_BORDER,5);
   dot_ctrl=lv_obj_create(pill_ctrl); lv_obj_set_pos(dot_ctrl,9,15); lv_obj_set_size(dot_ctrl,8,8); lv_obj_set_style_radius(dot_ctrl,LV_RADIUS_CIRCLE,0); lv_obj_set_style_border_width(dot_ctrl,0,0); lv_obj_set_style_bg_color(dot_ctrl,lv_color_hex(0xef5757),0); lv_obj_clear_flag(dot_ctrl,LV_OBJ_FLAG_SCROLLABLE);
@@ -2451,7 +2451,7 @@ static void service_link_state(){
 
   bool link_alive = last_hmi_rx && ((millis() - last_hmi_rx) <= HMI_TIMEOUT_MS);
   if(!link_alive) {
-    // v26.10.02.03: local UART/display timeout is a CTRL-TS link warning, not
+    // v26.10.02.04: local UART/display timeout is a CTRL-TS link warning, not
     // proof of a real CTRL E-Stop. Keep the last SRVR-resolved status banner so
     // the touchscreen cannot randomly show "Status | E-Stop CTRL" while SRVR
     // remains "Status | Active". The CTRL status pill can still show ERROR.
@@ -2469,6 +2469,9 @@ void setup(){
   // any RGB/PSRAM display resource. The CH422G is external to the ESP32 and can
   // retain LCD_BL=HIGH across ESP.restart(), so assert blackout first on the
   // deliberate headless boot. No flash access is required to decide this mode.
+  const esp_reset_reason_t earlyResetReason = esp_reset_reason();
+  delay(20);
+  Serial.printf("[WS-HMI] early reset_reason=%d\n", (int)earlyResetReason);
   bool safeHeadlessBoot = fw_prepare_headless_mode();
   if(safeHeadlessBoot && !fw_headless_blackout()){
     Serial.println("[FW SAFE] blackout setup failed; abandoning headless update");

@@ -16,7 +16,7 @@
 static bool g_ads_inited = false;
 static uint8_t ADS_ADDR = 0x48;
 
-#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.10.02.03"
+#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.10.02.04"
 #define CTRL_HMI_ARCH "EdgeBox ESP-100 + isolated RS485 Waveshare thin HMI"
 
 IPAddress local_IP(172,20,1,101);
@@ -85,7 +85,12 @@ static String g_hmiReportedHash;
 static String g_hmiReportedHw;
 static uint8_t g_hmiReportedProto = 0;
 static bool g_hmiSafeOtaCapable = false;
+static uint8_t g_hmiSafeOtaLevel = 0;
 static uint32_t g_lastHmiHelloTxMs = 0;
+// After CTRL-TS acknowledges the transition to its display-off updater, hold
+// discovery briefly so CTRL cannot rediscover the still-running pre-reboot UI
+// and send another FW_BEGIN before the touchscreen's reboot deadline fires.
+static uint32_t g_hmiSafeRebootHoldUntilMs = 0;
 static uint32_t g_lastHmiPollTxMs = 0;
 static uint16_t g_hmiOutstandingPollSeq = 0;
 static uint16_t g_hmiPollSeq = 0;
@@ -207,7 +212,7 @@ static uint32_t lastHmiLayoutForward = 0;
 #define HMI_LAYOUT_MAX_LEN 2200
 static const char* HMI_LAYOUT_NVS_NS = "hmiui";
 static const char* HMI_LAYOUT_NVS_KEY = "layout";
-static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.10.02.03|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
+static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.10.02.04|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
 
 
 
@@ -232,10 +237,10 @@ static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_CTRL";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL_TS,W1P,W1P_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_CTRL_v*.ino.bin firmware. CTRL-TS and W1P files are rejected.";
 static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=CTRL;";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.02.03;";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.02.04;";
 static const char* HV_AUTH_ROLE = "CTRL";
 static const char* HV_AUTH_TARGET = "EDGEBOX_ESP100";
-static const char* HV_AUTH_VERSION = "v26.10.02.03";
+static const char* HV_AUTH_VERSION = "v26.10.02.04";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
@@ -494,7 +499,7 @@ static void hvLoadHmiLayoutConfig() {
     int nl = stored.indexOf('\n');
     if(nl >= 0) stored = stored.substring(0, nl);
     stored.trim();
-    // v26.10.02.03 migration: older CTRL NVS layouts were main4/aux1-aux4.
+    // v26.10.02.04 migration: older CTRL NVS layouts were main4/aux1-aux4.
     // Preserve the operator's stored labels/settings but expose the new AUX5 tile.
     if(stored.indexOf("|layout=main4") >= 0) stored.replace("|layout=main4", "|layout=main5");
     if(stored.indexOf("|aux5=") < 0) stored += "|aux5=AUX 5";
@@ -942,7 +947,7 @@ static void sendHmiStatusToSrvr()
   uint32_t age = g_lastHmiRxMs ? (now - g_lastHmiRxMs) : 999999;
   String line = "HMI_STATUS";
   line += "|ctrl_ts=" + String(hmiLinkConnected() ? 1 : 0);
-  line += "|ctrl_version=v26.10.02.03";
+  line += "|ctrl_version=v26.10.02.04";
   line += "|fw_match=" + String(g_srvrFirmwareMatched ? 1 : 0);
   line += "|fw_authority=" + g_srvrFirmwareState;
   line += "|fw_required=" + (g_srvrRequiredVersion.length() ? g_srvrRequiredVersion : String("unknown"));
@@ -953,7 +958,7 @@ static void sendHmiStatusToSrvr()
   line += "|version=" + (g_hmiReportedVersion.length() ? g_hmiReportedVersion : String("unknown"));
   line += "|required=" + String(HV_CTRL_TS_REQUIRED_VERSION);
   line += "|compatible=" + String(g_hmiCompatible ? 1 : 0);
-  line += "|safe_ota=" + String(g_hmiSafeOtaCapable ? 1 : 0);
+  line += "|safe_ota=" + String((unsigned)g_hmiSafeOtaLevel);
   line += "|image=" + String(HV_CTRL_TS_IMAGE_AVAILABLE ? 1 : 0);
   line += "|fw_state=" + String(hmiFwStateText());
   udp.beginPacket(server_IP, UDP_PORT);
@@ -1271,11 +1276,11 @@ static void hmiFwStart(){
     return;
   }
   // One-time recovery boundary: only a CTRL-TS that explicitly advertises the
-  // v26.10.02.03+ display-off updater may receive an automatic self-update.
+  // v26.10.02.04+ display-off updater may receive an automatic self-update.
   // Older receivers write OTA flash while RGB framebuffers are live in PSRAM,
   // which is the failure mode that produced the observed colour/scale corruption.
   if(!g_hmiSafeOtaCapable){
-    Serial.println("[HMI FW] automatic CTRL-TS update BLOCKED: peer lacks safe_ota capability; manual USB bootstrap to v26.10.02.03 or newer required");
+    Serial.println("[HMI FW] automatic CTRL-TS update BLOCKED: peer lacks safe_ota=2 capability; manual USB bootstrap to v26.10.02.04 or newer required");
     return;
   }
   if(hmiFwActive()) return;
@@ -1300,14 +1305,18 @@ static bool hmiFwHandleFrame(const HVP2PRS485::Frame &frame){
     return true;
   }
   if(frame.type == HVP2PRS485::ERROR_MSG){
-    // v26.10.02.03 safe self-update handoff: the displayed CTRL-TS deliberately
+    // v26.10.02.04 safe self-update handoff: the displayed CTRL-TS deliberately
     // refuses to program flash, stages the exact target for a safe reboot, and asks CTRL to retry
     // after it has rebooted into its display-off updater. Treat this one response
     // as an expected transport transition, not as a failed firmware update.
     if(g_hmiFwState == HMI_FW_WAIT_READY && text == "fw_safe_reboot_retry"){
-      Serial.println("[HMI FW] CTRL-TS entering safe headless updater; waiting for new HELLO");
+      Serial.println("[HMI FW] CTRL-TS entering safe headless updater; holding discovery until reboot completes");
       hmiFwReset(nullptr);
-      g_lastHmiHelloTxMs = 0;
+      // CTRL-TS schedules its software restart 350 ms after this response. Give
+      // it a generous non-blocking 1.2 s quiet window. The main CTRL control loop
+      // continues normally; only HMI discovery/firmware traffic is held.
+      g_hmiSafeRebootHoldUntilMs = millis() + 1200;
+      g_lastHmiHelloTxMs = millis();
       return true;
     }
     Serial.printf("[HMI FW] CTRL-TS updater error: %s\n", text.c_str());
@@ -1395,6 +1404,7 @@ static bool hmiIdentityMatches()
   // has been embedded. The SHA-256 is therefore always part of compatibility.
   if(!HV_CTRL_TS_IMAGE_AVAILABLE || strlen(HV_CTRL_TS_REQUIRED_SHA256) != 64) return false;
   if(g_hmiReportedHash != HV_CTRL_TS_REQUIRED_SHA256) return false;
+  if(g_hmiSafeOtaLevel < 2) return false;
   return true;
 }
 
@@ -1404,13 +1414,21 @@ static void handleHmiFrame(const HVP2PRS485::Frame &frame)
   if(hmiFwHandleFrame(frame)) return;
   if(frame.type == HVP2PRS485::HELLO_RESP) {
     g_hmiPollOutstanding = false;
+    g_hmiSafeRebootHoldUntilMs = 0;
     String line = HVP2PRS485::payloadString(frame);
     g_hmiReportedHw = hvGetPipeField(line, "hw");
     g_hmiReportedVersion = hvGetPipeField(line, "version");
     g_hmiReportedHash = hvGetPipeField(line, "hash");
     String pv = hvGetPipeField(line, "proto");
     g_hmiReportedProto = (uint8_t)pv.toInt();
-    g_hmiSafeOtaCapable = hvGetPipeField(line, "safe_ota") == "1";
+    {
+      String safeOtaText = hvGetPipeField(line, "safe_ota");
+      long safeOtaLevel = safeOtaText.length() ? safeOtaText.toInt() : 0;
+      if(safeOtaLevel < 0) safeOtaLevel = 0;
+      if(safeOtaLevel > 255) safeOtaLevel = 255;
+      g_hmiSafeOtaLevel = (uint8_t)safeOtaLevel;
+      g_hmiSafeOtaCapable = g_hmiSafeOtaLevel >= 2;
+    }
     bool match = hmiIdentityMatches();
     if(match && hmiFwActive()) hmiFwReset("updated CTRL-TS identity confirmed");
     if(match && g_srvrFirmwareMatched && !g_hmiCompatible) {
@@ -1436,10 +1454,11 @@ static void handleHmiFrame(const HVP2PRS485::Frame &frame)
       if(!hmiTransportCompatible()) {
         Serial.println("[HMI] Automatic update BLOCKED: peer hardware/protocol is not the approved CTRL-TS target.");
       } else if(!g_hmiSafeOtaCapable) {
-        // Do not ask a pre-.03 receiver to execute its unsafe live-display OTA
-        // implementation. After one manual USB bootstrap to .03+, future CTRL-TS
-        // updates return to fully automatic safe/headless operation.
-        Serial.printf("[HMI] SAFE RECOVERY REQUIRED: CTRL-TS %s lacks safe_ota=1; manual USB bootstrap to %s is required once.\n",
+        // Do not ask a level-0/1 receiver to self-flash. Level 1 (.03) contains
+        // the safe-reboot discovery race found on bench; level 2 (.04+) fixes
+        // both ends of that transition. One manual USB bootstrap to .04 is the
+        // conservative recovery boundary, after which automatic updates resume.
+        Serial.printf("[HMI] SAFE RECOVERY REQUIRED: CTRL-TS %s lacks safe_ota=2; manual USB bootstrap to %s is required once.\n",
                       g_hmiReportedVersion.c_str(), HV_CTRL_TS_REQUIRED_VERSION);
       } else if(HV_CTRL_TS_IMAGE_AVAILABLE && g_srvrFirmwareMatched) {
         Serial.println("[HMI] Approved safe-OTA target detected and identity differs; starting automatic RS485 CTRL-TS update.");
@@ -1484,7 +1503,8 @@ static void handleHmiRx()
   if(hmiFwActive()) {
     // Firmware transfer owns the half-duplex bus until verification/reboot.
   } else if(!g_hmiCompatible) {
-    if((now - g_lastHmiHelloTxMs) >= 500) {
+    const bool safeRebootHold = g_hmiSafeRebootHoldUntilMs && ((int32_t)(now - g_hmiSafeRebootHoldUntilMs) < 0);
+    if(!safeRebootHold && (now - g_lastHmiHelloTxMs) >= 500) {
       g_lastHmiHelloTxMs = now;
       String req = String("required=") + HV_CTRL_TS_REQUIRED_VERSION + "|proto=" + String(HVP2PRS485::PROTOCOL_VERSION);
       hmiMasterTurnaroundGuard();
@@ -1509,6 +1529,7 @@ static void handleHmiRx()
     g_hmiReportedHw = "";
     g_hmiReportedProto = 0;
     g_hmiSafeOtaCapable = false;
+    g_hmiSafeOtaLevel = 0;
   }
 }
 
@@ -1705,7 +1726,7 @@ void loop()
     g_latestDisplayPacket = "";
   }
 
-  // v26.10.02.03: do not resend UIL1 layout on a timer.
+  // v26.10.02.04: do not resend UIL1 layout on a timer.
   // Some Waveshare/LVGL builds visibly flicker when the layout header/config
   // is resent periodically. Layout is now sent only at boot, upload/reset,
   // and in response to a CTRL-TS PING/reconnect request.

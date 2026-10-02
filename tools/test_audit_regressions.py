@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER="26.10.02.03"
+VER="26.10.02.04"
 W=(ROOT/f"HV_P2P_W1P_EDGEBOX_v{VER}/HV_P2P_W1P_EDGEBOX_v{VER}.ino").read_text()
 C=(ROOT/f"HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino").read_text()
 T=(ROOT/f"HV_P2P_CTRL_TS_v{VER}/HV_P2P_CTRL_TS_v{VER}.ino").read_text()
@@ -23,7 +23,7 @@ edgebox_fqbn = N[N.index('EDGEBOX_FQBN'):N.index('HMI_FQBN')]
 assert 'PartitionScheme=app3M_fat9M_16MB' in edgebox_fqbn
 assert 'PartitionScheme=custom' not in edgebox_fqbn
 
-# v26.10.02.03 operator input / safety refinements.
+# v26.10.02.04 operator input / safety refinements.
 assert 'self.reverse_joystick = False' in B
 assert 'VEL_KEEPALIVE_S = 0.15' in B
 assert 'def joystickPercentage' in B
@@ -36,9 +36,9 @@ assert 'sgmSelectChannelVerified(SGM_CONFIG_AI0_CONT_800SPS_6V144, "AI0 E-stop")
 assert 'sgmEnsureChannelVerified(SGM_CONFIG_AI1_CONT_800SPS_6V144, "AI1 joystick")' in C
 assert 'Always restore and verify AI1' in C
 assert 'CTRL_ESTOP_HEALTHY_MIN_V = 3.5f' in C and 'CTRL_ESTOP_HEALTHY_CONFIRM_SAMPLES = 3' in C
-# v26.10.02.03 direction-regression guard: CTRL normalises physical Left/Right
+# v26.10.02.04 direction-regression guard: CTRL normalises physical Left/Right
 # before SRVR, so the default backend direction is Normal and sign is preserved.
-BT=(ROOT/'SRVR_GitHub_v26.10.02.03/tools/test_backend_logic.py').read_text()
+BT=(ROOT/'SRVR_GitHub_v26.10.02.04/tools/test_backend_logic.py').read_text()
 assert 'assert b.reverse_joystick is False' in BT
 assert 'physical Left=-1' in B
 assert 'b.requested_speed_mps < 0.0' in BT
@@ -53,7 +53,7 @@ assert 'def systemStatusLevel' in B and 'System Un-Calibrated' in B
 assert 'g_boot_session_id' in W and 'BOOT_ID=' in W
 assert 'fw_ensure_update_screen' in T and 'fw_display_owned' in T
 assert 'if(fw_display_owned())' in T and 'CTRL-TS self-flash' in T
-# v26.10.02.03 safe CTRL-TS self-update architecture.  The .02.01/.02.02
+# v26.10.02.04 safe CTRL-TS self-update architecture.  The .02.01/.02.02
 # experiment that changed RGB PCLK/bounce buffers and restarted RGB DMA while
 # flash was being written is intentionally prohibited.  A displayed FW_BEGIN
 # stages the exact target in retained internal RAM then reboots into a
@@ -70,10 +70,10 @@ for forbidden in ('putString("upd_target"', 'putString("upd_sha"', 'putBool("upd
 assert 'fw_stage_safe_update_handoff' in T and 'fw_prepare_headless_mode' in T and 'fw_headless_blackout' in T
 assert 'digitalWrite(LCD_BL, LOW)' in T and 'digitalWrite(LCD_RST, LOW)' in T
 assert 'g_fw_safe_reboot_due_ms' in T and 'fw_safe_reboot_retry' in T
-assert 'text == "fw_safe_reboot_retry"' in C and 'entering safe headless updater' in C
-assert '"|safe_ota=1"' in T
-assert 'g_hmiSafeOtaCapable' in C and 'hvGetPipeField(line, "safe_ota") == "1"' in C
-assert 'manual USB bootstrap to v26.10.02.03 or newer required' in C
+assert 'text == "fw_safe_reboot_retry"' in C and 'holding discovery until reboot completes' in C
+assert '"|safe_ota=2"' in T
+assert 'g_hmiSafeOtaLevel' in C and 'g_hmiSafeOtaCapable = g_hmiSafeOtaLevel >= 2' in C
+assert 'manual USB bootstrap to v26.10.02.04 or newer required' in C
 assert 'fw_compare_release_versions' in T and 'fw_downgrade_blocked' in T
 assert 'no firmware transfer started for 60 s' in T and 'lastActivity = last_hmi_rx' not in T
 begin=T[T.index('static void fw_handle_begin'):T.index('static void fw_handle_block')]
@@ -84,6 +84,16 @@ assert 'g_fw_safe_reboot_due_ms = millis() + 350' in normal_branch
 for forbidden in ('g_fw_prefs', 'Preferences', 'Update.begin', 'Update.write'):
     assert forbidden not in normal_branch
 assert 'return;' in normal_branch
+
+# .04 bench fix: duplicate FW_BEGIN cannot postpone the scheduled reboot, and CTRL
+# suppresses HMI rediscovery long enough for the 350 ms restart to happen.
+assert 'if(g_fw_safe_reboot_due_ms)' in begin
+dup=begin[begin.index('if(g_fw_safe_reboot_due_ms)'):begin.index('if(g_fw_finalized)')]
+assert 'g_fw_safe_reboot_due_ms =' not in dup and 'fw_stage_safe_update_handoff' not in dup
+assert 'g_hmiSafeRebootHoldUntilMs = millis() + 1200;' in C
+assert 'safeRebootHold' in C
+blackout=T[T.index('static bool fw_headless_blackout'):T.index('static void fw_service_headless_idle_return')]
+assert 'new ESP_IOExpander_CH422G' not in blackout and 'expander->init()' not in blackout and 'expander->begin()' not in blackout
 block=T[T.index('static void fw_handle_block'):T.index('static void fw_handle_end')]
 assert 'Update.write(g_fw_write_buf, dataLen)' in block
 for forbidden in ('esp_lcd', 'fw_rgb_', 'lv_refr_now'):
@@ -97,7 +107,7 @@ assert 'lcd_init()' not in headless_branch and 'psramFound()' not in headless_br
 reboot_start=T.index('static void fw_handle_reboot')
 assert 'fw_clear_headless_update_state();' in T[reboot_start:T.index('static void fw_service_reboot', reboot_start)]
 
-# v26.10.02.03 field-feedback regressions: a newer SRVR must be noticed without
+# v26.10.02.04 field-feedback regressions: a newer SRVR must be noticed without
 # power-cycling field nodes *and without periodic HTTP in the healthy real-time
 # loops*. SRVR's normal UDP beacons invalidate an old match; only the already
 # fail-closed unmatched/update path may perform HTTP/SHA/OTA work.

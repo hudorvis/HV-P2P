@@ -1,39 +1,37 @@
 # HV P2P Revision History
 
-## v26.10.02.03
-- Recovery/safety successor to v26.10.02.02 after bench testing showed the
-  CTRL-TS RGB panel could enter colour-flashing/displaced/duplicated scanout
-  states during/after self-update.
-- Removed all low-level RGB OTA changes introduced in .01 and inherited by .02:
-  no runtime RGB PCLK changes, no per-block RGB panel restart, and no CI patch
-  changing the pinned Waveshare bounce buffer from 10 lines to 20.
-- Reworked CTRL-TS self-update into a two-stage safe path. A displayed FW_BEGIN
-  validates the exact target and stages it only in checksummed internal no-init
-  RAM (no live-display NVS/OTA write), then requests a deliberate software reboot.
-  The next boot accepts that handoff only for `ESP_RST_SW`, holds LCD reset/backlight
-  off, does not initialise PSRAM RGB/LVGL/touch, and performs RS485 flash/verify
-  headlessly before rebooting to the normal UI.
-- Added a 60-second safe-mode recovery guard so an interrupted transfer cannot
-  leave CTRL-TS permanently black; unexpected reset classes ignore the retained
-  RAM handoff and boot the known-good application normally.
-- CTRL recognises `fw_safe_reboot_retry` as the expected handoff and immediately
-  returns to HELLO discovery so the staged image automatically resumes in the
-  headless updater.
-- Added `safe_ota=1` capability negotiation. CTRL refuses to invoke a pre-.03
-  CTRL-TS self-updater; affected .02.01/.02.02 units require one manual .03 USB
-  bootstrap, after which automatic updates resume through the safe headless path.
-- Added CTRL-TS anti-downgrade validation (`fw_downgrade_blocked`) so an older
-  carrier cannot pull a manually recovered .03 touchscreen back to unsafe firmware.
-- Added a dedicated non-blocking SRVR->CTRL release beacon in addition to the
-  existing DSP1 `srvr_fw` field, and strengthened the asynchronous legacy update
-  bridge so fresh authority/HMI status can prove CTRL presence even if the
-  high-rate control freshness window has just expired.
-- Retained the .02 calibration-render fix and strengthened step transitions by
-  clearing the AUX Confirm latch on `(cal_kind, cal_step)` change. Joystick text
-  remains **Hold Joystick Left, then press Confirm** with the lower hint removed.
-- Added a dedicated safe-update regression contract; local validation passes 357
-  EdgeBox integration checks and 53 build-pipeline checks.
-- macOS bundle metadata advanced to `2610.2.3`.
+## v26.10.02.04
+- Bench-fix successor to v26.10.02.03 after the safe CTRL-TS updater could remain
+  indefinitely at **Restarting in safe update mode | 0%**.
+- Exact root cause: after `fw_safe_reboot_retry`, CTRL immediately restarted HELLO
+  discovery. It could rediscover the still-running CTRL-TS before its 350 ms reboot
+  deadline, send another `FW_BEGIN`, and CTRL-TS would move that deadline another
+  350 ms. Repeated rediscovery could therefore postpone the reboot forever.
+- Fixed both ends of the transition: CTRL now applies a non-blocking 1.2 s HMI-only
+  quiet window after the safe-reboot acknowledgement, while CTRL-TS treats any
+  duplicate `FW_BEGIN` during an already-scheduled safe reboot as acknowledgement
+  only and never changes the original deadline.
+- Removed the second CH422G/I2C initialization from the headless boot. The normal
+  Waveshare runtime blanks/resets the panel immediately before software restart;
+  the headless boot then leaves RGB/LVGL/PSRAM/display initialization completely
+  untouched and services only RS485 + OTA.
+- Raised CTRL-TS safe-update capability from `safe_ota=1` to **`safe_ota=2`**.
+  `.03` is intentionally treated as a recovery-only level-1 implementation and
+  `.04` CTRL will not automatically stream firmware into it. One manual CTRL-TS
+  USB/Arduino flash to `.04` is required from `.03`; `.04+` releases can then use
+  the corrected automatic headless updater.
+- Added early reset-reason logging before headless selection so a future service
+  log clearly distinguishes the deliberate software restart from power/brownout/
+  watchdog reset classes.
+- Added a timing-model regression test reproducing the old reboot-starvation loop,
+  plus static locks for the 1.2 s sender hold, immutable receiver reboot deadline,
+  no second CH422G initialization, and capability-level migration gate.
+- Retains all v26.10.02.03 calibration-overlay, joystick, status, SRVR authority,
+  W1P watchdog and motion-safety fixes.
+- Local source validation passes 359 EdgeBox integration checks and 53
+  build-pipeline checks; native compilation and physical Waveshare/RS485 testing
+  remain GitHub Actions / bench gates.
+- macOS bundle metadata advanced to `2610.2.4`.
 
 ## v26.10.02.02
 - Follow-up to .01 after four CTRL-TS bench videos showed intermittent

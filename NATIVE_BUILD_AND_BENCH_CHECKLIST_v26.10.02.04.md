@@ -1,4 +1,4 @@
-# HV P2P v26.10.02.03 Native Build and Bench Checklist
+# HV P2P v26.10.02.04 Native Build and Bench Checklist
 
 ## Release gate order
 
@@ -21,19 +21,20 @@
 - Confirm runtime SRVR loss returns to the resident splash (`Waiting for SRVR`)
   and recovery returns to the main UI without an ESP restart.
 
-## One-time pre-.03 migration gate
+## One-time `.03 -> .04` CTRL-TS recovery gate
 
-Before testing normal automatic touchscreen OTA:
-
-- With CTRL .03 and CTRL-TS still on .02.01/.02.02, confirm CTRL logs that
-  automatic CTRL-TS update is **BLOCKED** because `safe_ota=1` is absent.
-- Confirm SRVR shows **Manual USB bootstrap required**, not a fake successful or
-  endlessly running update.
-- Manually flash CTRL-TS .03 once. Confirm HELLO now contains `safe_ota=1`.
-- If an older CTRL is temporarily reconnected, confirm .03 CTRL-TS returns
-  `fw_downgrade_blocked` and does not erase/write an OTA partition.
-- Only after this gate passes should the normal .03+ automatic self-update path
-  below be tested.
+- Update/build CTRL `.04` first.
+- Confirm CTRL `.04` sees `.03` CTRL-TS `safe_ota=1` and **blocks automatic
+  self-update** with manual-bootstrap-required diagnostics.
+- Manually USB/Arduino flash CTRL-TS `.04` once.
+- Confirm HELLO now reports `safe_ota=2`.
+- Confirm a same-version hash repair (if required after manual flash) performs the
+  sequence: 0% dashboard -> one scheduled reboot -> headless transfer -> verified
+  reboot, with no repeated 0% loop.
+- Confirm CTRL serial contains the 1.2 s safe-reboot discovery hold message.
+- Confirm CTRL-TS serial shows `early reset_reason` and, on the deliberate restart,
+  enters the headless updater without initializing RGB/LVGL/PSRAM or a second
+  CH422G path.
 
 ## Safe CTRL-TS self-update — critical .03 acceptance
 

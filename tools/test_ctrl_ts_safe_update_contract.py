@@ -1,26 +1,29 @@
 #!/usr/bin/env python3
-"""Static contract for the display-off CTRL-TS self-updater.
+"""Static/logic contract for the display-off CTRL-TS self-updater.
 
-This exists specifically to prevent the v26.10.02.01/.02 regression where
-self-flash manipulated/restarted the active RGB pipeline and could corrupt the
-Waveshare panel. Native compilation is still a GitHub Actions gate.
+This prevents the two bench regressions seen in .01-.03:
+1) RGB/PSRAM corruption caused by writing flash while the display pipeline lived.
+2) .03's safe-reboot race where CTRL could rediscover the still-running UI and
+   repeatedly send FW_BEGIN, continuously postponing the touchscreen reboot.
+Native compilation and real-hardware timing remain GitHub/bench gates.
 """
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
-VER = "26.10.02.03"
+VER = "26.10.02.04"
 T = (ROOT/f"HV_P2P_CTRL_TS_v{VER}"/f"HV_P2P_CTRL_TS_v{VER}.ino").read_text()
+C = (ROOT/f"HV_P2P_CTRL_EDGEBOX_v{VER}"/f"HV_P2P_CTRL_EDGEBOX_v{VER}.ino").read_text()
 P = (ROOT/'tools'/'prepare_waveshare_library.py').read_text()
 WF = next((ROOT/'.github'/'workflows').glob('*.yml')).read_text()
 
-# The failed .01/.02 experiment is prohibited outright.
+# The failed .01/.02 active-RGB OTA experiment is prohibited outright.
 for token in ('esp_lcd_rgb_panel_set_pclk', 'esp_lcd_rgb_panel_restart', 'FW_RGB_PCLK_HZ', 'NORMAL_RGB_PCLK_HZ'):
     assert token not in T, token
 assert '#include <esp_lcd_panel_rgb.h>' not in T
 assert 'LVGL_PORT_RGB_BOUNCE_BUFFER_SIZE' not in P
 assert 'LVGL_PORT_RGB_BOUNCE_BUFFER_SIZE (LVGL_PORT_DISP_WIDTH * 20)' not in WF
 
-# Safe handoff must live only in retained INTERNAL RAM.  In particular, normal
-# displayed FW_BEGIN is forbidden from touching Preferences/NVS or Update.*.
+# Safe handoff lives only in retained INTERNAL RAM. The normal displayed
+# FW_BEGIN is forbidden from touching Preferences/NVS or Update.*.
 for token in ('#include <esp_attr.h>', '__NOINIT_ATTR', 'FwSafeHandoff',
               'FW_SAFE_HANDOFF_MAGIC', 'fw_safe_handoff_checksum',
               'fw_stage_safe_update_handoff', 'fw_prepare_headless_mode',
@@ -30,8 +33,19 @@ for token in ('#include <esp_attr.h>', '__NOINIT_ATTR', 'FwSafeHandoff',
 for forbidden in ('putString("upd_target"', 'putString("upd_sha"', 'putBool("upd_mode"',
                   'getString("upd_target"', 'getString("upd_sha"', 'getBool("upd_mode"'):
     assert forbidden not in T, forbidden
-assert 'expander->digitalWrite(LCD_BL, LOW);' in T
-assert 'expander->digitalWrite(LCD_RST, LOW);' in T
+
+# Pre-restart blackout still uses the already-initialized, known-good Waveshare
+# expander instance. The headless boot itself must NOT create a second CH422G/I2C
+# initialization path before the Waveshare stack exists.
+reboot_start = T.index('static void fw_service_reboot(){')
+reboot_service = T[reboot_start:T.index('static void fw_service_timeout(){', reboot_start)]
+assert 'expander->digitalWrite(LCD_BL, LOW);' in reboot_service
+assert 'expander->digitalWrite(LCD_RST, LOW);' in reboot_service
+blackout = T[T.index('static bool fw_headless_blackout'):T.index('static void fw_service_headless_idle_return')]
+for forbidden in ('new ESP_IOExpander_CH422G', 'expander->init()', 'expander->begin()',
+                  'expander->pinMode', 'Wire.begin', 'lcd_init()', 'psramFound()'):
+    assert forbidden not in blackout, forbidden
+assert 'display stack remains uninitialized' in blackout
 
 begin = T[T.index('static void fw_handle_begin'):T.index('static void fw_handle_block')]
 headless_gate = begin.index('if(!g_fw_headless_mode)')
@@ -47,8 +61,29 @@ for token in ('fw_stage_safe_update_handoff(version, sha)',
 for forbidden in ('g_fw_prefs', 'Preferences', '.put', '.remove', 'Update.begin', 'Update.write', 'lv_refr_now'):
     assert forbidden not in handoff, forbidden
 
+# Critical .03 bench fix: once the safe reboot has been scheduled, a duplicate
+# FW_BEGIN may repeat the transition reply but MUST NOT restage or move the
+# deadline. This prevents an endless 0% loop.
+dup_guard = begin[begin.index('if(g_fw_safe_reboot_due_ms)'):begin.index('if(g_fw_finalized)')]
+assert 'fw_safe_reboot_retry' in dup_guard
+assert 'return;' in dup_guard
+for forbidden in ('fw_stage_safe_update_handoff', 'g_fw_safe_reboot_due_ms =', 'Update.begin', 'Update.write'):
+    assert forbidden not in dup_guard, forbidden
+assert begin.index('if(g_fw_safe_reboot_due_ms)') < begin.index('fw_stage_safe_update_handoff(version, sha)')
+
+# CTRL must also stay quiet long enough for the 350 ms touchscreen restart to
+# actually happen. This is non-blocking: it suppresses only HMI discovery/OTA,
+# not the real-time CTRL control loop.
+for token in ('g_hmiSafeRebootHoldUntilMs', 'millis() + 1200',
+              'holding discovery until reboot completes', 'safeRebootHold'):
+    assert token in C, token
+safe_reply = C[C.index('text == "fw_safe_reboot_retry"'):C.index('Serial.printf("[HMI FW] CTRL-TS updater error')]
+assert 'g_hmiSafeRebootHoldUntilMs = millis() + 1200;' in safe_reply
+hello_service = C[C.index('static void handleHmiRx'):C.index('static bool initEthernetStatic')]
+assert 'if(!safeRebootHold && (now - g_lastHmiHelloTxMs) >= 500)' in hello_service
+
 # Handoff acceptance is constrained to the deliberate software restart and its
-# RAM payload is magic/checksum/format validated before blackout/headless entry.
+# RAM payload is magic/checksum/format validated before headless entry.
 prep = T[T.index('static bool fw_prepare_headless_mode'):T.index('static void fw_clear_headless_update_state')]
 for token in ('esp_reset_reason() != ESP_RST_SW', 'FW_SAFE_HANDOFF_MAGIC',
               'fw_safe_version_valid', 'fw_safe_sha_valid', 'fw_safe_handoff_checksum'):
@@ -58,6 +93,7 @@ assert 'g_fw_safe_handoff.magic = 0;' in prep
 setup = T[T.index('void setup()'):T.index('void loop()')]
 assert setup.index('fw_prepare_headless_mode()') < setup.index('load_fw_identity()') < setup.index('\n  lcd_init();')
 assert setup.index('fw_headless_blackout()') < setup.index('load_fw_identity()')
+assert '[WS-HMI] early reset_reason=' in setup
 headless = setup[setup.index('if(safeHeadlessBoot)'):setup.index('Serial.printf("[WS-HMI] PSRAM found')]
 assert 'while(true)' in headless
 assert 'boot_service_uart();' in headless
@@ -71,7 +107,7 @@ assert 'Update.write(g_fw_write_buf, dataLen)' in block
 for token in ('esp_lcd', 'fw_rgb_', 'lv_refr_now', 'lvgl_port_lock'):
     assert token not in block, token
 
-# boot_service_uart must continue servicing timeout/reboot while setup is parked
+# boot_service_uart continues servicing timeout/reboot while setup is parked
 # forever in headless mode.
 boot_uart = T[T.index('static void boot_service_uart'):T.index('static bool boot_prepare_splash_canvas')]
 assert 'fw_service_timeout();' in boot_uart
@@ -86,17 +122,36 @@ reboot = T[reboot_start:T.index('static void fw_service_reboot', reboot_start)]
 assert 'if(g_fw_headless_mode) fw_clear_headless_update_state();' in reboot
 assert 'g_fw_safe_reboot_due_ms' in T[T.index('static bool fw_display_owned'):T.index('static String fw_connection_text')]
 
-# Migration safety boundary: pre-v26.10.02.03 receivers do not implement the
-# display-off updater and must never be asked to self-flash automatically.
-C = (ROOT/f"HV_P2P_CTRL_EDGEBOX_v{VER}"/f"HV_P2P_CTRL_EDGEBOX_v{VER}.ino").read_text()
-assert '"|safe_ota=1"' in T
-assert 'g_hmiSafeOtaCapable' in C
-assert 'hvGetPipeField(line, "safe_ota") == "1"' in C
+# Migration safety boundary: .03 advertises safe_ota=1 but contains the reboot
+# race above. .04 raises the capability level to 2, and CTRL .04 refuses to
+# auto-stream into level 0/1 receivers. One manual .04 bootstrap is therefore
+# the conservative recovery boundary; .04+ can auto-update thereafter.
+assert '"|safe_ota=2"' in T
+assert 'g_hmiSafeOtaLevel' in C
+assert 'g_hmiSafeOtaCapable = g_hmiSafeOtaLevel >= 2' in C
+assert 'if(g_hmiSafeOtaLevel < 2) return false;' in C
 assert 'if(!g_hmiSafeOtaCapable)' in C
-assert 'manual USB bootstrap to v26.10.02.03 or newer required' in C
+assert 'lacks safe_ota=2' in C
+assert 'manual USB bootstrap to v26.10.02.04 or newer required' in C
 assert 'fw_state=" + String(hmiFwStateText())' in C
 assert 'fw_compare_release_versions' in T
 assert 'fw_downgrade_blocked' in T
 assert 'if(releaseRelation < 0)' in T
+
+# Tiny timing model of the observed race: a 100 ms rediscovery cadence can push a
+# 350 ms reboot forever if every duplicate resets the deadline. Fixed receiver
+# leaves the original deadline untouched, and fixed CTRL additionally stays quiet
+# for 1200 ms.
+old_due = 350
+for t in range(100, 2000, 100):
+    if t < old_due:
+        old_due = t + 350
+assert old_due > 2000  # demonstrates the old starvation mechanism
+fixed_due = 350
+for t in range(100, 2000, 100):
+    if t < fixed_due:
+        pass  # duplicate is acknowledged but deadline is NOT moved
+assert fixed_due == 350
+assert 1200 > fixed_due
 
 print('CTRL_TS_SAFE_UPDATE_CONTRACT_PASS')
