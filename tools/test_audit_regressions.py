@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER="26.10.02.02"
+VER="26.10.02.03"
 W=(ROOT/f"HV_P2P_W1P_EDGEBOX_v{VER}/HV_P2P_W1P_EDGEBOX_v{VER}.ino").read_text()
 C=(ROOT/f"HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino").read_text()
 T=(ROOT/f"HV_P2P_CTRL_TS_v{VER}/HV_P2P_CTRL_TS_v{VER}.ino").read_text()
@@ -23,7 +23,7 @@ edgebox_fqbn = N[N.index('EDGEBOX_FQBN'):N.index('HMI_FQBN')]
 assert 'PartitionScheme=app3M_fat9M_16MB' in edgebox_fqbn
 assert 'PartitionScheme=custom' not in edgebox_fqbn
 
-# v26.10.02.02 operator input / safety refinements.
+# v26.10.02.03 operator input / safety refinements.
 assert 'self.reverse_joystick = False' in B
 assert 'VEL_KEEPALIVE_S = 0.15' in B
 assert 'def joystickPercentage' in B
@@ -36,9 +36,9 @@ assert 'sgmSelectChannelVerified(SGM_CONFIG_AI0_CONT_800SPS_6V144, "AI0 E-stop")
 assert 'sgmEnsureChannelVerified(SGM_CONFIG_AI1_CONT_800SPS_6V144, "AI1 joystick")' in C
 assert 'Always restore and verify AI1' in C
 assert 'CTRL_ESTOP_HEALTHY_MIN_V = 3.5f' in C and 'CTRL_ESTOP_HEALTHY_CONFIRM_SAMPLES = 3' in C
-# v26.10.02.02 direction-regression guard: CTRL normalises physical Left/Right
+# v26.10.02.03 direction-regression guard: CTRL normalises physical Left/Right
 # before SRVR, so the default backend direction is Normal and sign is preserved.
-BT=(ROOT/'SRVR_GitHub_v26.10.02.02/tools/test_backend_logic.py').read_text()
+BT=(ROOT/'SRVR_GitHub_v26.10.02.03/tools/test_backend_logic.py').read_text()
 assert 'assert b.reverse_joystick is False' in BT
 assert 'physical Left=-1' in B
 assert 'b.requested_speed_mps < 0.0' in BT
@@ -52,24 +52,52 @@ assert 'position_reference_persistent' in B and 'self._not_calibrated = True' in
 assert 'def systemStatusLevel' in B and 'System Un-Calibrated' in B
 assert 'g_boot_session_id' in W and 'BOOT_ID=' in W
 assert 'fw_ensure_update_screen' in T and 'fw_display_owned' in T
-assert 'if(fw_display_owned())' in T and 'never hold the LVGL mutex across' in T
-# Persistent RGB-panel corruption during OTA is an ESP32-S3 flash/PSRAM/DMA
-# interaction, not merely an LVGL ownership problem.  Freeze a fully rendered
-# dashboard before flash, lower RGB PCLK while writing and realign the RGB DMA
-# after each block.  The pinned Waveshare port is also patched to a 20-line
-# bounce buffer by the native GitHub build.
-assert '#include <esp_lcd_panel_rgb.h>' in T
-assert 'FW_RGB_PCLK_HZ = 6000000UL' in T and 'NORMAL_RGB_PCLK_HZ = 16000000UL' in T
-assert 'esp_lcd_rgb_panel_set_pclk(panel, FW_RGB_PCLK_HZ)' in T
-assert 'esp_lcd_rgb_panel_restart(panel)' in T
-begin=T[T.index('static void fw_handle_begin'):T.index('static void fw_handle_block')]
-assert begin.index('fw_set_device_status("CTRL-TS", "Preparing"') < begin.index('Update.begin(imageSize, U_FLASH)')
-block=T[T.index('static void fw_handle_block'):T.index('static void fw_handle_end')]
-assert block.index('Update.write(g_fw_write_buf, dataLen)') < block.index('fw_rgb_restart()')
+assert 'if(fw_display_owned())' in T and 'CTRL-TS self-flash' in T
+# v26.10.02.03 safe CTRL-TS self-update architecture.  The .02.01/.02.02
+# experiment that changed RGB PCLK/bounce buffers and restarted RGB DMA while
+# flash was being written is intentionally prohibited.  A displayed FW_BEGIN
+# stages the exact target in retained internal RAM then reboots into a
+# display-off/headless updater; Update.begin()/Update.write() are reachable only
+# from that headless boot. No Preferences/NVS write is allowed in live display.
+assert '#include <esp_lcd_panel_rgb.h>' not in T
+for forbidden in ('esp_lcd_rgb_panel_set_pclk', 'esp_lcd_rgb_panel_restart', 'FW_RGB_PCLK_HZ', 'NORMAL_RGB_PCLK_HZ'):
+    assert forbidden not in T
 WPREP=(ROOT/'tools/prepare_waveshare_library.py').read_text()
-assert 'LVGL_PORT_RGB_BOUNCE_BUFFER_SIZE (LVGL_PORT_DISP_WIDTH * 20)' in WPREP
+assert 'LVGL_PORT_RGB_BOUNCE_BUFFER_SIZE' not in WPREP
+assert '#include <esp_attr.h>' in T and '__NOINIT_ATTR' in T and 'FW_SAFE_HANDOFF_MAGIC' in T
+for forbidden in ('putString("upd_target"', 'putString("upd_sha"', 'putBool("upd_mode"'):
+    assert forbidden not in T
+assert 'fw_stage_safe_update_handoff' in T and 'fw_prepare_headless_mode' in T and 'fw_headless_blackout' in T
+assert 'digitalWrite(LCD_BL, LOW)' in T and 'digitalWrite(LCD_RST, LOW)' in T
+assert 'g_fw_safe_reboot_due_ms' in T and 'fw_safe_reboot_retry' in T
+assert 'text == "fw_safe_reboot_retry"' in C and 'entering safe headless updater' in C
+assert '"|safe_ota=1"' in T
+assert 'g_hmiSafeOtaCapable' in C and 'hvGetPipeField(line, "safe_ota") == "1"' in C
+assert 'manual USB bootstrap to v26.10.02.03 or newer required' in C
+assert 'fw_compare_release_versions' in T and 'fw_downgrade_blocked' in T
+assert 'no firmware transfer started for 60 s' in T and 'lastActivity = last_hmi_rx' not in T
+begin=T[T.index('static void fw_handle_begin'):T.index('static void fw_handle_block')]
+assert begin.index('if(!g_fw_headless_mode)') < begin.index('Update.begin(imageSize, U_FLASH)')
+normal_branch=begin[begin.index('if(!g_fw_headless_mode)'):begin.index('Update.begin(imageSize, U_FLASH)')]
+assert 'fw_stage_safe_update_handoff(version, sha)' in normal_branch
+assert 'g_fw_safe_reboot_due_ms = millis() + 350' in normal_branch
+for forbidden in ('g_fw_prefs', 'Preferences', 'Update.begin', 'Update.write'):
+    assert forbidden not in normal_branch
+assert 'return;' in normal_branch
+block=T[T.index('static void fw_handle_block'):T.index('static void fw_handle_end')]
+assert 'Update.write(g_fw_write_buf, dataLen)' in block
+for forbidden in ('esp_lcd', 'fw_rgb_', 'lv_refr_now'):
+    assert forbidden not in block
+setup=T[T.index('void setup()'):T.index('void loop()')]
+assert setup.index('fw_prepare_headless_mode()') < setup.index('load_fw_identity()') < setup.index('\n  lcd_init();')
+assert 'if(safeHeadlessBoot)' in setup and 'while(true)' in setup
+headless_branch=setup[setup.index('if(safeHeadlessBoot)'):setup.index('Serial.printf("[WS-HMI] PSRAM found')]
+assert 'boot_service_uart();' in headless_branch
+assert 'lcd_init()' not in headless_branch and 'psramFound()' not in headless_branch
+reboot_start=T.index('static void fw_handle_reboot')
+assert 'fw_clear_headless_update_state();' in T[reboot_start:T.index('static void fw_service_reboot', reboot_start)]
 
-# v26.10.02.02 field-feedback regressions: a newer SRVR must be noticed without
+# v26.10.02.03 field-feedback regressions: a newer SRVR must be noticed without
 # power-cycling field nodes *and without periodic HTTP in the healthy real-time
 # loops*. SRVR's normal UDP beacons invalidate an old match; only the already
 # fail-closed unmatched/update path may perform HTTP/SHA/OTA work.
@@ -77,13 +105,16 @@ for node in (C, W):
     assert 'if(g_srvrFirmwareMatched) return;' in node
     assert 'FW_AUTH_MATCHED_RECHECK_MS' not in node
     assert 'authorityUnchanged' not in node and 'previousVersion' not in node
-assert 'const String srvrFw = hvGetPipeField(line, "srvr_fw");' in C
-assert 'g_srvrFirmwareMatched = false;' in C[C.index('const String srvrFw = hvGetPipeField(line, "srvr_fw");'):C.index('const String srvrFw = hvGetPipeField(line, "srvr_fw");')+900]
+assert 'static bool applySrvrFirmwareBeacon' in C
+assert 'line.startsWith("SRVR_FW|")' in C and 'line.startsWith("DSP1|")' in C
+ctrl_beacon = C[C.index('static bool applySrvrFirmwareBeacon'):C.index('static void handleUdpRx')]
+assert 'g_srvrFirmwareMatched = false;' in ctrl_beacon and 'authority_changed' in ctrl_beacon
 assert 'if (line.startsWith("SRVR_FW|"))' in W
 w_beacon = W[W.index('if (line.startsWith("SRVR_FW|"))'):W.index('if (line.startsWith("SRVR_FW|"))')+1200]
 assert 'driveStopNow();' in w_beacon and 'requestSoftwareSrvonInhibit(true, "SRVR_FW_CHANGED")' in w_beacon
 assert 'f"srvr_fw={self._current_firmware_version()}"' in B
-assert 'def _send_w1p_firmware_beacon' in B and 'SRVR_FW|version=' in B
+assert 'def _send_ctrl_firmware_beacon' in B and 'def _send_w1p_firmware_beacon' in B and 'SRVR_FW|version=' in B
+assert 'self._send_ctrl_firmware_beacon(); self._send_controller_display_packet();' in B
 assert 'stale_release_report' in B
 assert 'reported_match and version_current and authority_current' in B
 assert 'reported_w1p_match and self._firmware_version_matches_current' in B
@@ -125,6 +156,8 @@ assert 'Use the assigned AUX: press once for Confirm?' not in T
 assert 'g_cal_hint_lbl' not in T
 assert 'lv_obj_move_foreground(g_cal_overlay)' not in T
 assert 'if(!g_calibration_overlay_active)' in T and 'calibration overlay shown' in T
+assert 'g_last_cal_overlay_kind' in T and 'g_last_cal_overlay_step' in T
+assert 'kind != g_last_cal_overlay_kind || step != g_last_cal_overlay_step' in T
 assert 'const bool calibration_active_now = apply_calibration_overlay_fields(line);' in T
 assert 'if(!calibration_active_now){' in T
 assert 'if(!calibration_active_now) update_progress_marker();' in T
@@ -140,6 +173,7 @@ assert 'def _legacy_firmware_push_worker' in B and 'HTTPConnection' in B and '"/
 assert 'multipart/form-data' in B and 'daemon=True' in B and 'def _service_legacy_firmware_push' in B
 assert 'def _firmware_version_is_older' in B and 'not self._firmware_version_is_older(reported)' in B
 assert 'self._motion_tick(); self._service_legacy_firmware_push();' in B
+assert 'ctrl_present = bool(self._ctrl_connected() or self._ctrl_authority_fresh())' in B
 
 # Settings and Free-D are auto-save pages. No footer Apply/Reset interaction is
 # permitted to return, and joystick-wizard completion immediately activates the

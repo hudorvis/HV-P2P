@@ -221,7 +221,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.02.02", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.02.03", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -230,7 +230,7 @@ class HVP2PBackend(QObject):
         self._legacy_fw_push_last_attempt = {"ctrl": 0.0, "w1p": 0.0}
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.02.02+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.02.03+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -242,6 +242,7 @@ class HVP2PBackend(QObject):
         # fail-safe manifest re-verification without any periodic blocking HTTP poll
         # inside either field node's motion loop.
         self._firmware_authority_session = f"{os.getpid():x}{time.time_ns() & 0xFFFFFFFF:x}"[-16:]
+        self._last_ctrl_fw_beacon = 0.0
         self._last_w1p_fw_beacon = 0.0
         self._lock = threading.RLock()
         self._logs = deque(maxlen=1200)
@@ -1793,6 +1794,31 @@ class HVP2PBackend(QObject):
             # Display/status telemetry must never disturb the motion/safety loop.
             pass
 
+    def _send_ctrl_firmware_beacon(self) -> None:
+        """Advertise SRVR authority over CTRL's existing non-blocking UDP socket.
+
+        This is independent of DSP1 layout/change throttling. A matched CTRL only
+        compares the announced version/session and never performs HTTP until a
+        mismatch has first put the node into its fail-closed authority path.
+        """
+        if self.smoke_test:
+            return
+        target = str(self.ctrl_ip or "").strip()
+        if not target:
+            return
+        now = time.time()
+        if now - float(self._last_ctrl_fw_beacon or 0.0) < 0.50:
+            return
+        self._last_ctrl_fw_beacon = now
+        packet = (
+            f"SRVR_FW|version={self._current_firmware_version()}|"
+            f"session={self._firmware_authority_session}\n"
+        ).encode("ascii", "ignore")
+        try:
+            self._ctrl_display_sock.sendto(packet, (target, SERVER_BIND_PORT))
+        except Exception:
+            pass
+
     def _send_w1p_firmware_beacon(self) -> None:
         """Advertise SRVR authority identity over W1P's existing non-blocking UDP path."""
         if self.smoke_test:
@@ -1884,8 +1910,13 @@ class HVP2PBackend(QObject):
         if self.smoke_test or self._firmware_bundle is None:
             return
         now = time.monotonic()
+        # A fresh HMI_STATUS proves CTRL is alive even if the high-rate control
+        # datagram stream has just rolled across its timeout boundary.  Treat either
+        # signal as sufficient presence for the legacy firmware bridge; version
+        # mismatch already holds motion fail-safe and the HTTP upload runs off-loop.
+        ctrl_present = bool(self._ctrl_connected() or self._ctrl_authority_fresh())
         targets = (
-            ("ctrl", str(self.ctrl_ip or "").strip(), str(self._ctrl_fw_version or "").strip(), self._ctrl_connected()),
+            ("ctrl", str(self.ctrl_ip or "").strip(), str(self._ctrl_fw_version or "").strip(), ctrl_present),
             ("w1p", str(self.w1p_ip or "").strip(), str(self._w1p_fw_version or "").strip(), bool(self.w1p.connected)),
         )
         for role, host, reported, connected in targets:
@@ -2365,7 +2396,7 @@ class HVP2PBackend(QObject):
             for _ in range(100):
                 try: self._parse_w1p(self._w1p_rx.get_nowait())
                 except queue.Empty: break
-            self._motion_tick(); self._service_legacy_firmware_push(); self._send_freed(); self._send_controller_display_packet(); self._send_w1p_firmware_beacon(); self.stateChanged.emit()
+            self._motion_tick(); self._service_legacy_firmware_push(); self._send_freed(); self._send_ctrl_firmware_beacon(); self._send_controller_display_packet(); self._send_w1p_firmware_beacon(); self.stateChanged.emit()
         except Exception as exc: self._log(f"[SRVR] tick: {exc}")
 
     # --- config ---
@@ -2813,7 +2844,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.02.02 moves the installed joystick polarity correction into CTRL,
+        # v26.10.02.03 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same
@@ -3206,6 +3237,7 @@ class HVP2PBackend(QObject):
             "verifying": "Verifying",
             "rebooting": "Rebooting",
             "image_missing": "Image not staged",
+            "manual_bootstrap": "Manual USB bootstrap required",
         }
         if raw == "idle":
             if not self.ctrlTsConnected:

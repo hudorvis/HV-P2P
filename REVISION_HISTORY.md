@@ -1,12 +1,50 @@
 # HV P2P Revision History
 
+## v26.10.02.03
+- Recovery/safety successor to v26.10.02.02 after bench testing showed the
+  CTRL-TS RGB panel could enter colour-flashing/displaced/duplicated scanout
+  states during/after self-update.
+- Removed all low-level RGB OTA changes introduced in .01 and inherited by .02:
+  no runtime RGB PCLK changes, no per-block RGB panel restart, and no CI patch
+  changing the pinned Waveshare bounce buffer from 10 lines to 20.
+- Reworked CTRL-TS self-update into a two-stage safe path. A displayed FW_BEGIN
+  validates the exact target and stages it only in checksummed internal no-init
+  RAM (no live-display NVS/OTA write), then requests a deliberate software reboot.
+  The next boot accepts that handoff only for `ESP_RST_SW`, holds LCD reset/backlight
+  off, does not initialise PSRAM RGB/LVGL/touch, and performs RS485 flash/verify
+  headlessly before rebooting to the normal UI.
+- Added a 60-second safe-mode recovery guard so an interrupted transfer cannot
+  leave CTRL-TS permanently black; unexpected reset classes ignore the retained
+  RAM handoff and boot the known-good application normally.
+- CTRL recognises `fw_safe_reboot_retry` as the expected handoff and immediately
+  returns to HELLO discovery so the staged image automatically resumes in the
+  headless updater.
+- Added `safe_ota=1` capability negotiation. CTRL refuses to invoke a pre-.03
+  CTRL-TS self-updater; affected .02.01/.02.02 units require one manual .03 USB
+  bootstrap, after which automatic updates resume through the safe headless path.
+- Added CTRL-TS anti-downgrade validation (`fw_downgrade_blocked`) so an older
+  carrier cannot pull a manually recovered .03 touchscreen back to unsafe firmware.
+- Added a dedicated non-blocking SRVR->CTRL release beacon in addition to the
+  existing DSP1 `srvr_fw` field, and strengthened the asynchronous legacy update
+  bridge so fresh authority/HMI status can prove CTRL presence even if the
+  high-rate control freshness window has just expired.
+- Retained the .02 calibration-render fix and strengthened step transitions by
+  clearing the AUX Confirm latch on `(cal_kind, cal_step)` change. Joystick text
+  remains **Hold Joystick Left, then press Confirm** with the lower hint removed.
+- Added a dedicated safe-update regression contract; local validation passes 357
+  EdgeBox integration checks and 53 build-pipeline checks.
+- macOS bundle metadata advanced to `2610.2.3`.
+
 ## v26.10.02.02
-- Built directly from v26.10.02.01 after four CTRL-TS bench videos showed an intermittent calibration-screen corruption/reset.
-- Confirmed the failure is a real CTRL-TS restart: IMG_4951/4952 show repeated/vertically duplicated Drive/Speed/Position rows immediately before the boot splash returns with the normal `CTRL OK | SRVR OK | starting in ...` countdown.
-- Removed the calibration render storm: the already-foreground wizard is shown/hidden only on state transitions, `lv_obj_move_foreground()` is no longer called on every HMI packet, covered travel/Drive/Speed/Position widgets are frozen while the opaque wizard is active, and redundant explicit label invalidation was removed.
-- Joystick Calibration step 1 now reads exactly **Hold Joystick Left, then press Confirm**. The lower `Use the assigned AUX...` description row has been removed. Centre/Right instructions use the same operator wording.
-- Added regression locks preventing repeated calibration foreground moves/background rendering and preserving the simplified wizard wording.
-- macOS bundle build metadata advanced to `2610.2.2`.
+- Follow-up to .01 after four CTRL-TS bench videos showed intermittent
+  calibration-screen duplication/restart.
+- Removed repeated calibration `lv_obj_move_foreground()`/hidden-state churn,
+  stopped repainting covered Travel/Drive/Speed/Position widgets under the
+  opaque wizard, and removed redundant explicit label invalidation.
+- Simplified Joystick Calibration step text and removed the lower AUX instruction
+  row.
+- This revision still inherited .01's low-level RGB/OTA experiment and was
+  superseded by .03 for CTRL-TS self-update reliability.
 
 ## v26.10.02.01
 - Built directly from v26.10.01.04 after the 2 October CTRL-TS OTA/calibration

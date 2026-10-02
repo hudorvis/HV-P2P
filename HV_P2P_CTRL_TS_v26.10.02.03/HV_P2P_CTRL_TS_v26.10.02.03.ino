@@ -11,10 +11,10 @@
 #include <Preferences.h>
 #include <mbedtls/sha256.h>
 #include <esp_ota_ops.h>
-#include <esp_lcd_panel_rgb.h>
 #include <esp_system.h>
+#include <esp_attr.h>
 
-#define CTRL_TS_SEMVER "v26.10.02.02"
+#define CTRL_TS_SEMVER "v26.10.02.03"
 #define CTRL_TS_VERSION "HV P2P CTRL-TS " CTRL_TS_SEMVER
 #define CTRL_TS_HW_ID "WS-ESP32S3-7"
 #define HMI_BAUD 115200
@@ -60,15 +60,19 @@ static const size_t FW_MAX_IMAGE_SIZE = 0x380000; // matches the conservative ap
 // need to modify the received block. Keep the parsed RS485 frame const and copy
 // only the OTA data bytes into this dedicated scratch buffer before writing.
 static uint8_t g_fw_write_buf[HVP2PRS485::MAX_PAYLOAD - 4];
-// ESP32-S3 RGB panels share the MSPI fabric with flash/PSRAM. During OTA flash
-// writes the Waveshare bounce-buffer path can momentarily lose RGB timing and
-// produce the vertical/column shift seen on the real 7-inch panel. Slow the RGB
-// pixel clock while CTRL-TS is programming flash and explicitly re-arm the RGB
-// stream at VSYNC after each write. Espressif documents both mechanisms for
-// short flash/OTA operations on ESP32-S3 RGB panels.
-static constexpr uint32_t FW_RGB_PCLK_HZ = 6000000UL;
-static constexpr uint32_t NORMAL_RGB_PCLK_HZ = 16000000UL;
-static bool g_fw_rgb_slowed = false;
+// CTRL-TS never programs its own flash while the RGB/LVGL panel is running.
+// A received FW_BEGIN stages its exact target ONLY in internal no-init RAM, then
+// software-reboots into a headless RS485 updater with the panel reset/backlight
+// held off. The live RGB runtime therefore performs no OTA *or NVS* flash write
+// during this handoff; both can suspend external-memory access on ESP32-S3.
+// The handoff is accepted only after our deliberate software reset and is guarded
+// by magic + format checks + checksum, so a power cycle safely returns to normal.
+static bool g_fw_headless_mode = false;
+static String g_fw_headless_target_version;
+static String g_fw_headless_target_sha;
+static uint32_t g_fw_safe_reboot_due_ms = 0;
+static uint32_t g_fw_headless_entered_ms = 0;
+static const uint32_t FW_HEADLESS_IDLE_RETURN_MS = 60000;
 // LVGL 8.3 provides 10%% opacity steps only. Preserve the approved 35%% ramp
 // appearance with an explicit 8-bit opacity value (round(0.35 * 255) = 89).
 static constexpr lv_opa_t HV_OPA_35 = (lv_opa_t)89;
@@ -145,6 +149,8 @@ static lv_obj_t *aux_text_lbl[AUX_COUNT];
 static lv_obj_t *g_cal_overlay=nullptr,*g_cal_title_lbl=nullptr,*g_cal_step_lbl=nullptr,*g_cal_instruction_lbl=nullptr;
 static bool g_calibration_overlay_active=false;
 static String g_last_cal_overlay_title="";
+static String g_last_cal_overlay_kind="";
+static int g_last_cal_overlay_step=-1;
 static int selected_aux=-1,confirmed_aux=-1;
 static uint32_t clear_confirm_at=0,last_hb=0,last_hmi_rx=0;
 static uint16_t g_last_flags=0;
@@ -203,7 +209,7 @@ static float g_last_ramp_near_draw = -999999.0f;
 static float g_last_ramp_far_draw = -999999.0f;
 
 // -------------------- CTRL-TS Settings page --------------------
-// Safe v26.10.02.02 approach: no backlight/brightness writes. This page only
+// Safe v26.10.02.03 approach: no backlight/brightness writes. This page only
 // edits CTRL network settings over UART and therefore should preserve the known
 // Keep the proven splash/boot path; do not write to the backlight controller.
 static lv_obj_t *settings_overlay = nullptr;
@@ -252,7 +258,7 @@ static void force_screen_refresh(){
 }
 
 static void screen_keepalive(){
-  // v26.10.02.02: no periodic full-screen or left-strip invalidation or brightness writes.
+  // v26.10.02.03: no periodic full-screen or left-strip invalidation or brightness writes.
   // The Waveshare/LVGL port refreshes changed objects itself; forcing a full
   // screen refresh every second caused the visible 1-second flicker/glitch.
   if(!g_ui_ready) return;
@@ -348,7 +354,8 @@ static bool fw_any_row_active(){
 }
 
 static bool fw_display_owned(){
-  return bool(g_fw_update_active || g_fw_finalized || g_fw_reboot_due_ms || fw_any_row_active() || g_fw_external_release_due_ms);
+  return bool(g_fw_update_active || g_fw_finalized || g_fw_reboot_due_ms || g_fw_safe_reboot_due_ms ||
+              fw_any_row_active() || g_fw_external_release_due_ms);
 }
 
 static String fw_connection_text(){
@@ -370,6 +377,7 @@ static const char* fw_device_name(int idx){
 }
 
 static void fw_ensure_update_screen(){
+  if(g_fw_headless_mode) return;
   if(g_fw_screen){
     if(lv_scr_act() != g_fw_screen) lv_scr_load(g_fw_screen);
     g_fw_runtime_screen = true;
@@ -421,8 +429,9 @@ static void fw_ensure_update_screen(){
 
   lv_scr_load(g_fw_screen);
 #if defined(LV_VERSION_MAJOR) && (LV_VERSION_MAJOR >= 8)
-  // Finish the first full-screen render before any flash write begins. This keeps
-  // the RGB scanout on a complete opaque framebuffer during OTA.
+  // Render this dashboard once while the normal UI is still alive. CTRL-TS
+  // self-flash does not occur in this RGB/LVGL runtime; the panel is blacked out
+  // and the ESP32 reboots into the headless updater before any flash write.
   lv_refr_now(NULL);
 #endif
   g_fw_runtime_screen = true;
@@ -434,6 +443,12 @@ static void fw_set_device_status(const String &device, const String &phase, int 
   const int idx = fw_device_index(device);
   if(idx < 0) return;
   pct = constrain(pct, 0, 100);
+  if(g_fw_headless_mode){
+    g_fw_row_active[idx] = active;
+    g_fw_row_pct[idx] = pct;
+    g_fw_row_phase[idx] = phase.length() ? phase : (active ? "Updating" : "Idle");
+    return;
+  }
   if(!active && !fw_any_row_active() && !g_fw_update_active && !g_fw_finalized && !g_fw_reboot_due_ms && !g_fw_external_release_due_ms){
     g_fw_row_active[idx] = false;
     g_fw_row_pct[idx] = pct;
@@ -559,9 +574,169 @@ static bool save_fw_identity(const String &version, const String &sha){
   return verify;
 }
 
+
+struct FwSafeHandoff {
+  uint32_t magic;
+  uint32_t checksum;
+  char version[24];
+  char sha[65];
+};
+
+// __NOINIT_ATTR places this tiny handoff in internal DRAM without startup
+// initialisation. ESP.restart() leaves it intact; power/hardware resets are never
+// accepted because fw_prepare_headless_mode() additionally requires ESP_RST_SW.
+// Do not add an initializer here: that would defeat the no-init contract.
+__NOINIT_ATTR FwSafeHandoff g_fw_safe_handoff;
+static constexpr uint32_t FW_SAFE_HANDOFF_MAGIC = 0x48565032UL; // "HVP2"
+
+static bool fw_safe_version_valid(const char *v){
+  if(!v) return false;
+  // Release authority uses the fixed vYY.MM.DD.RR form. Keep the handoff parser
+  // intentionally strict because it operates on RAM retained across a restart.
+  if(strnlen(v, sizeof(g_fw_safe_handoff.version)) != 12) return false;
+  if(v[0] != 'v' || v[3] != '.' || v[6] != '.' || v[9] != '.') return false;
+  for(int i=1; i<12; ++i){
+    if(i==3 || i==6 || i==9) continue;
+    if(v[i] < '0' || v[i] > '9') return false;
+  }
+  return true;
+}
+
+static bool fw_safe_sha_valid(const char *sha){
+  if(!sha || strnlen(sha, sizeof(g_fw_safe_handoff.sha)) != 64) return false;
+  for(int i=0; i<64; ++i){
+    const char c = sha[i];
+    const bool hex = (c>='0' && c<='9') || (c>='a' && c<='f') || (c>='A' && c<='F');
+    if(!hex) return false;
+  }
+  return true;
+}
+
+static uint32_t fw_safe_handoff_checksum(const char *version, const char *sha){
+  // FNV-1a is not an authentication primitive and does not need to be: the OTA
+  // image still receives its normal SHA-256 verification. This checksum exists
+  // only to reject stale/random no-init RAM before entering display-off mode.
+  uint32_t h = 2166136261UL;
+  const char *parts[2] = {version, sha};
+  for(int p=0; p<2; ++p){
+    for(const char *q=parts[p]; q && *q; ++q){ h ^= uint8_t(*q); h *= 16777619UL; }
+    h ^= 0xFF; h *= 16777619UL;
+  }
+  return h;
+}
+
+static void fw_clear_safe_update_handoff(){
+  // Clear magic first so a reset at any later instruction cannot expose a
+  // half-cleared structure as a valid update request.
+  g_fw_safe_handoff.magic = 0;
+  __sync_synchronize();
+  g_fw_safe_handoff.checksum = 0;
+  g_fw_safe_handoff.version[0] = '\0';
+  g_fw_safe_handoff.sha[0] = '\0';
+  g_fw_headless_target_version = "";
+  g_fw_headless_target_sha = "";
+}
+
+static bool fw_stage_safe_update_handoff(const String &targetVersion, const String &targetSha){
+  String normalizedSha = targetSha;
+  normalizedSha.toLowerCase();
+  if(!fw_safe_version_valid(targetVersion.c_str()) || !fw_safe_sha_valid(normalizedSha.c_str())) return false;
+
+  // Commit protocol: invalidate magic -> copy complete payload/checksum -> publish
+  // magic last. This operation touches internal RAM only; no Preferences/NVS call
+  // is permitted while the RGB/LVGL runtime is active.
+  g_fw_safe_handoff.magic = 0;
+  __sync_synchronize();
+  memset(g_fw_safe_handoff.version, 0, sizeof(g_fw_safe_handoff.version));
+  memset(g_fw_safe_handoff.sha, 0, sizeof(g_fw_safe_handoff.sha));
+  targetVersion.toCharArray(g_fw_safe_handoff.version, sizeof(g_fw_safe_handoff.version));
+  normalizedSha.toCharArray(g_fw_safe_handoff.sha, sizeof(g_fw_safe_handoff.sha));
+  g_fw_safe_handoff.checksum = fw_safe_handoff_checksum(g_fw_safe_handoff.version, g_fw_safe_handoff.sha);
+  __sync_synchronize();
+  g_fw_safe_handoff.magic = FW_SAFE_HANDOFF_MAGIC;
+  __sync_synchronize();
+  return true;
+}
+
+static bool fw_prepare_headless_mode(){
+  // A retained RAM marker is meaningful only after the deliberate ESP.restart()
+  // requested by FW_BEGIN. Power-on, brownout, watchdog and external resets all
+  // discard/ignore it and bring up the normal UI instead.
+  if(esp_reset_reason() != ESP_RST_SW){
+    fw_clear_safe_update_handoff();
+    return false;
+  }
+  __sync_synchronize();
+  if(g_fw_safe_handoff.magic != FW_SAFE_HANDOFF_MAGIC) return false;
+  if(!fw_safe_version_valid(g_fw_safe_handoff.version) || !fw_safe_sha_valid(g_fw_safe_handoff.sha)){
+    fw_clear_safe_update_handoff();
+    return false;
+  }
+  const uint32_t expected = fw_safe_handoff_checksum(g_fw_safe_handoff.version, g_fw_safe_handoff.sha);
+  if(expected != g_fw_safe_handoff.checksum){
+    fw_clear_safe_update_handoff();
+    return false;
+  }
+
+  // Copy the validated target into ordinary runtime objects, then consume the
+  // no-init marker immediately. If headless update later crashes/restarts, the
+  // unit returns to its known-good application rather than becoming boot-looped.
+  g_fw_headless_target_version = String(g_fw_safe_handoff.version);
+  g_fw_headless_target_sha = String(g_fw_safe_handoff.sha);
+  g_fw_safe_handoff.magic = 0;
+  __sync_synchronize();
+  g_fw_headless_mode = true;
+  g_fw_headless_entered_ms = millis();
+  return true;
+}
+
+static void fw_clear_headless_update_state(){
+  fw_clear_safe_update_handoff();
+  g_fw_headless_mode = false;
+  g_fw_headless_entered_ms = 0;
+}
+
+static bool fw_headless_blackout(){
+  // Initialize only the CH422G IO expander. Do NOT start the RGB bus, allocate
+  // PSRAM framebuffers or create LVGL while self-flash is active.
+  pinMode(GPIO_INPUT_IO_4, OUTPUT);
+  expander = new ESP_IOExpander_CH422G((i2c_port_t)I2C_MASTER_NUM,
+                                      ESP_IO_EXPANDER_I2C_CH422G_ADDRESS_000,
+                                      I2C_MASTER_SCL_IO, I2C_MASTER_SDA_IO);
+  if(!expander){
+    Serial.println("[FW SAFE] IO expander allocation failed");
+    return false;
+  }
+  expander->init();
+  expander->begin();
+  expander->pinMode(LCD_BL, OUTPUT);
+  expander->pinMode(LCD_RST, OUTPUT);
+  expander->digitalWrite(LCD_BL, LOW);
+  expander->digitalWrite(LCD_RST, LOW);
+  Serial.println("[FW SAFE] RGB/LVGL not started; LCD reset asserted and backlight off");
+  return true;
+}
+
+static void fw_service_headless_idle_return(){
+  if(!g_fw_headless_mode || g_fw_update_active || g_fw_finalized) return;
+  const uint32_t now = millis();
+  // Bound the display-off wait even if an incompatible/stale CTRL continues to
+  // send HELLO traffic. Generic RS485 activity must not keep the panel black
+  // forever; a real transfer suppresses this guard via g_fw_update_active.
+  if(g_fw_headless_entered_ms && (now - g_fw_headless_entered_ms) >= FW_HEADLESS_IDLE_RETURN_MS){
+    Serial.println("[FW SAFE] no firmware transfer started for 60 s; returning to normal UI");
+    fw_clear_headless_update_state();
+    delay(20);
+    ESP.restart();
+  }
+}
+
 static String fw_identity_line(){
+  // safe_ota=1 is a capability bit introduced in v26.10.02.03. CTRL must never
+  // send a self-update stream to an older CTRL-TS that lacks this bit, because
+  // pre-.03 receivers program flash while the RGB/PSRAM display is live.
   return String("hw=") + CTRL_TS_HW_ID + "|proto=" + String(HVP2PRS485::PROTOCOL_VERSION) +
-         "|version=" + String(CTRL_TS_SEMVER) + "|hash=" + g_fw_image_hash;
+         "|version=" + String(CTRL_TS_SEMVER) + "|hash=" + g_fw_image_hash + "|safe_ota=1";
 }
 
 static bool boot_get_bool(const String &line, const char *key, bool def){
@@ -951,7 +1126,7 @@ static void confirm_aux_idx(int idx, bool send_command){
   selected_aux = -1;
   g_selected_aux_ms = 0;
   confirmed_aux = idx;
-  clear_confirm_at = now_ms + 2000;  // v26.10.02.02: confirmed AUX tile stays lit for 2 seconds
+  clear_confirm_at = now_ms + 2000;  // v26.10.02.03: confirmed AUX tile stays lit for 2 seconds
   g_aux_suppress_until_ms[idx] = now_ms + 400;
   style_aux(idx,false,true);
   snprintf(msg,sizeof(msg),"AUX %d Confirmed", idx+1);
@@ -1013,7 +1188,7 @@ static void style_w1p_status_pill(int state){
 }
 
 static void style_estop_pill(bool active){
-  // v26.10.02.02: the middle status banner follows the SRVR-resolved state.
+  // v26.10.02.03: the middle status banner follows the SRVR-resolved state.
   // A local CTRL-TS UART/display gap must not invent "E-Stop CTRL" while SRVR
   // is still sending Status | Active. Real CTRL/W1P E-Stops are still shown
   // immediately when SRVR sends status=E-Stop... / status_level=red.
@@ -1061,7 +1236,7 @@ static void refresh_status_ui(){
   style_status_pill_cached(0,pill_ctrl,lbl_ctrl,"CTRL",g_ctrl_ok);
   if(pill_srvr && lbl_srvr) style_status_pill_cached(1,pill_srvr,lbl_srvr,"SRVR",g_srvr_ok);
   style_w1p_status_pill(g_w1p_health);
-  // v26.10.02.02: do not turn the main middle box red purely because the
+  // v26.10.02.03: do not turn the main middle box red purely because the
   // CTRL-TS local UART/display link hiccuped. The SRVR status packet is the
   // authoritative source for Active / Un-Calibrated / E-Stop display state.
   bool stopped_visual = (g_status_level >= 2) || g_estop_active;
@@ -1157,6 +1332,8 @@ static bool apply_calibration_overlay_fields(const String &line){
       lv_obj_add_flag(g_cal_overlay, LV_OBJ_FLAG_HIDDEN);
       g_calibration_overlay_active = false;
       g_last_cal_overlay_title = "";
+      g_last_cal_overlay_kind = "";
+      g_last_cal_overlay_step = -1;
       Serial.println("[WS-HMI] calibration overlay hidden");
     }
     return false;
@@ -1167,13 +1344,15 @@ static bool apply_calibration_overlay_fields(const String &line){
   int step = (int)getFieldFloat(line, "cal_step", 0);
   if(!title.length()) title = kind.length() ? kind + " Calibration" : "Calibration";
   if(!instruction.length()) instruction = "Set the requested position, then press Confirm";
-  if(title != g_last_cal_overlay_title){
-    // A completed AUX confirmation has advanced the wizard. Return the assigned
-    // tile to Ready immediately rather than leaving it locked as Confirmed for
-    // two seconds, so the next calibration step can be selected naturally.
+  if(kind != g_last_cal_overlay_kind || step != g_last_cal_overlay_step){
+    // A completed AUX confirmation has opened/advanced the wizard. The title is
+    // constant across Joystick/Limit steps, so step identity—not title text—is
+    // the authoritative transition. Return the assigned tile to Ready at once.
     if(confirmed_aux >= 0){ style_aux(confirmed_aux, false, false); confirmed_aux = -1; clear_confirm_at = 0; }
-    g_last_cal_overlay_title = title;
+    g_last_cal_overlay_kind = kind;
+    g_last_cal_overlay_step = step;
   }
+  g_last_cal_overlay_title = title;
   String stepText = String("Step ") + String(step + 1) + (kind == "Joystick" ? " of 3" : (kind == "Winch" ? " of 2" : " of 3"));
   set_label_text_if_changed(g_cal_title_lbl, title.c_str());
   set_label_text_if_changed(g_cal_step_lbl, stepText.c_str());
@@ -1584,7 +1763,7 @@ static void apply_hmi_packet(const String &line){
     else g_status_level = 0;
   }
 
-  // v26.10.02.02: if SRVR sends explicit status/status_level, trust it as
+  // v26.10.02.03: if SRVR sends explicit status/status_level, trust it as
   // the authoritative display state. Do not override it locally with a CTRL
   // error just because the touchscreen/CTRL UART side saw a transient gap.
   g_estop_active = packet_estop;
@@ -1709,7 +1888,7 @@ static void apply_hmi_packet(const String &line){
   if(mode_changed || (prev_status_text != g_status_text) || (prev_status_level != g_status_level) || (prev_estop != g_estop_active) || (prev_estop_source != g_estop_source) || (prev_ctrl != g_ctrl_ok) || (prev_srvr != g_srvr_ok) || (prev_w1p != g_w1p_ok) || (prev_w1p_health != g_w1p_health)) {
     refresh_status_ui();
   }
-  // v26.10.02.02: no left-strip/full-screen invalidation on packets; progress marker animates locally.
+  // v26.10.02.03: no left-strip/full-screen invalidation on packets; progress marker animates locally.
 }
 
 
@@ -1718,7 +1897,7 @@ static void apply_layout_packet(const String &line){
   // on CTRL cannot overwrite the screen title/version or trigger header redraws.
   String hint = getField(line, "hint");
   if(lbl_title) set_label_text_if_changed(lbl_title, "HV P2P\nCTRL-TS");
-  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.02.02");
+  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.02.03");
   if(hint.length() && hint.startsWith("ERROR")) set_touch_debug(hint.c_str());
   for(int i=0;i<AUX_COUNT;i++){
     String key = String("aux") + String(i+1);
@@ -1791,44 +1970,25 @@ static String sha256_hex(const uint8_t digest[32]){
   return String(out);
 }
 
+static bool fw_compare_release_versions(const String &candidate, const String &running, int &relation){
+  int ca=0, cb=0, cc=0, cd=0;
+  int ra=0, rb=0, rc=0, rd=0;
+  char tail=0;
+  // Release identity is intentionally strict: vYY.MM.DD.RR and no suffix.
+  if(sscanf(candidate.c_str(), "v%d.%d.%d.%d%c", &ca, &cb, &cc, &cd, &tail) != 4) return false;
+  if(sscanf(running.c_str(),   "v%d.%d.%d.%d%c", &ra, &rb, &rc, &rd, &tail) != 4) return false;
+  const int c[4] = {ca, cb, cc, cd};
+  const int r[4] = {ra, rb, rc, rd};
+  relation = 0;
+  for(int i=0;i<4;i++){
+    if(c[i] < r[i]) { relation = -1; break; }
+    if(c[i] > r[i]) { relation =  1; break; }
+  }
+  return true;
+}
+
 static void fw_sha_release(){
   if(g_fw_sha_active){ mbedtls_sha256_free(&g_fw_sha_ctx); g_fw_sha_active=false; }
-}
-
-static esp_lcd_panel_handle_t fw_rgb_panel_handle(){
-  lv_disp_t *disp = lv_disp_get_default();
-  if(!disp || !disp->driver || !disp->driver->user_data) return nullptr;
-  ESP_PanelLcd *lcd = static_cast<ESP_PanelLcd*>(disp->driver->user_data);
-  return lcd ? lcd->getHandle() : nullptr;
-}
-
-static void fw_rgb_restart(){
-  esp_lcd_panel_handle_t panel = fw_rgb_panel_handle();
-  if(panel) (void)esp_lcd_rgb_panel_restart(panel);
-}
-
-static void fw_rgb_prepare_for_flash(){
-  if(g_fw_rgb_slowed) return;
-  esp_lcd_panel_handle_t panel = fw_rgb_panel_handle();
-  if(!panel) return;
-  if(esp_lcd_rgb_panel_set_pclk(panel, FW_RGB_PCLK_HZ) == ESP_OK){
-    g_fw_rgb_slowed = true;
-    // PCLK changes are applied on VSYNC. Give the current full opaque firmware
-    // dashboard at least one frame to settle before Update.begin() can touch flash.
-    delay(30);
-    (void)esp_lcd_rgb_panel_restart(panel);
-    delay(5);
-  }
-}
-
-static void fw_rgb_restore_after_failure(){
-  if(!g_fw_rgb_slowed) return;
-  esp_lcd_panel_handle_t panel = fw_rgb_panel_handle();
-  if(panel){
-    (void)esp_lcd_rgb_panel_set_pclk(panel, NORMAL_RGB_PCLK_HZ);
-    (void)esp_lcd_rgb_panel_restart(panel);
-  }
-  g_fw_rgb_slowed = false;
 }
 
 static void fw_abort(const char *reason, uint16_t seq=0){
@@ -1847,7 +2007,6 @@ static void fw_abort(const char *reason, uint16_t seq=0){
   String msg = String("fw_abort|") + (reason ? reason : "unknown");
   Serial.printf("[FW RX] %s\n", msg.c_str());
   if(seq) fw_send_text(HVP2PRS485::ERROR_MSG, seq, msg);
-  fw_rgb_restore_after_failure();
   fw_set_device_status("CTRL-TS", "Failed", 0, false);
 }
 
@@ -1871,6 +2030,22 @@ static void fw_handle_begin(const HVP2PRS485::Frame &frame){
     fw_send_text(HVP2PRS485::ERROR_MSG, frame.seq, "fw_begin_invalid");
     return;
   }
+  // A manually recovered .03+ CTRL-TS must never be pulled backwards by an
+  // older CTRL that still carries a pre-.03 image. Same-version exact-image
+  // repair remains allowed; only a numerically older release is rejected.
+  int releaseRelation = 0;
+  if(!fw_compare_release_versions(version, String(CTRL_TS_SEMVER), releaseRelation)){
+    fw_send_text(HVP2PRS485::ERROR_MSG, frame.seq, "fw_begin_version_invalid");
+    return;
+  }
+  if(releaseRelation < 0){
+    fw_send_text(HVP2PRS485::ERROR_MSG, frame.seq, "fw_downgrade_blocked");
+    return;
+  }
+  if(g_fw_headless_mode && (version != g_fw_headless_target_version || !sha.equalsIgnoreCase(g_fw_headless_target_sha))){
+    fw_send_text(HVP2PRS485::ERROR_MSG, frame.seq, "fw_begin_pending_target_mismatch");
+    return;
+  }
   if(g_fw_finalized){
     // A late duplicate FW_BEGIN must never erase an already verified inactive
     // partition while CTRL is retrying the final reboot handshake.
@@ -1881,19 +2056,27 @@ static void fw_handle_begin(const HVP2PRS485::Frame &frame){
   g_fw_finalized = false;
   g_fw_final_size = 0;
   g_fw_final_sha = "";
-  // The display must already be a fully rendered opaque firmware dashboard
-  // before *any* OTA flash operation begins. Update.begin() itself may erase an
-  // OTA region, so showing the screen only after Update.begin() is too late.
-  fw_set_device_status("CTRL-TS", "Preparing", 0, true);
-#if defined(LV_VERSION_MAJOR) && (LV_VERSION_MAJOR >= 8)
-  lvgl_port_lock(-1);
-  lv_refr_now(NULL);
-  lvgl_port_unlock();
-#endif
-  fw_rgb_prepare_for_flash();
+  // Never call Update.begin()/Update.write() while the RGB/LVGL display is
+  // active. Flash programming can suspend external-memory access on ESP32-S3,
+  // while this Waveshare driver scans double framebuffers from PSRAM. Reboot
+  // once into a display-off/headless updater, then let CTRL retry FW_BEGIN.
+  if(!g_fw_headless_mode){
+    if(!fw_stage_safe_update_handoff(version, sha)){
+      fw_send_text(HVP2PRS485::ERROR_MSG, frame.seq, "fw_safe_handoff_failed");
+      return;
+    }
+    fw_set_device_status("CTRL-TS", "Restarting in safe update mode", 0, true);
+    // fw_ensure_update_screen() already performs the one required initial render.
+    // Do not force a second synchronous full refresh from inside the RS485 frame
+    // handler immediately before reboot; this keeps the handoff render one-shot.
+    Serial.printf("[FW RX] safe-update reboot requested target=%s sha=%s\n", version.c_str(), sha.c_str());
+    fw_send_text(HVP2PRS485::ERROR_MSG, frame.seq, "fw_safe_reboot_retry");
+    g_fw_safe_reboot_due_ms = millis() + 350;
+    return;
+  }
+
   if(!Update.begin(imageSize, U_FLASH)){
     Serial.println("[FW RX] Update.begin failed");
-    fw_rgb_restore_after_failure();
     fw_set_device_status("CTRL-TS", "Failed", 0, false);
     fw_send_text(HVP2PRS485::ERROR_MSG, frame.seq, "fw_begin_no_space");
     return;
@@ -1937,10 +2120,6 @@ static void fw_handle_block(const HVP2PRS485::Frame &frame){
   }
   memcpy(g_fw_write_buf, frame.payload + 4, dataLen);
   const size_t wrote = Update.write(g_fw_write_buf, dataLen);
-  // Flash programming can desynchronise the ESP32-S3 RGB DMA when PSRAM cache
-  // bandwidth is interrupted. Ask the driver to realign at the next VSYNC after
-  // every block; this does not redraw the LVGL screen.
-  fw_rgb_restart();
   if(wrote != dataLen){
     fw_abort("write_failed", frame.seq);
     return;
@@ -1985,7 +2164,6 @@ static void fw_handle_end(const HVP2PRS485::Frame &frame){
     return;
   }
   bool ok = Update.end(true);
-  fw_rgb_restart();
   if(!ok || Update.hasError()){
     fw_abort("finalize_failed");
     fw_send_text(HVP2PRS485::FW_RESULT, frame.seq, "ok=0|reason=finalize");
@@ -2002,8 +2180,7 @@ static void fw_handle_end(const HVP2PRS485::Frame &frame){
     g_fw_update_active = false;
     g_fw_finalized = false;
     fw_send_text(HVP2PRS485::FW_RESULT, frame.seq, "ok=0|reason=metadata");
-    fw_rgb_restore_after_failure();
-    boot_set_status("Firmware metadata failed | existing image retained");
+      boot_set_status("Firmware metadata failed | existing image retained");
     return;
   }
   g_fw_update_active = false;
@@ -2021,12 +2198,25 @@ static void fw_handle_reboot(const HVP2PRS485::Frame &frame){
     return;
   }
   fw_set_status_pct("Firmware verified - restarting CTRL-TS", 100);
+  if(g_fw_headless_mode) fw_clear_headless_update_state();
   fw_send_text(HVP2PRS485::ACK, frame.seq, "rebooting");
   if(g_fw_reboot_due_ms == 0) g_fw_reboot_due_ms = millis() + 250;
 }
 
 static void fw_service_reboot(){
-  if(g_fw_reboot_due_ms && millis() >= g_fw_reboot_due_ms) ESP.restart();
+  const uint32_t now = millis();
+  if(g_fw_safe_reboot_due_ms && now >= g_fw_safe_reboot_due_ms){
+    // The CH422G survives an ESP32 software reset. Turn the backlight off and
+    // hold LCD reset before reboot so the panel cannot flash random RGB data
+    // while the ESP32 restarts into the headless updater.
+    if(expander){
+      expander->digitalWrite(LCD_BL, LOW);
+      expander->digitalWrite(LCD_RST, LOW);
+    }
+    delay(10);
+    ESP.restart();
+  }
+  if(g_fw_reboot_due_ms && now >= g_fw_reboot_due_ms) ESP.restart();
 }
 
 static void fw_service_timeout(){
@@ -2109,7 +2299,7 @@ static void create_ui(){
   lv_obj_t *brand=make_panel(frame,SX,HEADER_Y,70,HEADER_H,C_BG,0x63d84e,7);
   lbl_title=make_label(brand,"HV P2P\nCTRL-TS",0,6,&lv_font_montserrat_12,lv_color_hex(C_FG),70);
   lv_obj_set_style_text_line_space(lbl_title,-2,0);
-  lbl_subtitle=make_label(frame,"v26.10.02.02",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
+  lbl_subtitle=make_label(frame,"v26.10.02.03",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
 
   pill_ctrl=make_panel(frame,255,HEADER_Y,126,HEADER_H,C_PANEL,C_BORDER,5);
   dot_ctrl=lv_obj_create(pill_ctrl); lv_obj_set_pos(dot_ctrl,9,15); lv_obj_set_size(dot_ctrl,8,8); lv_obj_set_style_radius(dot_ctrl,LV_RADIUS_CIRCLE,0); lv_obj_set_style_border_width(dot_ctrl,0,0); lv_obj_set_style_bg_color(dot_ctrl,lv_color_hex(0xef5757),0); lv_obj_clear_flag(dot_ctrl,LV_OBJ_FLAG_SCROLLABLE);
@@ -2261,7 +2451,7 @@ static void service_link_state(){
 
   bool link_alive = last_hmi_rx && ((millis() - last_hmi_rx) <= HMI_TIMEOUT_MS);
   if(!link_alive) {
-    // v26.10.02.02: local UART/display timeout is a CTRL-TS link warning, not
+    // v26.10.02.03: local UART/display timeout is a CTRL-TS link warning, not
     // proof of a real CTRL E-Stop. Keep the last SRVR-resolved status banner so
     // the touchscreen cannot randomly show "Status | E-Stop CTRL" while SRVR
     // remains "Status | Active". The CTRL status pill can still show ERROR.
@@ -2274,16 +2464,41 @@ static void service_link_state(){
 
 void setup(){
   Serial.begin(115200);
-  delay(200);
+
+  // Detect the internal-RAM safe-update handoff before touching NVS or starting
+  // any RGB/PSRAM display resource. The CH422G is external to the ESP32 and can
+  // retain LCD_BL=HIGH across ESP.restart(), so assert blackout first on the
+  // deliberate headless boot. No flash access is required to decide this mode.
+  bool safeHeadlessBoot = fw_prepare_headless_mode();
+  if(safeHeadlessBoot && !fw_headless_blackout()){
+    Serial.println("[FW SAFE] blackout setup failed; abandoning headless update");
+    fw_clear_headless_update_state();
+    delay(20);
+    ESP.restart();
+  }
+  // Firmware identity NVS reads are now safe: either no display has ever been
+  // started (headless path), or this is an ordinary boot before lcd_init().
+  load_fw_identity();
+
+  delay(safeHeadlessBoot ? 20 : 200);
   Serial.println(CTRL_TS_VERSION);
   Serial.printf("[WS-HMI] reset_reason=%d\n", (int)esp_reset_reason());
-  load_fw_identity();
   Serial.printf("[FW RX] identity hash=%s\n", g_fw_image_hash.c_str());
   Serial.println("[WS-HMI] boot: starting framed RS485 thin-HMI runtime");
   HMI.setRxBufferSize(4096);
   HMI.begin(HMI_BAUD, SERIAL_8N1, HMI_UART_RX, HMI_UART_TX);
   g_uart_ok = true;
   Serial.printf("[WS-HMI] onboard RS485 RX=%d TX=%d baud=%d (auto direction)\n", HMI_UART_RX, HMI_UART_TX, HMI_BAUD);
+
+  if(safeHeadlessBoot){
+    Serial.printf("[FW SAFE] headless updater target=%s sha=%s\n", g_fw_headless_target_version.c_str(), g_fw_headless_target_sha.c_str());
+    while(true){
+      boot_service_uart();
+      fw_service_headless_idle_return();
+      delay(20);
+    }
+  }
+
   Serial.printf("[WS-HMI] PSRAM found=%d total=%u free=%u bytes\n", psramFound() ? 1 : 0, (unsigned)ESP.getPsramSize(), (unsigned)ESP.getFreePsram());
   if(!psramFound() || ESP.getPsramSize() < (4U * 1024U * 1024U)){
     Serial.println("[WS-HMI] FATAL DISPLAY: PSRAM unavailable/too small; entering RS485 firmware recovery mode");
@@ -2308,8 +2523,8 @@ void setup(){
   lvgl_port_lock(-1);
   // Keep the original JPEG splash resident after startup so a runtime SRVR
   // disconnect can return to exactly the same loading screen without rebooting.
-  // The framebuffer lives in PSRAM; firmware update ownership may later replace
-  // and delete this screen because a successful update reboots immediately.
+  // The framebuffer lives in PSRAM. CTRL-TS self-update never programs flash
+  // with this RGB/LVGL runtime active; it first reboots into the headless updater.
   lv_obj_t *main_scr = lv_obj_create(NULL);
   g_main_scr = main_scr;
   lv_obj_clear_flag(main_scr, LV_OBJ_FLAG_SCROLLABLE);
@@ -2321,7 +2536,6 @@ void setup(){
   if(g_pending_boot_hmi_line.length() && is_valid_hmi_packet(g_pending_boot_hmi_line)){
     apply_hmi_packet(g_pending_boot_hmi_line);
   }
-  // v18: no forced full-screen refresh after applying pending HMI state.
   lvgl_port_unlock();
   delay(50);
   Serial.println("[WS-HMI] boot: UI ready after CTRL and SRVR confirmed");
@@ -2333,11 +2547,9 @@ void loop(){
   fw_service_reboot();
 
   if(fw_display_owned()){
-    // Critical OTA/display isolation: never hold the LVGL mutex across
-    // Update.write(). The .04 loop did so for every firmware block, starving the
-    // Waveshare RGB refresh path and producing the vertical/column corruption
-    // visible on the real panel. Firmware handlers take short LVGL locks only
-    // when a label/bar actually changes.
+    // External W1P/CTRL update rows may own the dashboard. CTRL-TS self-flash
+    // never reaches this runtime loop: it reboots into the display-off headless
+    // updater before Update.begin()/Update.write() are allowed.
     handle_hmi_rx();
     lvgl_port_lock(-1);
     service_fw_screen_release();
