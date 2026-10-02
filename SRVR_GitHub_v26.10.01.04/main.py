@@ -32,7 +32,7 @@ import PySide6.QtQuickControls2  # noqa: F401
 from backend import HVP2PBackend
 from firmware_authority import FirmwareAuthorityError, start_firmware_authority
 
-APP_VERSION = "26.10.01.03"
+APP_VERSION = "26.10.01.04"
 
 
 def _exercise_qml(app: QGuiApplication, engine: QQmlApplicationEngine, backend: HVP2PBackend) -> bool:
@@ -233,7 +233,7 @@ def main() -> int:
     # Qt's project tooling expects this rc_<qrc-name>.py naming convention.
     import rc_resources  # noqa: F401
 
-    backend = HVP2PBackend(version=APP_VERSION, smoke_test=SMOKE_TEST)
+    backend = HVP2PBackend(version=APP_VERSION, smoke_test=SMOKE_TEST, firmware_bundle=authority.bundle)
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("backend", backend)
     engine.rootContext().setContextProperty("appVersion", APP_VERSION)

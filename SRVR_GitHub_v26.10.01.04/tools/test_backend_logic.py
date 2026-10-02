@@ -38,7 +38,7 @@ from backend import (
 )
 
 app = QCoreApplication.instance() or QCoreApplication([])
-b = HVP2PBackend(version="26.10.01.03", smoke_test=True)
+b = HVP2PBackend(version="26.10.01.04", smoke_test=True)
 assert b.reverse_joystick is False, "New/reset CTRL joystick direction must default to Normal"
 
 def healthy_ctrl_status(*, ctrl_ts=1, ads=1, version="vTEST", compatible=1):
@@ -46,16 +46,16 @@ def healthy_ctrl_status(*, ctrl_ts=1, ads=1, version="vTEST", compatible=1):
     b._ctrl_rx_times.clear()
     b._ctrl_rx_times.extend([now - 0.05, now])
     b._handle_ctrl_hmi_status(
-        f"HMI_STATUS|ctrl_ts={int(ctrl_ts)}|ctrl_version=v26.10.01.03|"
-        f"fw_match=1|fw_authority=matched|fw_required=v26.10.01.03|"
-        f"version={version}|required=v26.10.01.03|fw_state=idle|image=1|"
+        f"HMI_STATUS|ctrl_ts={int(ctrl_ts)}|ctrl_version=v26.10.01.04|"
+        f"fw_match=1|fw_authority=matched|fw_required=v26.10.01.04|"
+        f"version={version}|required=v26.10.01.04|fw_state=idle|image=1|"
         f"compatible={int(compatible)}|age_ms=12|ads={int(ads)}"
     )
 
 def healthy_w1p_status(*, pos=0.0, vel=0.0, ip="172.20.1.102", boot_id="A1B2C3D4"):
     b.w1p.last_seen = time.time()
     b._parse_w1p(
-        f"STATUS POS_M={pos} VEL_MPS={vel} IP={ip} FW=v26.10.01.03 BOOT_ID={boot_id} "
+        f"STATUS POS_M={pos} VEL_MPS={vel} IP={ip} FW=v26.10.01.04 BOOT_ID={boot_id} "
         "FW_MATCH=1 FW_AUTH=matched ESTOP=0 VEL_WD=0 SERVICE_LOCK=0 "
         "WRITE_EN=0 SW_SRVON=0 SW_SRVON_INHIBIT=1 BRAKE_OUT=0 "
         "RS_STAT=CONNECTED LEAD_CFG=OK MODBUS=1 READY=1 POS_READ=1 "
@@ -112,10 +112,10 @@ try:
     # controller interface and must not be confused with the binary control stream.
     now = time.time()
     b._ctrl_rx_times.extend([now - 0.05, now])
-    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=1|ctrl_version=v26.10.01.03|fw_match=1|fw_authority=matched|fw_required=v26.10.01.03|version=vTEST|required=v26.10.01.03|fw_state=idle|image=1|compatible=1|age_ms=12|ads=1")
+    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=1|ctrl_version=v26.10.01.04|fw_match=1|fw_authority=matched|fw_required=v26.10.01.04|version=vTEST|required=v26.10.01.04|fw_state=idle|image=1|compatible=1|age_ms=12|ads=1")
     assert b.ctrlTsConnected and b.ads1115Connected
     assert b._ctrl_ts_version == "vTEST" and b._ctrl_ts_age_ms == 12
-    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=0|ctrl_version=v26.10.01.03|fw_match=1|fw_authority=matched|fw_required=v26.10.01.03|version=vTEST|required=v26.10.01.03|fw_state=idle|image=1|compatible=0|age_ms=20|ads=0")
+    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=0|ctrl_version=v26.10.01.04|fw_match=1|fw_authority=matched|fw_required=v26.10.01.04|version=vTEST|required=v26.10.01.04|fw_state=idle|image=1|compatible=0|age_ms=20|ads=0")
     assert not b.ctrlTsConnected and not b.ads1115Connected
     # Old CTRL firmware without a fresh explicit ads= field remains compatible:
     # live joystick packets + no ADS fault bit infer a healthy ADS link.
@@ -128,23 +128,30 @@ try:
     healthy_w1p_status()
     assert b.w1p_reported_ip == "172.20.1.102"
 
+    # Legacy automatic OTA is intentionally upgrade-only: .01 can bridge directly
+    # to .04, but a future/newer node must never be silently downgraded by SRVR.
+    assert b._firmware_version_is_older("v26.10.01.01")
+    assert not b._firmware_version_is_older("v26.10.01.04")
+    assert not b._firmware_version_is_older("v26.10.01.05")
+    assert not b._firmware_version_is_older("unknown")
+
     # Firmware authority must be explicit and fresh. Missing FW_MATCH in CTRL
     # HMI_STATUS or W1P STATUS is fail-closed; HELLO/PONG may prove Ethernet
     # liveness but must invalidate prior W1P authority/RS485 state until a new
     # complete STATUS arrives.
     healthy_ctrl_status(); healthy_w1p_status()
-    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=1|ctrl_version=v26.10.01.03|version=vTEST|age_ms=12|ads=1")
+    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=1|ctrl_version=v26.10.01.04|version=vTEST|age_ms=12|ads=1")
     b._ctrl_axis = 0.0; b._ctrl_flags = 0; b._motion_tick()
     assert b.state.estop_active and not b._ctrl_fw_match, "Missing CTRL FW_MATCH did not fail closed"
     healthy_ctrl_status(); healthy_w1p_status()
     b._parse_w1p("STATUS FW_MATCH=1 ESTOP=0 VEL_WD=0 SERVICE_LOCK=0 WRITE_EN=0")
     assert not b._w1p_status_fresh() and not b._w1p_fw_match and b.winch_rs_status == "Disconnected"
     healthy_w1p_status()
-    b._parse_w1p("HELLO VER=v26.10.01.03")
+    b._parse_w1p("HELLO VER=v26.10.01.04")
     assert not b._w1p_status_fresh() and not b._w1p_fw_match and b.winch_rs_status == "Disconnected"
     healthy_w1p_status()
     b._not_calibrated = False
-    b._parse_w1p("HELLO VER=v26.10.01.03 BOOT_ID=DEADBEEF")
+    b._parse_w1p("HELLO VER=v26.10.01.04 BOOT_ID=DEADBEEF")
     assert b._not_calibrated, "W1P HELLO/reboot did not invalidate position reference"
     healthy_w1p_status(boot_id="DEADBEEF")
     b._not_calibrated = False
@@ -239,7 +246,7 @@ try:
     assert b.goto_target_m is not None and abs(b.goto_target_m - 35.0) < 1e-9
 
     # Physical CTRL AUX assignments execute on a rising edge only. Holding AUX1
-    # must not repeatedly overwrite a saved preset every 50 ms.
+    # must not repeatedly overwrite a saved preset every 25 ms.
     b.goto_target_m = None
     b.ctrl_aux_assignments[0] = "Preset 1 Save"
     b.state.pos_m = 40.0
@@ -506,6 +513,31 @@ try:
     b._ctrl_axis = b.joystick_cal_centre; b._motion_tick()
     assert not b._joystick_neutral_required and abs(b.requested_speed_mps) < 1e-9
     b.joystick_deadband_pct = old_deadband
+
+    # AUX calibration assignments are wizard Confirm controls. The first confirmed
+    # press opens the chosen wizard; subsequent confirmed presses advance it rather
+    # than reopening step 1. Joystick Calibration is available through the same path.
+    b.ctrl_aux_assignments[0] = "Limit Calibration"
+    b.calibration_open = False; b.joystick_calibration_open = False
+    b._handle_aux_action(0)
+    assert b.calibration_open and b.calibration_type == "Limit" and b.calibration_step == 0
+    b._last_raw_pos = 100; b._handle_aux_action(0)
+    assert b.calibration_open and b.calibration_type == "Limit" and b.calibration_step == 1
+    b.cancelCalibration()
+
+    b.ctrl_aux_assignments[0] = "Winch Calibration"
+    b._handle_aux_action(0)
+    assert b.calibration_open and b.calibration_type == "Winch" and b.calibration_step == 0
+    b._last_raw_pos = 100; b._handle_aux_action(0)
+    assert b.calibration_open and b.calibration_type == "Winch" and b.calibration_step == 1
+    b.cancelCalibration()
+
+    b.ctrl_aux_assignments[0] = "Joystick Calibration"
+    b._handle_aux_action(0)
+    assert b.joystickCalibrationOpen and b.joystickCalibrationStep == 0
+    b._ctrl_axis = -0.75; b._handle_aux_action(0)
+    assert b.joystickCalibrationOpen and b.joystickCalibrationStep == 1
+    b.cancelJoystickCalibration()
 
     # Automatic centre-drift compensation is deliberately small and runtime-only.
     # Simulate a stable +2% neutral shift after a safe stationary dwell and prove
@@ -856,7 +888,7 @@ try:
     # config explicitly records non-persistence, and a fresh backend starts yellow.
     saved_cfg = json.loads(b._config_path.read_text())
     assert saved_cfg["not_calibrated_mode"] is True and saved_cfg["position_reference_persistent"] is False
-    b2 = HVP2PBackend(version="26.10.01.03", smoke_test=True)
+    b2 = HVP2PBackend(version="26.10.01.04", smoke_test=True)
     assert b2._not_calibrated and b2.bannerText != "System Ready"
     b2.shutdown()
 
@@ -1016,7 +1048,7 @@ try:
     assert backup_cfg.is_file()
     expected_backup = json.loads(backup_cfg.read_text())
     b._config_path.write_text('{broken-json', encoding='utf-8')
-    b2 = HVP2PBackend(version="26.10.01.03", smoke_test=True)
+    b2 = HVP2PBackend(version="26.10.01.04", smoke_test=True)
     try:
         assert json.loads(b2._config_path.read_text()) == expected_backup
     finally:

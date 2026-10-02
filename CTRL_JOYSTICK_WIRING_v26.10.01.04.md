@@ -1,4 +1,4 @@
-# CTRL Analogue Wiring — v26.10.01.03
+# CTRL Analogue Wiring — v26.10.01.04
 
 The commissioned CTRL EdgeBox uses its onboard SGM58031 with the factory 249-ohm
 4-20 mA shunts removed so AI0..AI3 operate as voltage inputs through the retained
@@ -36,7 +36,7 @@ Wire a normally-closed status loop from the same regulated 5 V supply:
 
 The firmware treats AI0 >= 3.5 V (up to 6.0 V) as healthy. Low, open-circuit,
 mid-band, ADC failure or channel-selection failure is unsafe/E-stop active. E-stop
-assertion is immediate at the next 50 ms CTRL sample; clearing requires three
+assertion is immediate at the next 25 ms CTRL sample; clearing requires three
 consecutive healthy samples.
 
 This analogue input is a CTRL status/safety input, not a substitute for an

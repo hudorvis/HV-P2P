@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
-import copy, ipaddress, json, math, os, queue, socket, struct, sys, threading, time
+import copy, http.client, ipaddress, json, math, os, queue, socket, struct, sys, threading, time
 from urllib.parse import unquote, urlparse
 
 from PySide6.QtCore import QObject, Property, Signal, Slot, QTimer
@@ -59,7 +59,7 @@ JOY_CENTRE_DRIFT_TAU_S = 20.0
 
 # Predictive Near/Far soft-limit envelope. The configured deceleration is
 # deliberately derated so the calculation does not assume ideal braking. The
-# reaction allowance covers the 50 ms SRVR loop, command transport and drive
+# reaction allowance covers the 25 ms SRVR loop, command transport and drive
 # update latency; W1P independently enforces a matching local envelope.
 PREDICTIVE_LIMIT_REACTION_S = 0.20
 PREDICTIVE_LIMIT_MARGIN_M = 0.05
@@ -221,10 +221,13 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.01.03", smoke_test: bool = False):
+    def __init__(self, version="26.10.01.04", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
+        self._firmware_bundle = firmware_bundle
+        self._legacy_fw_push_active = {"ctrl": False, "w1p": False}
+        self._legacy_fw_push_last_attempt = {"ctrl": 0.0, "w1p": 0.0}
         self.started = time.time()
         # A short per-process authority session token is advertised to CTRL/W1P on
         # their existing real-time links. A new SRVR process therefore causes one
@@ -469,7 +472,7 @@ class HVP2PBackend(QObject):
             self._sync_w1p_settings()
 
         self.timer = QTimer(self)
-        self.timer.setInterval(50)
+        self.timer.setInterval(25)
         self.timer.timeout.connect(self._tick)
         self.timer.start()
         self._log("[SRVR] Qt Quick backend ready")
@@ -629,6 +632,19 @@ class HVP2PBackend(QObject):
 
     def _firmware_version_matches_current(self, reported) -> bool:
         return str(reported or "").strip().lower().lstrip("v") == str(self.version or "").strip().lower().lstrip("v")
+
+    @staticmethod
+    def _firmware_version_parts(value):
+        text = str(value or "").strip().lower().lstrip("v")
+        parts = text.split(".")
+        if len(parts) != 4 or any(not p.isdigit() for p in parts):
+            return None
+        return tuple(int(p) for p in parts)
+
+    def _firmware_version_is_older(self, reported) -> bool:
+        reported_parts = self._firmware_version_parts(reported)
+        current_parts = self._firmware_version_parts(self._current_firmware_version())
+        return bool(reported_parts is not None and current_parts is not None and reported_parts < current_parts)
 
     def _handle_ctrl_hmi_status(self, line: str):
         """Parse the proven CTRL HMI_STATUS relay packet.
@@ -1518,6 +1534,10 @@ class HVP2PBackend(QObject):
             if self.calibration_open and self.calibration_type == "Winch":
                 return str(self.calibration_title or "Winch Calibration")
             return "Winch Calibration"
+        if action == "Joystick Calibration":
+            if self.joystick_calibration_open:
+                return str(self.joystick_calibration_title or "Joystick Calibration")
+            return "Joystick Calibration"
         if action.startswith("Preset "):
             parts = action.split()
             try:
@@ -1552,9 +1572,23 @@ class HVP2PBackend(QObject):
             elif action in ("Battery Change Mode", "Battery Change"):
                 self.setBatteryChange(not bool(self.battery_change_mode))
             elif action == "Limit Calibration":
-                self.openLimitCalibration()
+                # AUX is the touchscreen wizard's Confirm control. Once this
+                # calibration is open, each subsequent confirmed AUX press must
+                # advance the current step rather than reopening step 1.
+                if self.calibration_open and self.calibration_type == "Limit":
+                    self.calibrationNext()
+                else:
+                    self.openLimitCalibration()
             elif action == "Winch Calibration":
-                self.openWinchCalibration()
+                if self.calibration_open and self.calibration_type == "Winch":
+                    self.calibrationNext()
+                else:
+                    self.openWinchCalibration()
+            elif action == "Joystick Calibration":
+                if self.joystick_calibration_open:
+                    self.joystickCalibrationNext()
+                else:
+                    self.openJoystickCalibration()
             elif action.startswith("Preset "):
                 parts = action.split()
                 if len(parts) >= 3:
@@ -1708,6 +1742,98 @@ class HVP2PBackend(QObject):
         self.w1p.send(
             f"SRVR_FW|version={self._current_firmware_version()}|session={self._firmware_authority_session}"
         )
+
+    def _legacy_firmware_push_worker(self, role: str, host: str) -> None:
+        """Push the exact bundled EdgeBox image to a pre-beacon field node.
+
+        v26.10.01.01 cannot understand the later SRVR release beacon once it has
+        already marked an older SRVR session as matched. Its existing browser
+        updater is the backwards-compatible bridge: the new SRVR uploads the
+        already SHA-verified authority image from a background thread, so no HTTP
+        work can stall the motion/UI loop.
+        """
+        role = str(role).lower()
+        try:
+            bundle = self._firmware_bundle
+            image = getattr(bundle, "images", {}).get(role) if bundle is not None else None
+            if image is None:
+                self._log(f"[FW AUTO] {role.upper()} authority image unavailable; legacy push skipped")
+                return
+            payload = Path(image.path).read_bytes()
+            if len(payload) != int(image.size):
+                raise RuntimeError("authority image size changed after startup verification")
+            token = "CTRL" if role == "ctrl" else "W1P"
+            filename = f"HV_P2P_{token}_{self._current_firmware_version()}_FIRMWARE.bin"
+            boundary = f"----HVP2P{int(time.time_ns()):x}"
+            pre = (
+                f"--{boundary}\r\n"
+                f"Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n"
+                "Content-Type: application/octet-stream\r\n\r\n"
+            ).encode("ascii")
+            post = f"\r\n--{boundary}--\r\n".encode("ascii")
+            body = pre + payload + post
+            conn = http.client.HTTPConnection(str(host), 80, timeout=12.0)
+            try:
+                conn.request(
+                    "POST", "/update/app", body=body,
+                    headers={
+                        "Content-Type": f"multipart/form-data; boundary={boundary}",
+                        "Content-Length": str(len(body)),
+                        "Connection": "close",
+                    },
+                )
+                resp = conn.getresponse()
+                text = resp.read(512).decode("utf-8", "ignore").strip()
+                status = int(resp.status)
+            finally:
+                conn.close()
+            if 200 <= status < 300:
+                self._log(
+                    f"[FW AUTO] {token} legacy bridge accepted {self._current_firmware_version()}; "
+                    "device reboot/update started"
+                )
+            else:
+                self._log(f"[FW AUTO] {token} legacy bridge HTTP {status}: {text or 'update rejected'}")
+        except Exception as exc:
+            self._log(f"[FW AUTO] {role.upper()} legacy bridge failed: {exc}")
+        finally:
+            self._legacy_fw_push_active[role] = False
+
+    def _service_legacy_firmware_push(self) -> None:
+        """Bridge old matched firmware directly to the current SRVR release.
+
+        This path is used only while a connected EdgeBox reports an older version.
+        Current firmware continues to use the normal authority beacon/manifest path.
+        Uploads run on their own thread and are rate-limited so telemetry, joystick
+        processing and the 500 ms W1P freshness watchdog can never be blocked.
+        """
+        if self.smoke_test or self._firmware_bundle is None:
+            return
+        now = time.monotonic()
+        targets = (
+            ("ctrl", str(self.ctrl_ip or "").strip(), str(self._ctrl_fw_version or "").strip(), self._ctrl_connected()),
+            ("w1p", str(self.w1p_ip or "").strip(), str(self._w1p_fw_version or "").strip(), bool(self.w1p.connected)),
+        )
+        for role, host, reported, connected in targets:
+            if not host or not connected or not reported or not self._firmware_version_is_older(reported):
+                continue
+            if self._legacy_fw_push_active.get(role):
+                continue
+            if now - float(self._legacy_fw_push_last_attempt.get(role, 0.0)) < 12.0:
+                continue
+            # The version mismatch already makes _motion_tick fail safe. Reinforce
+            # the zero command before starting the asynchronous upload.
+            self._send_velocity(0.0, force=True)
+            self._legacy_fw_push_last_attempt[role] = now
+            self._legacy_fw_push_active[role] = True
+            self._log(
+                f"[FW AUTO] {role.upper()} {reported} != {self._current_firmware_version()}; "
+                "starting legacy-compatible push"
+            )
+            threading.Thread(
+                target=self._legacy_firmware_push_worker, args=(role, host),
+                name=f"HVP2P-{role.upper()}-LegacyOTA", daemon=True,
+            ).start()
 
     def _motion_tick(self):
         self._virtual_motion_step()
@@ -2165,7 +2291,7 @@ class HVP2PBackend(QObject):
             for _ in range(100):
                 try: self._parse_w1p(self._w1p_rx.get_nowait())
                 except queue.Empty: break
-            self._motion_tick(); self._send_freed(); self._send_controller_display_packet(); self._send_w1p_firmware_beacon(); self.stateChanged.emit()
+            self._motion_tick(); self._service_legacy_firmware_push(); self._send_freed(); self._send_controller_display_packet(); self._send_w1p_firmware_beacon(); self.stateChanged.emit()
         except Exception as exc: self._log(f"[SRVR] tick: {exc}")
 
     # --- config ---
@@ -2381,7 +2507,7 @@ class HVP2PBackend(QObject):
         # Auto-save means this function can run for a single UI edit. Do not
         # disturb healthy controller links unless the edit actually changed a
         # network/W1P control setting. In particular, joystick calibration or a
-        # label edit must never clear the 20 Hz CTRL receive history.
+        # label edit must never clear the live CTRL receive history.
         old_ctrl_ip = str(self.ctrl_ip)
         old_w1p_ip = str(self.w1p_ip)
         old_w1p_sync = (
@@ -2613,7 +2739,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.01.03 moves the installed joystick polarity correction into CTRL,
+        # v26.10.01.04 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same
@@ -3206,7 +3332,7 @@ class HVP2PBackend(QObject):
         }
 
     # Editable Setup / Free-D configuration uses a slower configChanged signal so
-    # live 20 Hz telemetry updates cannot steal focus or reset text while typing.
+    # live CTRL telemetry updates cannot steal focus or reset text while typing.
     @Property(str, notify=configChanged)
     def ctrlIp(self): return str(self.ctrl_ip)
     @Property(str, notify=configChanged)
@@ -3589,7 +3715,7 @@ class HVP2PBackend(QObject):
             # Keep the drive stopped/inhibited until _motion_tick sees every
             # source clear and the neutral-return interlock has been satisfied.
             # Set the neutral latch here as well so even an engage/clear action
-            # occurring between two 50 ms motion ticks cannot bypass the interlock.
+            # occurring between two 25 ms motion ticks cannot bypass the interlock.
             self._joystick_neutral_required = True
             self._send_safety_stop_limited(force=True)
         self._log("[SRVR E-Stop] " + ("ACTIVE" if self._srvr_estop else "CLEAR - neutral required"))

@@ -12,7 +12,7 @@
 #include <mbedtls/sha256.h>
 #include <esp_ota_ops.h>
 
-#define CTRL_TS_SEMVER "v26.10.01.03"
+#define CTRL_TS_SEMVER "v26.10.01.04"
 #define CTRL_TS_VERSION "HV P2P CTRL-TS " CTRL_TS_SEMVER
 #define CTRL_TS_HW_ID "WS-ESP32S3-7"
 #define HMI_BAUD 115200
@@ -109,6 +109,7 @@ static String g_pending_boot_hmi_line;
 // from the EdgeBox CTRL over framed RS485 and returns queued touch events only when polled.
 static bool g_uart_ok = false;
 static bool g_ui_ready = false;
+static bool g_connection_splash_active = false;
 static uint32_t g_last_screen_keepalive_ms = 0;
 static String g_rx_line;
 
@@ -181,7 +182,7 @@ static float g_last_ramp_near_draw = -999999.0f;
 static float g_last_ramp_far_draw = -999999.0f;
 
 // -------------------- CTRL-TS Settings page --------------------
-// Safe v26.10.01.03 approach: no backlight/brightness writes. This page only
+// Safe v26.10.01.04 approach: no backlight/brightness writes. This page only
 // edits CTRL network settings over UART and therefore should preserve the known
 // Keep the proven splash/boot path; do not write to the backlight controller.
 static lv_obj_t *settings_overlay = nullptr;
@@ -230,7 +231,7 @@ static void force_screen_refresh(){
 }
 
 static void screen_keepalive(){
-  // v26.10.01.03: no periodic full-screen or left-strip invalidation or brightness writes.
+  // v26.10.01.04: no periodic full-screen or left-strip invalidation or brightness writes.
   // The Waveshare/LVGL port refreshes changed objects itself; forcing a full
   // screen refresh every second caused the visible 1-second flicker/glitch.
   if(!g_ui_ready) return;
@@ -241,7 +242,7 @@ static void set_label_text_if_changed(lv_obj_t *lbl, const char *txt){
   const char *cur = lv_label_get_text(lbl);
   if(cur && strcmp(cur, txt) == 0) return;
   lv_label_set_text(lbl, txt);
-  // v26.10.01.03: label-only invalidation. Parent/full-strip invalidation can
+  // v26.10.01.04: label-only invalidation. Parent/full-strip invalidation can
   // cause the known vertical tear on the left AUX area of this panel.
   lv_obj_invalidate(lbl);
 }
@@ -517,13 +518,13 @@ static void boot_process_line(String line){
       g_boot_srvr_confirmed = boot_get_bool(line, "srvr", g_boot_srvr_confirmed);
       last_hmi_rx = millis();
       if(g_boot_ctrl_confirmed && g_boot_srvr_confirmed) boot_set_status("CTRL OK | SRVR OK | holding splash");
-      else if(g_boot_ctrl_confirmed) boot_set_status("CTRL OK | waiting for SRVR");
+      else if(g_boot_ctrl_confirmed) boot_set_status("Waiting for SRVR");
       else boot_set_status("Waiting for CTRL");
     }
   } else if(line == "PONG"){
     g_boot_ctrl_confirmed = true;
     last_hmi_rx = millis();
-    if(!g_boot_srvr_confirmed) boot_set_status("CTRL OK | waiting for SRVR");
+    if(!g_boot_srvr_confirmed) boot_set_status("Waiting for SRVR");
   }
 }
 
@@ -758,7 +759,7 @@ static void show_boot_splash(){
       snprintf(msg, sizeof(msg), "CTRL OK | SRVR OK | starting in %lus", (unsigned long)remain);
       boot_set_status(msg);
     } else if(g_boot_ctrl_confirmed){
-      boot_set_status("CTRL OK | waiting for SRVR");
+      boot_set_status("Waiting for SRVR");
     } else {
       boot_set_status("Waiting for CTRL");
     }
@@ -885,7 +886,7 @@ static void confirm_aux_idx(int idx, bool send_command){
   selected_aux = -1;
   g_selected_aux_ms = 0;
   confirmed_aux = idx;
-  clear_confirm_at = now_ms + 2000;  // v26.10.01.03: confirmed AUX tile stays lit for 2 seconds
+  clear_confirm_at = now_ms + 2000;  // v26.10.01.04: confirmed AUX tile stays lit for 2 seconds
   g_aux_suppress_until_ms[idx] = now_ms + 400;
   style_aux(idx,false,true);
   snprintf(msg,sizeof(msg),"AUX %d Confirmed", idx+1);
@@ -947,7 +948,7 @@ static void style_w1p_status_pill(int state){
 }
 
 static void style_estop_pill(bool active){
-  // v26.10.01.03: the middle status banner follows the SRVR-resolved state.
+  // v26.10.01.04: the middle status banner follows the SRVR-resolved state.
   // A local CTRL-TS UART/display gap must not invent "E-Stop CTRL" while SRVR
   // is still sending Status | Active. Real CTRL/W1P E-Stops are still shown
   // immediately when SRVR sends status=E-Stop... / status_level=red.
@@ -982,9 +983,11 @@ static void style_estop_pill(bool active){
     String detail = text;
     if(detail.startsWith("E-Stop | ") || detail.startsWith("E-Stop / ")) detail = detail.substring(9);
     else if(detail.startsWith("E-Stop ")) detail = detail.substring(7);
-    shown = "◇  E-STOP | " + detail;
+    detail.trim();
+    while(detail.startsWith("/")){ detail = detail.substring(1); detail.trim(); }
+    shown = "E-STOP | " + detail;
   } else {
-    shown = "◇  STATE | " + text;
+    shown = "STATE | " + text;
   }
   set_label_text_if_changed(lbl_estop, shown.c_str());
 }
@@ -993,7 +996,7 @@ static void refresh_status_ui(){
   style_status_pill_cached(0,pill_ctrl,lbl_ctrl,"CTRL",g_ctrl_ok);
   if(pill_srvr && lbl_srvr) style_status_pill_cached(1,pill_srvr,lbl_srvr,"SRVR",g_srvr_ok);
   style_w1p_status_pill(g_w1p_health);
-  // v26.10.01.03: do not turn the main middle box red purely because the
+  // v26.10.01.04: do not turn the main middle box red purely because the
   // CTRL-TS local UART/display link hiccuped. The SRVR status packet is the
   // authoritative source for Active / Un-Calibrated / E-Stop display state.
   bool stopped_visual = (g_status_level >= 2) || g_estop_active;
@@ -1449,7 +1452,7 @@ static void apply_hmi_packet(const String &line){
     else g_status_level = 0;
   }
 
-  // v26.10.01.03: if SRVR sends explicit status/status_level, trust it as
+  // v26.10.01.04: if SRVR sends explicit status/status_level, trust it as
   // the authoritative display state. Do not override it locally with a CTRL
   // error just because the touchscreen/CTRL UART side saw a transient gap.
   g_estop_active = packet_estop;
@@ -1563,7 +1566,7 @@ static void apply_hmi_packet(const String &line){
   if(mode_changed || (prev_status_text != g_status_text) || (prev_status_level != g_status_level) || (prev_estop != g_estop_active) || (prev_estop_source != g_estop_source) || (prev_ctrl != g_ctrl_ok) || (prev_srvr != g_srvr_ok) || (prev_w1p != g_w1p_ok) || (prev_w1p_health != g_w1p_health)) {
     refresh_status_ui();
   }
-  // v26.10.01.03: no left-strip/full-screen invalidation on packets; progress marker animates locally.
+  // v26.10.01.04: no left-strip/full-screen invalidation on packets; progress marker animates locally.
 }
 
 
@@ -1572,7 +1575,7 @@ static void apply_layout_packet(const String &line){
   // on CTRL cannot overwrite the screen title/version or trigger header redraws.
   String hint = getField(line, "hint");
   if(lbl_title) set_label_text_if_changed(lbl_title, "HV P2P\nCTRL-TS");
-  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.01.03");
+  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.01.04");
   if(hint.length() && hint.startsWith("ERROR")) set_touch_debug(hint.c_str());
   for(int i=0;i<AUX_COUNT;i++){
     String key = String("aux") + String(i+1);
@@ -1847,7 +1850,7 @@ static void process_rs485_frame(const HVP2PRS485::Frame &frame, bool boot_phase)
   if(frame.type == HVP2PRS485::COMPATIBLE){
     g_ctrl_fw_compatible = true;
     g_boot_ctrl_confirmed = true;
-    if(!g_boot_srvr_confirmed) boot_set_status("CTRL firmware compatible | waiting for SRVR");
+    if(!g_boot_srvr_confirmed) boot_set_status("Waiting for SRVR");
     return;
   }
   if(frame.type == HVP2PRS485::TEXT){
@@ -1904,7 +1907,7 @@ static void create_ui(){
   lv_obj_t *brand=make_panel(frame,SX,HEADER_Y,70,HEADER_H,C_BG,0x63d84e,7);
   lbl_title=make_label(brand,"HV P2P\nCTRL-TS",0,6,&lv_font_montserrat_12,lv_color_hex(C_FG),70);
   lv_obj_set_style_text_line_space(lbl_title,-2,0);
-  lbl_subtitle=make_label(frame,"v26.10.01.03",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
+  lbl_subtitle=make_label(frame,"v26.10.01.04",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
 
   pill_ctrl=make_panel(frame,255,HEADER_Y,126,HEADER_H,C_PANEL,C_BORDER,5);
   dot_ctrl=lv_obj_create(pill_ctrl); lv_obj_set_pos(dot_ctrl,9,15); lv_obj_set_size(dot_ctrl,8,8); lv_obj_set_style_radius(dot_ctrl,LV_RADIUS_CIRCLE,0); lv_obj_set_style_border_width(dot_ctrl,0,0); lv_obj_set_style_bg_color(dot_ctrl,lv_color_hex(0xef5757),0); lv_obj_clear_flag(dot_ctrl,LV_OBJ_FLAG_SCROLLABLE);
@@ -1919,11 +1922,11 @@ static void create_ui(){
   lbl_touch_debug=nullptr; // production face: no service/debug text in the approved header
 
   pill_estop=make_panel(frame,SX,BANNER_Y,SW,BANNER_H,0x3a1619,0x8b3b42,4);
-  lbl_estop=make_label(pill_estop,"◇  E-STOP | CTRL & W1P",0,8,&lv_font_montserrat_14,lv_color_hex(0xef5757),SW);
+  lbl_estop=make_label(pill_estop,"E-STOP | CTRL & W1P",0,8,&lv_font_montserrat_14,lv_color_hex(0xef5757),SW);
 
   // Five AUX cards: same grey/cyan/green visual language as SRVR.
   const int AUX_GAP=6, AUX_W=(SW-(AUX_COUNT-1)*AUX_GAP)/AUX_COUNT;
-  const char *aux_heads[AUX_COUNT]={"⚙  AUX 1","⚙  AUX 2","⚙  AUX 3","⚙  AUX 4","⚙  AUX 5"};
+  const char *aux_heads[AUX_COUNT]={"AUX 1","AUX 2","AUX 3","AUX 4","AUX 5"};
   for(int i=0;i<AUX_COUNT;i++){
     aux_btn[i]=make_button(frame,SX+i*(AUX_W+AUX_GAP),AUX_Y,AUX_W,AUX_H);
     lv_obj_add_event_cb(aux_btn[i],aux_event_cb,LV_EVENT_CLICKED,(void*)(intptr_t)i);
@@ -1961,13 +1964,13 @@ static void create_ui(){
   // Bottom row: Drive / Speed / Position.
   const int DRIVE_W=232, SPEED_W=264, POS_W=272;
   lv_obj_t *drive=make_panel(frame,SX,INFO_Y,DRIVE_W,INFO_H,C_PANEL,C_BORDER,4);
-  make_label(drive,"⚙  DRIVE",10,10,&lv_font_montserrat_12,lv_color_hex(C_CYAN),90);
+  make_label(drive,"DRIVE",10,10,&lv_font_montserrat_12,lv_color_hex(C_CYAN),90);
   make_label(drive,"Drive Mode",10,40,&lv_font_montserrat_10,lv_color_hex(C_FG),105); lbl_drive_mode=make_label(drive,g_drive_mode.c_str(),125,40,&lv_font_montserrat_10,lv_color_hex(C_FG),95);
   make_label(drive,"Acceleration Mode",10,68,&lv_font_montserrat_10,lv_color_hex(C_FG),105); lbl_accel_mode=make_label(drive,g_accel_mode.c_str(),125,68,&lv_font_montserrat_10,lv_color_hex(C_FG),95);
   make_label(drive,"Battery Change Mode",10,96,&lv_font_montserrat_10,lv_color_hex(C_FG),105); lbl_battery_mode=make_label(drive,g_battery_mode.c_str(),125,96,&lv_font_montserrat_10,lv_color_hex(C_FG),95);
 
   lv_obj_t *speed=make_panel(frame,SX+DRIVE_W+GAP,INFO_Y,SPEED_W,INFO_H,C_PANEL,C_BORDER,4);
-  make_label(speed,"◴  SPEED",10,10,&lv_font_montserrat_12,lv_color_hex(C_CYAN),90);
+  make_label(speed,"SPEED",10,10,&lv_font_montserrat_12,lv_color_hex(C_CYAN),90);
   make_label(speed,"CURRENT SPEED",10,39,&lv_font_montserrat_10,lv_color_hex(C_MUTED),110);
   lbl_speed_combo=make_label(speed,"0.0",8,55,&lv_font_montserrat_24,lv_color_hex(C_FG),92); make_label(speed,"m/s",88,68,&lv_font_montserrat_10,lv_color_hex(C_MUTED),36);
   lbl_current_kmh=make_label(speed,"0.0",8,92,&lv_font_montserrat_16,lv_color_hex(C_GREEN),75); make_label(speed,"km/h",80,97,&lv_font_montserrat_10,lv_color_hex(C_MUTED),42);
@@ -1976,7 +1979,7 @@ static void create_ui(){
   lbl_max_kmh=make_label(speed,"0.0",140,92,&lv_font_montserrat_16,lv_color_hex(C_GREEN),75); make_label(speed,"km/h",208,97,&lv_font_montserrat_10,lv_color_hex(C_MUTED),42);
 
   lv_obj_t *position=make_panel(frame,SX+DRIVE_W+GAP+SPEED_W+GAP,INFO_Y,POS_W,INFO_H,C_PANEL,C_BORDER,4);
-  make_label(position,"⌖  POSITION",10,10,&lv_font_montserrat_12,lv_color_hex(C_CYAN),100);
+  make_label(position,"POSITION",10,10,&lv_font_montserrat_12,lv_color_hex(C_CYAN),100);
   make_label(position,"CURRENT POSITION",70,37,&lv_font_montserrat_10,lv_color_hex(C_MUTED),132);
   lbl_current_pos=make_label(position,"0.00",66,52,&lv_font_montserrat_24,lv_color_hex(C_GREEN),122); make_label(position,"m",190,67,&lv_font_montserrat_10,lv_color_hex(C_MUTED),24);
   make_label(position,"TO NEAR",18,91,&lv_font_montserrat_10,lv_color_hex(C_MUTED),78); lbl_to_near=make_label(position,"0.00",14,105,&lv_font_montserrat_14,lv_color_hex(C_GREEN),74); make_label(position,"m",85,108,&lv_font_montserrat_10,lv_color_hex(C_MUTED),18);
@@ -2004,6 +2007,26 @@ static void create_ui(){
 }
 
 
+static void service_runtime_connection_screen(){
+  if(!g_ui_ready || !g_main_scr || !boot_scr || fw_display_owned()) return;
+  const bool ctrl_link_alive = last_hmi_rx && ((millis() - last_hmi_rx) <= HMI_TIMEOUT_MS) && g_ctrl_ok;
+  const bool need_splash = (!ctrl_link_alive) || (!g_srvr_ok);
+  if(need_splash){
+    const char *msg = ctrl_link_alive ? "Waiting for SRVR" : "Waiting for CTRL";
+    boot_set_status(msg);
+    if(!g_connection_splash_active || lv_scr_act() != boot_scr){
+      lv_scr_load(boot_scr);
+      g_connection_splash_active = true;
+    }
+    return;
+  }
+  if(g_connection_splash_active || lv_scr_act() != g_main_scr){
+    lv_scr_load(g_main_scr);
+    g_connection_splash_active = false;
+    refresh_status_ui();
+  }
+}
+
 static void service_link_state(){
   if(selected_aux >= 0 && g_selected_aux_ms && (millis() - g_selected_aux_ms > AUX_PENDING_TIMEOUT_MS)){
     cancel_pending_aux();
@@ -2016,7 +2039,7 @@ static void service_link_state(){
 
   bool link_alive = last_hmi_rx && ((millis() - last_hmi_rx) <= HMI_TIMEOUT_MS);
   if(!link_alive) {
-    // v26.10.01.03: local UART/display timeout is a CTRL-TS link warning, not
+    // v26.10.01.04: local UART/display timeout is a CTRL-TS link warning, not
     // proof of a real CTRL E-Stop. Keep the last SRVR-resolved status banner so
     // the touchscreen cannot randomly show "Status | E-Stop CTRL" while SRVR
     // remains "Status | Active". The CTRL status pill can still show ERROR.
@@ -2060,23 +2083,17 @@ void setup(){
   show_boot_splash();
   Serial.println("[WS-HMI] boot: create main UI");
   lvgl_port_lock(-1);
-  lv_obj_t *old_boot_scr = boot_scr;
+  // Keep the original JPEG splash resident after startup so a runtime SRVR
+  // disconnect can return to exactly the same loading screen without rebooting.
+  // The framebuffer lives in PSRAM; firmware update ownership may later replace
+  // and delete this screen because a successful update reboots immediately.
   lv_obj_t *main_scr = lv_obj_create(NULL);
   g_main_scr = main_scr;
   lv_obj_clear_flag(main_scr, LV_OBJ_FLAG_SCROLLABLE);
   lv_scr_load(main_scr);
-  if(old_boot_scr) lv_obj_del(old_boot_scr);
-  boot_scr = nullptr;
-  boot_status_bar = nullptr;
-  boot_status_lbl = nullptr;
-  boot_progress_bar = nullptr;
   g_fw_connection_lbl = nullptr;
   g_fw_runtime_screen = false;
-  boot_canvas = nullptr;
-  if(boot_canvas_buf){
-    free(boot_canvas_buf);
-    boot_canvas_buf = nullptr;
-  }
+  g_connection_splash_active = false;
   create_ui();
   if(g_pending_boot_hmi_line.length() && is_valid_hmi_packet(g_pending_boot_hmi_line)){
     apply_hmi_packet(g_pending_boot_hmi_line);
@@ -2094,6 +2111,7 @@ void loop(){
   lvgl_port_lock(-1);
   handle_hmi_rx();
   if(!fw_display_owned()){
+    service_runtime_connection_screen();
     service_link_state();
     screen_keepalive();
   }

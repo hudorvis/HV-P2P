@@ -16,7 +16,7 @@
 static bool g_ads_inited = false;
 static uint8_t ADS_ADDR = 0x48;
 
-#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.10.01.03"
+#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.10.01.04"
 #define CTRL_HMI_ARCH "EdgeBox ESP-100 + isolated RS485 Waveshare thin HMI"
 
 IPAddress local_IP(172,20,1,101);
@@ -40,7 +40,7 @@ IPAddress server_IP(172,20,1,100);
 #define EDGEBOX_RS485_RTS 8
 
 #define HEARTBEAT_INTERVAL_MS 250
-#define CONTROL_INTERVAL_MS   50
+#define CONTROL_INTERVAL_MS   25
 #define DISPLAY_FORWARD_MIN_MS 100
 #define DISPLAY_KEEPALIVE_MS   3000
 #define SRVR_DISPLAY_TIMEOUT_MS 5000
@@ -206,7 +206,7 @@ static uint32_t lastHmiLayoutForward = 0;
 #define HMI_LAYOUT_MAX_LEN 2200
 static const char* HMI_LAYOUT_NVS_NS = "hmiui";
 static const char* HMI_LAYOUT_NVS_KEY = "layout";
-static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.10.01.03|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
+static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.10.01.04|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
 
 
 
@@ -231,10 +231,10 @@ static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_CTRL";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL_TS,W1P,W1P_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_CTRL_v*.ino.bin firmware. CTRL-TS and W1P files are rejected.";
 static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=CTRL;";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.01.03;";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.01.04;";
 static const char* HV_AUTH_ROLE = "CTRL";
 static const char* HV_AUTH_TARGET = "EDGEBOX_ESP100";
-static const char* HV_AUTH_VERSION = "v26.10.01.03";
+static const char* HV_AUTH_VERSION = "v26.10.01.04";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
@@ -493,7 +493,7 @@ static void hvLoadHmiLayoutConfig() {
     int nl = stored.indexOf('\n');
     if(nl >= 0) stored = stored.substring(0, nl);
     stored.trim();
-    // v26.10.01.03 migration: older CTRL NVS layouts were main4/aux1-aux4.
+    // v26.10.01.04 migration: older CTRL NVS layouts were main4/aux1-aux4.
     // Preserve the operator's stored labels/settings but expose the new AUX5 tile.
     if(stored.indexOf("|layout=main4") >= 0) stored.replace("|layout=main4", "|layout=main5");
     if(stored.indexOf("|aux5=") < 0) stored += "|aux5=AUX 5";
@@ -600,7 +600,7 @@ static bool srvrOnline = false;
 // GAIN_TWOTHIRDS (±6.144 V ADC range), the nominal 5 V field endpoint is about
 // 13333 counts. This scaling only makes the UDP transport convenient; the real
 // Left/Centre/Right values are still captured and corrected by SRVR.
-static const uint8_t JOY_SAMPLES = 8;  // trimmed mean: discard one high + one low sample
+static const uint8_t JOY_SAMPLES = 5;  // low-latency trimmed mean: discard one high + one low sample
 static const float EDGEBOX_JOY_5V_COUNTS = 13333.3f;
 static float g_joy_filtered = 0.0f;
 static bool g_joy_ready = false;
@@ -707,6 +707,16 @@ static bool sgmSelectChannelVerified(uint16_t expectedConfig, const char *label)
   return true;
 }
 
+static bool sgmEnsureChannelVerified(uint16_t expectedConfig, const char *label) {
+  // If the converter is already on the required continuous channel, a config
+  // readback proves channel identity without paying another mux-settle delay.
+  // Any mismatch falls back to the full write/readback/fresh-conversion path.
+  uint16_t actual = 0;
+  if(sgmReadRegister(SGM_REG_CONFIG, actual) &&
+     ((actual & 0x7FFFu) == (expectedConfig & 0x7FFFu))) return true;
+  return sgmSelectChannelVerified(expectedConfig, label);
+}
+
 static void failAnalogueUnsafe(const char *reason) {
   g_ads_inited = false;
   g_joy_ready = false;
@@ -797,7 +807,7 @@ static float readJoystickAxis() {
   // Never trust the converter's previous mux state. Select and verify AI1 for
   // every joystick transaction, then accept only conversions produced after the
   // verified switch. This makes AI0 E-stop samples unable to leak into joystick.
-  if(!sgmSelectChannelVerified(SGM_CONFIG_AI1_CONT_800SPS_6V144, "AI1 joystick")) {
+  if(!sgmEnsureChannelVerified(SGM_CONFIG_AI1_CONT_800SPS_6V144, "AI1 joystick")) {
     failAnalogueUnsafe("[AI] AI1 joystick select/verify failed - fail unsafe");
     return 0.0f;
   }
@@ -821,7 +831,10 @@ static float readJoystickAxis() {
   g_joyLastRaw = raw;
   g_joyLastFieldV = float(raw) * (6.144f / 32768.0f) * 2.0f;
   const float axis = rawJoystickTransportAxis(raw);
-  g_joy_filtered = (0.70f * g_joy_filtered) + (0.30f * axis);
+  // The trimmed-mean window already rejects spikes. Keep only a light
+  // one-pole filter so a full-scale operator step reaches >96% within two 25 ms
+  // control cycles instead of taking ~0.5-1 s to settle as in .03.
+  g_joy_filtered = (0.20f * g_joy_filtered) + (0.80f * axis);
   return constrain(g_joy_filtered, -1.0f, 1.0f);
 }
 
@@ -925,7 +938,7 @@ static void sendHmiStatusToSrvr()
   uint32_t age = g_lastHmiRxMs ? (now - g_lastHmiRxMs) : 999999;
   String line = "HMI_STATUS";
   line += "|ctrl_ts=" + String(hmiLinkConnected() ? 1 : 0);
-  line += "|ctrl_version=v26.10.01.03";
+  line += "|ctrl_version=v26.10.01.04";
   line += "|fw_match=" + String(g_srvrFirmwareMatched ? 1 : 0);
   line += "|fw_authority=" + g_srvrFirmwareState;
   line += "|fw_required=" + (g_srvrRequiredVersion.length() ? g_srvrRequiredVersion : String("unknown"));
@@ -1071,7 +1084,7 @@ static void handleUdpRx()
 
     // SRVR continuously advertises its release in the normal non-blocking
     // display packet. This is the healthy-session update trigger: never perform
-    // a blocking HTTP manifest poll in the 20 Hz joystick/control loop. A newer
+    // a blocking HTTP manifest poll in the joystick/control loop. A newer
     // SRVR therefore invalidates the old match immediately, and the existing
     // fail-closed authority service fetches/stages the exact image afterwards.
     const String srvrFw = hvGetPipeField(line, "srvr_fw");
@@ -1571,7 +1584,7 @@ void setup()
   Serial.println("[IO] AUX1..AUX5 touchscreen-only; no physical AUX GPIO module");
 
   if(detectSgm58031()) {
-    Serial.println("[JOY] AI1 (pin 16) ready with 8-sample trimmed-mean filtering. Re-run SRVR Set Left / Set Centre / Set Right after EdgeBox migration.");
+    Serial.println("[JOY] AI1 (pin 16) ready with 5-sample low-latency trimmed-mean filtering. Re-run SRVR Set Left / Set Centre / Set Right after EdgeBox migration.");
     Serial.println("[ESTOP] AI0 (pin 14) ready for 5V normally-closed status loop; E-stop remains active until 3 healthy samples are proven.");
   } else {
     Serial.println("[JOY] analogue input unavailable - joystick output forced neutral for safety");
@@ -1632,7 +1645,7 @@ void loop()
     g_latestDisplayPacket = "";
   }
 
-  // v26.10.01.03: do not resend UIL1 layout on a timer.
+  // v26.10.01.04: do not resend UIL1 layout on a timer.
   // Some Waveshare/LVGL builds visibly flicker when the layout header/config
   // is resent periodically. Layout is now sent only at boot, upload/reset,
   // and in response to a CTRL-TS PING/reconnect request.

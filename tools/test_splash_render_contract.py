@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-T=(ROOT/'HV_P2P_CTRL_TS_v26.10.01.03/HV_P2P_CTRL_TS_v26.10.01.03.ino').read_text()
+T=(ROOT/'HV_P2P_CTRL_TS_v26.10.01.04/HV_P2P_CTRL_TS_v26.10.01.04.ino').read_text()
 for tok in ('boot_render_splash_fit','const bool rotate = (boot_decode_h > boot_decode_w) && (boot_w > boot_h)','const float scale = sx < sy ? sx : sy','without crop','2200000ULL'):
     assert tok in T,tok
 
@@ -14,4 +14,15 @@ for sw,sh in [(800,480),(480,800),(1920,1080),(1080,1920),(1000,1000),(320,240),
     assert 1<=ow<=800 and 1<=oh<=480 and x>=0 and y>=0 and x+ow<=800 and y+oh<=480
     src_ratio=(sh/sw if rot else sw/sh); out_ratio=ow/oh
     assert abs(src_ratio-out_ratio) < 0.01 + 2/max(ow,oh)
+# Runtime connection-loss contract: the same resident boot splash is reused,
+# with firmware-update screen ownership taking priority and no restart required.
+for tok in (
+    'Keep the original JPEG splash resident after startup',
+    'static void service_runtime_connection_screen()',
+    'ctrl_link_alive ? "Waiting for SRVR" : "Waiting for CTRL"',
+    'lv_scr_load(boot_scr);',
+    'lv_scr_load(g_main_scr);',
+    'if(!fw_display_owned())',
+):
+    assert tok in T, tok
 print('SPLASH_RENDER_CONTRACT_PASS')

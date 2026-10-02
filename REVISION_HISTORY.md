@@ -1,25 +1,40 @@
 # HV P2P Revision History
 
+## v26.10.01.04
+- Built directly from v26.10.01.03 after the next CTRL/CTRL-TS bench cycle.
+- Fixed AUX-assigned Limit/Winch calibration so confirmed AUX presses advance an
+  already-open wizard instead of reopening step 1; added Joystick Calibration as
+  an AUX Assign action with the same open/advance semantics.
+- CTRL-TS now returns to the original resident loading splash with `Waiting for
+  SRVR` on runtime SRVR loss (or `Waiting for CTRL` on CTRL loss) and restores the
+  main UI automatically when links recover.
+- Removed unsupported Unicode decoration from CTRL-TS E-Stop, DRIVE/SPEED/POSITION
+  and AUX headings; hardened E-Stop formatting against a residual leading `/`.
+- Replaced the SRVR desktop icon with equal-size `P2P` / `SRVR` rows in the
+  CTRL-TS dark/green visual language.
+- Closed the direct `.01 -> .04` automatic-update compatibility gap: SRVR can
+  asynchronously push its exact validated bundled CTRL/W1P image through the
+  pre-existing `/update/app` endpoint when an older pre-beacon node is connected.
+  The bridge is upgrade-only and never runs HTTP on the SRVR motion/UI timer.
+- Reduced CTRL joystick/display latency to a 25 ms control interval, 5-sample
+  trimmed mean and 80% new-sample filter; SRVR live-state timer is also 25 ms.
+  Verified AI0/AI1 mux ownership and all existing safety/watchdog paths remain.
+- Added regression coverage for all eight field-reported behaviours.
+- macOS bundle metadata advanced to `2610.1.4`.
+
 ## v26.10.01.03
-- Built directly from v26.10.01.02 after additional CTRL joystick bench testing.
-- Fixed 1-2 second periodic joystick/telemetry stalls caused by v26.10.01.02's
-  blocking two-second HTTP firmware-manifest checks in the healthy CTRL/W1P main
-  loops. SRVR now sends lightweight UDP release beacons; matched nodes perform no
-  HTTP, and only enter the existing fail-closed HTTP/SHA/OTA path after detecting
-  a release mismatch.
-- Joystick Left/Centre/Right wizard completion now immediately activates and
-  persists the new calibration. Setup Value/Percentage uses that calibrated range
-  immediately, with the existing neutral-return motion interlock retained.
-- Removed Settings and Free-D Apply/Reset footer buttons. Accepted edits auto-save;
-  text editors commit on Enter/focus loss rather than each keystroke.
-- Setup auto-save no longer clears CTRL receive history or reconfigures W1P for
-  unrelated changes; network side effects occur only when the relevant address
-  changes. Safe transactional W1P IP readdress is retained.
-- Load Config now validates/applies/persists the imported full configuration
-  immediately. Save Config exports the current auto-saved state.
-- Added regression locks for non-blocking release beacons, calibrated percentage,
-  calibration auto-commit and Settings/Free-D auto-save.
-- macOS bundle build metadata advanced to `2610.1.3`.
+- Built directly from v26.10.01.02 after joystick/calibration and Settings bench
+  feedback.
+- Removed the blocking two-second healthy-loop firmware-manifest poll that could
+  stall CTRL joystick telemetry for 1-2 seconds; current firmware uses lightweight
+  UDP release beacons and only enters HTTP/SHA/OTA after going fail-closed.
+- Joystick Left/Centre/Right wizard completion immediately activates and persists
+  the calibration; Setup Value/Percentage uses the calibrated range immediately.
+- Removed Settings and Free-D Apply/Reset footer controls and changed accepted
+  edits to auto-save/auto-commit semantics.
+- Preserved W1P 500 ms VEL watchdog, ~150 ms SRVR non-zero VEL refresh and all
+  existing emergency-stop, limit and Servo Enable protections.
+- macOS bundle build metadata was `2610.1.3`.
 
 ## v26.10.01.02
 - Built directly from v26.10.01.01 after first hardware bench feedback.

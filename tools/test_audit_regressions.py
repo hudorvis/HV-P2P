@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER="26.10.01.03"
+VER="26.10.01.04"
 W=(ROOT/f"HV_P2P_W1P_EDGEBOX_v{VER}/HV_P2P_W1P_EDGEBOX_v{VER}.ino").read_text()
 C=(ROOT/f"HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino").read_text()
 T=(ROOT/f"HV_P2P_CTRL_TS_v{VER}/HV_P2P_CTRL_TS_v{VER}.ino").read_text()
@@ -23,22 +23,22 @@ edgebox_fqbn = N[N.index('EDGEBOX_FQBN'):N.index('HMI_FQBN')]
 assert 'PartitionScheme=app3M_fat9M_16MB' in edgebox_fqbn
 assert 'PartitionScheme=custom' not in edgebox_fqbn
 
-# v26.10.01.03 operator input / safety refinements.
+# v26.10.01.04 operator input / safety refinements.
 assert 'self.reverse_joystick = False' in B
 assert 'VEL_KEEPALIVE_S = 0.15' in B
 assert 'def joystickPercentage' in B
 assert 'W1P_VEL_COMMAND_TIMEOUT_MS = 500' in W
-assert 'JOY_SAMPLES = 8' in C and 'trimmedSum' in C
+assert 'JOY_SAMPLES = 5' in C and 'trimmedSum' in C and 'CONTROL_INTERVAL_MS   25' in C
 assert 'SGM_CONFIG_AI1_CONT_800SPS_6V144 = 0x50E3' in C
 assert 'sampleCtrlEstopAI0' in C
 assert 'AI0 carries the CTRL E-stop status' in C and 'AI1 carries the APEM 0-5 V joystick signal' in C
 assert 'sgmSelectChannelVerified(SGM_CONFIG_AI0_CONT_800SPS_6V144, "AI0 E-stop")' in C
-assert 'sgmSelectChannelVerified(SGM_CONFIG_AI1_CONT_800SPS_6V144, "AI1 joystick")' in C
+assert 'sgmEnsureChannelVerified(SGM_CONFIG_AI1_CONT_800SPS_6V144, "AI1 joystick")' in C
 assert 'Always restore and verify AI1' in C
 assert 'CTRL_ESTOP_HEALTHY_MIN_V = 3.5f' in C and 'CTRL_ESTOP_HEALTHY_CONFIRM_SAMPLES = 3' in C
-# v26.10.01.03 direction-regression guard: CTRL normalises physical Left/Right
+# v26.10.01.04 direction-regression guard: CTRL normalises physical Left/Right
 # before SRVR, so the default backend direction is Normal and sign is preserved.
-BT=(ROOT/'SRVR_GitHub_v26.10.01.03/tools/test_backend_logic.py').read_text()
+BT=(ROOT/'SRVR_GitHub_v26.10.01.04/tools/test_backend_logic.py').read_text()
 assert 'assert b.reverse_joystick is False' in BT
 assert 'physical Left=-1' in B
 assert 'b.requested_speed_mps < 0.0' in BT
@@ -54,7 +54,7 @@ assert 'g_boot_session_id' in W and 'BOOT_ID=' in W
 assert 'fw_ensure_update_screen' in T and 'fw_display_owned' in T
 assert 'if(!fw_display_owned())' in T and 'Firmware transfer owns the screen' in T
 
-# v26.10.01.03 field-feedback regressions: a newer SRVR must be noticed without
+# v26.10.01.04 field-feedback regressions: a newer SRVR must be noticed without
 # power-cycling field nodes *and without periodic HTTP in the healthy real-time
 # loops*. SRVR's normal UDP beacons invalidate an old match; only the already
 # fail-closed unmatched/update path may perform HTTP/SHA/OTA work.
@@ -80,6 +80,39 @@ assert 'lv_obj_del(previous_scr)' in T
 assert 'if(pct != g_fw_last_display_pct)' in T
 assert 'g_status_text = "E-Stop " + src;' in T
 assert 'detail.startsWith("E-Stop / ")' in T
+assert 'while(detail.startsWith("/"))' in T
+# Unsupported icon glyphs must never return to CTRL-TS's compiled Montserrat-only UI.
+for glyph in ('◇','⚙','◴','⌖'):
+    assert glyph not in T
+assert 'const char *aux_heads[AUX_COUNT]={"AUX 1","AUX 2","AUX 3","AUX 4","AUX 5"}' in T
+assert 'make_label(drive,"DRIVE"' in T and 'make_label(speed,"SPEED"' in T and 'make_label(position,"POSITION"' in T
+
+# Runtime SRVR loss returns to the original resident splash instead of inventing
+# another screen or rebooting the display.
+assert 'static void service_runtime_connection_screen()' in T
+assert 'const char *msg = ctrl_link_alive ? "Waiting for SRVR" : "Waiting for CTRL";' in T
+assert 'lv_scr_load(boot_scr);' in T and 'lv_scr_load(g_main_scr);' in T
+assert 'Keep the original JPEG splash resident after startup' in T
+
+# AUX calibration commands are stateful Confirm controls: first press opens,
+# subsequent confirmed presses advance the existing wizard. Joystick calibration
+# is a first-class AUX assignment too.
+SETUP=(ROOT/f'SRVR_GitHub_v{VER}/qml/pages/SetupPage.qml').read_text()
+assert '"Limit Calibration", "Winch Calibration", "Joystick Calibration"' in SETUP
+aux=B[B.index('def _handle_aux_action'):B.index('def _display_field', B.index('def _handle_aux_action'))]
+assert 'self.calibration_open and self.calibration_type == "Limit"' in aux and 'self.calibrationNext()' in aux
+assert 'self.calibration_open and self.calibration_type == "Winch"' in aux
+assert 'self.joystick_calibration_open' in aux and 'self.joystickCalibrationNext()' in aux and 'self.openJoystickCalibration()' in aux
+
+# Direct .01 -> current release bridge: old matched firmware cannot understand
+# the later UDP release beacon, so SRVR asynchronously uploads its already
+# verified bundle through the pre-existing /update/app endpoint.
+M=(ROOT/f'SRVR_GitHub_v{VER}/main.py').read_text()
+assert 'firmware_bundle=authority.bundle' in M
+assert 'def _legacy_firmware_push_worker' in B and 'HTTPConnection' in B and '"/update/app"' in B
+assert 'multipart/form-data' in B and 'daemon=True' in B and 'def _service_legacy_firmware_push' in B
+assert 'def _firmware_version_is_older' in B and 'not self._firmware_version_is_older(reported)' in B
+assert 'self._motion_tick(); self._service_legacy_firmware_push();' in B
 
 # Settings and Free-D are auto-save pages. No footer Apply/Reset interaction is
 # permitted to return, and joystick-wizard completion immediately activates the

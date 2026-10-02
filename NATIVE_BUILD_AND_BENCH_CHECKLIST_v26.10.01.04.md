@@ -1,4 +1,4 @@
-# HV P2P v26.10.01.03 Native Build and Bench Checklist
+# HV P2P v26.10.01.04 Native Build and Bench Checklist
 
 ## GitHub Actions gates
 
@@ -14,6 +14,28 @@
 - Source checkout hash must be identical before/after native firmware build.
 - macOS Intel, macOS Apple Silicon and Windows x64 SRVR builds/smoke tests must
   all pass before the Complete Release is created.
+
+## v26.10.01.04 field-feedback acceptance
+
+- Start from a genuinely running **v26.10.01.01 CTRL + CTRL-TS**, then launch the
+  GitHub-built v26.10.01.04 SRVR without installing .02/.03 first. Confirm SRVR
+  detects the older CTRL, initiates the backwards-compatible update automatically,
+  CTRL reboots into .04, and then its normal staged-image updater converges CTRL-TS
+  to .04. No manual CTRL/CTRL-TS reboot should be required to start convergence.
+- Assign an AUX tile to **Limit Calibration**. First confirmed press must open the
+  wizard; subsequent confirmed presses must advance Near -> Far -> Reference -> Done
+  without returning to step 1 or rebooting the display. Repeat for **Winch
+  Calibration** and **Joystick Calibration**.
+- Confirm **Joystick Calibration** appears in the CTRL AUX Assign drop-down.
+- With the main CTRL-TS screen active, stop/close SRVR. CTRL-TS must switch to the
+  original loading splash and show exactly **Waiting for SRVR**. Relaunch SRVR and
+  confirm the main UI returns automatically without reboot.
+- Confirm the status banner reads `E-STOP | CTRL & W1P` when both sources are
+  reported, with no leading slash and no square-box glyph.
+- Confirm DRIVE, SPEED, POSITION and AUX 1..AUX 5 headings contain no square-box
+  replacement glyphs.
+- Confirm the installed macOS SRVR app icon shows equal-size `P2P` / `SRVR` rows in
+  the dark/green CTRL-TS visual style.
 
 ## CTRL / analogue-input bench
 
@@ -33,10 +55,13 @@
 
 1. With CTRL and matching SRVR connected, move the joystick repeatedly through
    centre and both directions for at least 30 seconds. The SRVR Value/Percentage
-   display must track continuously with no periodic 1-2 second freezes.
+   display must track continuously with no periodic 1-2 second freezes. A fast
+   0 -> 100% stick step should visibly settle promptly rather than stair-step over
+   roughly a second; record observed end-to-end latency on the bench.
 2. Leave SRVR running long enough to cross many former two-second authority-poll
    intervals. CTRL must remain responsive; matched operation must not issue HTTP
-   authority requests from the real-time loop.
+   authority requests from the real-time loop. Confirm normal CTRL A7 telemetry is
+   approximately 40 Hz (25 ms cadence) and SRVR live UI notification is 25 ms.
 3. Run Left/Centre/Right joystick calibration. Immediately after the final Right
    capture, verify the Setup display reads approximately -100% at captured Left,
    0% at captured Centre and +100% at captured Right without pressing Apply.

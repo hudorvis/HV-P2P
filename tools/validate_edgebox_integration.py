@@ -4,14 +4,14 @@ from pathlib import Path
 import hashlib, re, struct, sys
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.10.01.03'
+VER = '26.10.01.04'
 CTRL = ROOT / f'HV_P2P_CTRL_EDGEBOX_v{VER}' / f'HV_P2P_CTRL_EDGEBOX_v{VER}.ino'
 W1P = ROOT / f'HV_P2P_W1P_EDGEBOX_v{VER}' / f'HV_P2P_W1P_EDGEBOX_v{VER}.ino'
 TS = ROOT / f'HV_P2P_CTRL_TS_v{VER}' / f'HV_P2P_CTRL_TS_v{VER}.ino'
 FRAME_CTRL = ROOT / f'HV_P2P_CTRL_EDGEBOX_v{VER}' / 'HV_P2P_RS485_Frame.h'
 FRAME_TS = ROOT / f'HV_P2P_CTRL_TS_v{VER}' / 'HV_P2P_RS485_Frame.h'
 IMG_HDR = ROOT / f'HV_P2P_CTRL_EDGEBOX_v{VER}' / 'HV_P2P_CTRL_TS_Firmware_Image.h'
-SRVR_DIR = ROOT / 'SRVR_GitHub_v26.10.01.03'
+SRVR_DIR = ROOT / 'SRVR_GitHub_v26.10.01.04'
 SRVR = SRVR_DIR / 'backend.py'
 MAIN = SRVR_DIR / 'main.py'
 SETUP_QML = SRVR_DIR / 'qml' / 'pages' / 'SetupPage.qml'
@@ -139,7 +139,8 @@ must('EDGEBOX_JOY_5V_COUNTS = 13333.3f' in c, 'CTRL 0-5V field endpoint accounts
 expected_counts=(2.5/6.144)*32768.0
 must(abs(expected_counts-13333.3)<1.0, f'ADC scaling math: 5V field -> ~{expected_counts:.1f} counts')
 must('SRVR calibration authoritative' in c and 'Set Left / Set Centre / Set Right' in c, 'SRVR remains joystick Left/Centre/Right calibration authority')
-must('JOY_SAMPLES = 8' in c and 'trimmedSum' in c and 'minRaw' in c and 'maxRaw' in c, 'CTRL joystick uses 8-sample trimmed-mean noise filtering')
+must('JOY_SAMPLES = 5' in c and 'CONTROL_INTERVAL_MS   25' in c and 'trimmedSum' in c and 'minRaw' in c and 'maxRaw' in c, 'CTRL joystick uses 25 ms / 5-sample low-latency trimmed-mean acquisition')
+must('sgmEnsureChannelVerified(SGM_CONFIG_AI1_CONT_800SPS_6V144, "AI1 joystick")' in c and '(0.20f * g_joy_filtered) + (0.80f * axis)' in c, 'CTRL preserves verified AI1 identity while using low-latency joystick filtering')
 must('if(!g_ads_inited) flags |= FLAG_ADS1115_FAULT;' in c, 'EdgeBox analogue/I2C fault reuses wire-compatible CTRL analogue fault flag')
 
 # AUX is touchscreen only, and A7 packet remains byte-for-byte compatible.
@@ -213,8 +214,8 @@ must('CTRL_TS_SEMVER' in t and 'storedVersion == CTRL_TS_SEMVER' in t, 'CTRL-TS 
 must('Do NOT change g_fw_image_hash while the old application is still running' in t and 'return verify;' in t, 'CTRL-TS does not claim the staged image hash before reboot')
 must('MAX_IMAGE = 0x380000' in read(ROOT/'tools'/'embed_ctrl_ts_firmware.py'), 'CTRL-TS embed helper enforces the conservative 0x380000 target OTA slot')
 
-# Lock the reviewed v26.10.01.03 W1P safety-critical implementations via normalized function hashes.
-# Safety-facing functions intentionally extended in v26.10.01.03 are hash-locked separately below.
+# Lock the reviewed v26.10.01.04 W1P safety-critical implementations via normalized function hashes.
+# Safety-facing functions intentionally extended in v26.10.01.04 are hash-locked separately below.
 expected_w1p={
 'modbusCRC16':'2d54f956989bcfd6a5b539664c14228f13046f16daca4911cd6467fcafe6cd3e',
 'modbusWaitForSilentGap':'46cb53133b81b90bcc184ace784e64e1f807823485cd1ea29ad3b228a4b94cb8',
@@ -231,7 +232,7 @@ expected_w1p={
 'servicePeerTimeout':'81d5f57232771f48dbe5edd46161f75a8f5adf2aee370e9bc6180d64d61a48ff',
 'preserveDisplayedPositionForMotorDirectionChange':'e78aafbc76eb48601a04eed3703372a0dfd1f2c19070e891fdbd1952984942a0',
 }
-for fn,h in expected_w1p.items(): must(normalized_func_hash(w,fn)==h, f'W1P reviewed v26.10.01.03 safety-critical logic preserved: {fn}')
+for fn,h in expected_w1p.items(): must(normalized_func_hash(w,fn)==h, f'W1P reviewed v26.10.01.04 safety-critical logic preserved: {fn}')
 
 expected_w1p_v07_safety={
 'driveAutoEnableReady':'ce2cd73df1636f1ba2dd7ba23da9eca4f983ba3ee6a179dd9b5398ad831dc78f',
@@ -240,7 +241,7 @@ expected_w1p_v07_safety={
 'serviceVelocityCommandWatchdog':'a6dc0d9244bf1c7b64d28291c56c8fcd20abb21af5566a5bf396e1723fdd9111',
 'hvPrepareSafeServiceState':'92026ffa3126d53e57d9f111583d11f7ef52b19b16528af82b970108bf4eb8ab',
 }
-for fn,h in expected_w1p_v07_safety.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.10.01.03 reviewed safety extension hash locked: {fn}')
+for fn,h in expected_w1p_v07_safety.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.10.01.04 reviewed safety extension hash locked: {fn}')
 
 # Leadshine contract.
 for tok in ['RS485_BAUD = 115200','DRIVE_MODBUS_ID = 1','SERIAL_8N1','MODBUS_REPLY_TIMEOUT_MS = 50','MODBUS_READ_RETRIES = 3','MODBUS_INTERFRAME_GAP_US = 2000','W1P_PEER_TIMEOUT_MS = 750']:
@@ -258,7 +259,7 @@ must('driveStopNow();' in extract_func(w,'servicePeerTimeout'), 'W1P peer-timeou
 must('if (line == "STOP")' in w and 'parseFloatArg(line, "SW_SRVON", val)' in w, 'W1P STOP and SW_SRVON command contract retained')
 must('Do not torque-enable the servo while the output map is still being migrated' in w and '!g.do4_brake_assignment_ok' in w, 'SW Servo Enable waits for verified BRK-OFF/output map')
 
-# v26.10.01.03 independent W1P command-deadman and service safety gate.
+# v26.10.01.04 independent W1P command-deadman and service safety gate.
 wd=extract_func(w,'serviceVelocityCommandWatchdog')
 must('W1P_VEL_COMMAND_TIMEOUT_MS = 500' in w, 'W1P independent VEL watchdog timeout is 500ms')
 must('lastVelocityCommandMs' in wd and 'lastPeerPacketMs' not in wd, 'W1P VEL watchdog keys only from VEL freshness, not generic peer traffic')
@@ -270,7 +271,7 @@ must(all(tok in service_gate for tok in ('driveStopNow();','g.drive_writes_enabl
 must(w.count('hvPrepareSafeServiceState(reason)') >= 2 and 'hvPrepareSafeServiceState(hvUploadError)' in w, 'W1P OTA/reboot/reset all enter the safe service gate')
 must('SERVICE_REARM' in w and 'STOP_CLEAR_LATCH' in w, 'W1P service/watchdog latch requires STOP re-arm path')
 
-# v26.10.01.03 closes the W1P Setup-IP semantic gap with a coordinated safe
+# v26.10.01.04 closes the W1P Setup-IP semantic gap with a coordinated safe
 # readdress: the old address remains active until W1P proves stopped/braked,
 # persists the new local IP, acknowledges, then reboots.
 network_cmd=extract_func(w,'handleCommand')
@@ -333,7 +334,7 @@ must('▣  CTRL-TS' in q and 'CTRL-TS / FIRMWARE' not in q and 'ctrlTsFirmwareSt
 must('profileValue(Number(gp.x), key)' in span, 'Free-D geometry markers are sampled from the exact rendered cable path')
 
 
-# v26.10.01.03 locked Run/Setup revision and Virtual demo-source contract.
+# v26.10.01.04 locked Run/Setup revision and Virtual demo-source contract.
 main_qml = read(SRVR_DIR / 'qml' / 'Main.qml')
 must('text:"HV P2P\\nSRVR"' in main_qml and 'HV P2P  |  SRVR' not in main_qml and 'P2P°\\nSRVR' not in main_qml, 'Run/Setup shared header uses locked two-line HV P2P / SRVR logo only')
 must('pendingShortcutAction' in main_qml and 'shortcutConfirmRemaining = 5' in main_qml and 'Confirm? ' in main_qml and 'shortcutConfirmTimer' in main_qml, 'Run Save/Recall/Slip use one global five-second two-step confirmation state')
@@ -360,8 +361,17 @@ must('stale_release_report' in s and 'reported_match and version_current and aut
 must('return self._current_firmware_version()' in s and '"Update required"' in s, 'SRVR firmware diagnostics use the running SRVR release as authority')
 must('if(g_fw_runtime_screen && boot_scr) return;' in t and 'lv_obj_t *previous_scr = boot_scr;' in t and 'lv_obj_del(previous_scr)' in t, 'CTRL-TS replaces the boot JPEG splash with the dedicated update screen on FW_BEGIN')
 must('if(pct != g_fw_last_display_pct)' in t, 'CTRL-TS redraws update progress only when integer percentage changes')
-must('g_status_text = "E-Stop " + src;' in t and 'detail.startsWith("E-Stop / ")' in t, 'CTRL-TS E-stop banner reconstructs delimiter-safe source text without slash typo')
-must('ctrl_version=v26.10.01.03' in c and 'FW=" + String(FW_VERSION)' in w, 'CTRL and W1P publish actual firmware identity for Setup')
+must('g_status_text = "E-Stop " + src;' in t and 'detail.startsWith("E-Stop / ")' in t and 'while(detail.startsWith("/"))' in t, 'CTRL-TS E-stop banner reconstructs delimiter-safe source text without slash typo')
+for glyph in ('◇','⚙','◴','⌖'):
+    must(glyph not in t, f'CTRL-TS compiled-font UI contains no unsupported glyph {glyph!r}')
+must('const char *aux_heads[AUX_COUNT]={"AUX 1","AUX 2","AUX 3","AUX 4","AUX 5"}' in t and 'make_label(drive,"DRIVE"' in t and 'make_label(speed,"SPEED"' in t and 'make_label(position,"POSITION"' in t, 'CTRL-TS AUX/Drive/Speed/Position headings are plain supported text')
+must('static void service_runtime_connection_screen()' in t and 'const char *msg = ctrl_link_alive ? "Waiting for SRVR" : "Waiting for CTRL";' in t and 'lv_scr_load(boot_scr);' in t and 'lv_scr_load(g_main_scr);' in t, 'CTRL-TS returns to the resident startup splash on runtime SRVR/CTRL loss')
+must('"Limit Calibration", "Winch Calibration", "Joystick Calibration"' in q, 'CTRL AUX Assign exposes Joystick Calibration beside the existing calibration actions')
+aux_handler=s[s.index('def _handle_aux_action'):s.index('def _display_field', s.index('def _handle_aux_action'))]
+must('self.calibration_open and self.calibration_type == "Limit"' in aux_handler and 'self.calibration_open and self.calibration_type == "Winch"' in aux_handler and 'self.joystick_calibration_open' in aux_handler, 'AUX calibration confirmations advance open wizards instead of reopening step 1')
+must('def _legacy_firmware_push_worker' in s and 'HTTPConnection' in s and '"/update/app"' in s and 'multipart/form-data' in s and 'daemon=True' in s and 'def _firmware_version_is_older' in s, 'SRVR has asynchronous backwards-compatible OTA push for older pre-beacon .01 field nodes without downgrading newer firmware')
+must('firmware_bundle=authority.bundle' in m, 'SRVR backend receives the already validated immutable firmware bundle for legacy OTA bridging')
+must('ctrl_version=v26.10.01.04' in c and 'FW=" + String(FW_VERSION)' in w, 'CTRL and W1P publish actual firmware identity for Setup')
 must('ctrlFirmwareVersion' in s and 'w1pFirmwareVersion' in s and 'ctrlEStopActive' in s and 'w1pEStopActive' in s, 'SRVR exposes locked CTRL/W1P Setup diagnostics')
 must('text:"CTRL-TS Link"' in q and 'backend.ctrlTsConnected?"Active":"Disconnected"' in q, 'CTRL-TS Link uses the same Active/Disconnected dot status model as node links')
 must('anchors.rightMargin:root.f(15)' in q and 'anchors.leftMargin:root.f(15)' in q and q.count('width:(parent.width-root.f(1))/2') >= 2, 'Motion Profiles centre divider has even Mode 1/Mode 2 spacing')
