@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 REQUIRED_HW = "WS-ESP32S3-7"
 REQUIRED_PROTO = 1
-REQUIRED_VERSION = "v26.10.02.04"
+REQUIRED_VERSION = "v26.10.02.05"
 REQUIRED_SHA = "a" * 64
 
 @dataclass(frozen=True)
@@ -32,7 +32,7 @@ def identity_ok(p: Peer, image_available: bool = True) -> bool:
 
 
 def should_auto_update(p: Peer, image_available: bool = True) -> bool:
-    # v26.10.02.04+ capability is mandatory. Pre-.03 receivers can speak the
+    # v26.10.02.05+ capability is mandatory. Pre-.03 receivers can speak the
     # transport protocol but self-program flash while their RGB/PSRAM display is
     # active, so the carrier must require a one-time USB bootstrap instead.
     return transport_ok(p) and p.safe_ota >= 2 and image_available and not identity_ok(p, image_available)

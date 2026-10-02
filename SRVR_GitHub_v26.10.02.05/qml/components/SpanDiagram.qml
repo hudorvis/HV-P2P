@@ -21,6 +21,11 @@ Item {
     // Run positions are relative to Near.  Free-D geometry uses the same X span.
     property real currentPosition: 0
     property real refPoint: 0
+    // SRVR-authoritative normalized Near->Far coordinates. Run supplies these
+    // so its horizontal markers exactly match CTRL-TS; -1 keeps the legacy
+    // absolute-coordinate mapping for other diagram uses.
+    property real currentFraction: -1
+    property real refFraction: -1
     property real nearLimit: 0
     property real farLimit: 100
     property real nearRamp: 0
@@ -42,6 +47,8 @@ Item {
     onShowReferenceChanged: canvas.requestPaint()
     onCurrentPositionChanged: canvas.requestPaint()
     onRefPointChanged: canvas.requestPaint()
+    onCurrentFractionChanged: canvas.requestPaint()
+    onRefFractionChanged: canvas.requestPaint()
     onNearLimitChanged: canvas.requestPaint()
     onFarLimitChanged: canvas.requestPaint()
     onNearRampChanged: canvas.requestPaint()
@@ -102,6 +109,10 @@ Item {
             var span = Math.max(0.001, hi-lo)
             var q = Math.max(lo, Math.min(hi, Number(v)))
             return left + (q-lo)/span*(right-left)
+        }
+        function xForFraction(frac, left, right) {
+            var q = Math.max(0, Math.min(1, Number(frac)))
+            return left + q*(right-left)
         }
         function profileValue(xv, key) {
             var list = root.cableProfile
@@ -292,14 +303,14 @@ Item {
             }
 
             if(root.showReference) {
-                var rx=xFor(root.refPoint,left,right), ry=yy(root.refPoint)
+                var rx=root.refFraction>=0 ? xForFraction(root.refFraction,left,right) : xFor(root.refPoint,left,right), ry=yy(root.refPoint)
                 c.fillStyle=root.accent
                 c.beginPath(); c.moveTo(rx,ry-5);c.lineTo(rx+5,ry);c.lineTo(rx,ry+5);c.lineTo(rx-5,ry);c.closePath();c.fill()
                 c.font="12px Helvetica Neue"; c.textAlign="center"; c.fillText("REF",rx,ry-16)
             }
 
             if(root.showSkate) {
-                var sx=xFor(root.currentPosition,left,right), sy=yy(root.currentPosition)
+                var sx=root.currentFraction>=0 ? xForFraction(root.currentFraction,left,right) : xFor(root.currentPosition,left,right), sy=yy(root.currentPosition)
                 // The moving green arrow and camera/skate icon are deliberately
                 // self-explanatory; no SKATE text is drawn, avoiding collisions
                 // with the Near/Far Limit labels at either endpoint.

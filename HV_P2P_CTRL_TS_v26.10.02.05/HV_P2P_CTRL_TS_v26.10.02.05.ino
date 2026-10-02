@@ -14,7 +14,7 @@
 #include <esp_system.h>
 #include <esp_attr.h>
 
-#define CTRL_TS_SEMVER "v26.10.02.04"
+#define CTRL_TS_SEMVER "v26.10.02.05"
 #define CTRL_TS_VERSION "HV P2P CTRL-TS " CTRL_TS_SEMVER
 #define CTRL_TS_HW_ID "WS-ESP32S3-7"
 #define HMI_BAUD 115200
@@ -33,6 +33,15 @@ static uint16_t g_rs485Seq = 1;
 static bool g_ctrl_fw_compatible = false;
 static String g_event_queue[8];
 static uint8_t g_event_head = 0, g_event_tail = 0;
+// LVGL callbacks execute in the Waveshare LVGL task. Keep them heap-free and
+// side-effect-free: a touch callback only queues an AUX index, and the Arduino
+// main loop performs all AUX state/UI/protocol work under the LVGL mutex.
+static portMUX_TYPE g_aux_touch_mux = portMUX_INITIALIZER_UNLOCKED;
+static uint8_t g_aux_touch_queue[8] = {0};
+static volatile uint8_t g_aux_touch_head = 0, g_aux_touch_tail = 0;
+static volatile bool g_aux_cancel_pending = false;
+static uint32_t g_boot_id = 0;
+static esp_reset_reason_t g_boot_reset_reason = ESP_RST_UNKNOWN;
 
 // Automatic CTRL-hosted CTRL-TS firmware receiver. The currently running
 // application remains untouched unless FW_END validates successfully; an
@@ -163,6 +172,10 @@ static String g_hmi_line;
 static String g_last_applied_hmi_line;
 
 static float g_pos=0.0f, g_near=0.0f, g_ref=50.0f, g_far=100.0f, g_to_near=0.0f, g_to_far=0.0f;
+// Canonical SRVR-derived normalized positions. These are carried explicitly so
+// the CTRL-TS travel markers cannot diverge from the SRVR Top/Side views through
+// local coordinate interpretation or stale absolute/relative limits.
+static float g_pos_frac=0.0f, g_ref_frac=0.5f;
 static bool g_ref_visible = true;
 static float g_speed_mps=0.0f, g_speed_kmh=0.0f, g_max_mps=0.0f, g_max_kmh=0.0f;
 static float g_ramp_near=0.0f, g_ramp_far=0.0f;
@@ -209,7 +222,7 @@ static float g_last_ramp_near_draw = -999999.0f;
 static float g_last_ramp_far_draw = -999999.0f;
 
 // -------------------- CTRL-TS Settings page --------------------
-// Safe v26.10.02.04 approach: no backlight/brightness writes. This page only
+// Safe v26.10.02.05 approach: no backlight/brightness writes. This page only
 // edits CTRL network settings over UART and therefore should preserve the known
 // Keep the proven splash/boot path; do not write to the backlight controller.
 static lv_obj_t *settings_overlay = nullptr;
@@ -222,7 +235,6 @@ static bool g_settings_visible = false;
 static bool g_settings_dirty = false;
 static int g_settings_selected_field = 0;
 static int g_settings_selected_octet = 0;
-static uint32_t g_settings_reset_due_ms = 0;
 static String g_cfg_srvr_ip = "172.20.1.100";
 static String g_cfg_ctrl_ip = "172.20.1.101";
 static String g_cfg_subnet  = "255.255.0.0";
@@ -258,7 +270,7 @@ static void force_screen_refresh(){
 }
 
 static void screen_keepalive(){
-  // v26.10.02.04: no periodic full-screen or left-strip invalidation or brightness writes.
+  // v26.10.02.05: no periodic full-screen or left-strip invalidation or brightness writes.
   // The Waveshare/LVGL port refreshes changed objects itself; forcing a full
   // screen refresh every second caused the visible 1-second flicker/glitch.
   if(!g_ui_ready) return;
@@ -519,6 +531,42 @@ static String pop_hmi_event(){
   g_event_tail = uint8_t((g_event_tail + 1) % 8);
   return out;
 }
+static bool queue_aux_touch(uint8_t idx){
+  if(idx >= AUX_COUNT) return false;
+  bool ok = false;
+  portENTER_CRITICAL(&g_aux_touch_mux);
+  uint8_t next = uint8_t((g_aux_touch_head + 1) % 8);
+  if(next != g_aux_touch_tail){
+    g_aux_touch_queue[g_aux_touch_head] = idx;
+    g_aux_touch_head = next;
+    ok = true;
+  }
+  portEXIT_CRITICAL(&g_aux_touch_mux);
+  return ok;
+}
+static int pop_aux_touch(){
+  int idx = -1;
+  portENTER_CRITICAL(&g_aux_touch_mux);
+  if(g_aux_touch_tail != g_aux_touch_head){
+    idx = int(g_aux_touch_queue[g_aux_touch_tail]);
+    g_aux_touch_tail = uint8_t((g_aux_touch_tail + 1) % 8);
+  }
+  portEXIT_CRITICAL(&g_aux_touch_mux);
+  return idx;
+}
+static void queue_aux_cancel(){
+  portENTER_CRITICAL(&g_aux_touch_mux);
+  g_aux_cancel_pending = true;
+  portEXIT_CRITICAL(&g_aux_touch_mux);
+}
+static bool pop_aux_cancel(){
+  bool pending = false;
+  portENTER_CRITICAL(&g_aux_touch_mux);
+  pending = g_aux_cancel_pending;
+  g_aux_cancel_pending = false;
+  portEXIT_CRITICAL(&g_aux_touch_mux);
+  return pending;
+}
 static String fw_meta_key(const char *prefix, const char *partitionLabel){
   String key = String(prefix) + "_" + String(partitionLabel ? partitionLabel : "");
   // ESP32 NVS keys are limited to 15 characters. Our custom OTA labels are app0/app1.
@@ -728,7 +776,9 @@ static String fw_identity_line(){
   // and removes the risky second CH422G initialization on the headless boot.
   // CTRL .04+ therefore streams self-update data only to level 2 or newer.
   return String("hw=") + CTRL_TS_HW_ID + "|proto=" + String(HVP2PRS485::PROTOCOL_VERSION) +
-         "|version=" + String(CTRL_TS_SEMVER) + "|hash=" + g_fw_image_hash + "|safe_ota=2";
+         "|version=" + String(CTRL_TS_SEMVER) + "|hash=" + g_fw_image_hash + "|safe_ota=2" +
+         "|boot_id=" + String((unsigned long)g_boot_id, HEX) +
+         "|reset_reason=" + String((int)g_boot_reset_reason);
 }
 
 static bool boot_get_bool(const String &line, const char *key, bool def){
@@ -1118,7 +1168,7 @@ static void confirm_aux_idx(int idx, bool send_command){
   selected_aux = -1;
   g_selected_aux_ms = 0;
   confirmed_aux = idx;
-  clear_confirm_at = now_ms + 2000;  // v26.10.02.04: confirmed AUX tile stays lit for 2 seconds
+  clear_confirm_at = now_ms + 2000;  // v26.10.02.05: confirmed AUX tile stays lit for 2 seconds
   g_aux_suppress_until_ms[idx] = now_ms + 400;
   style_aux(idx,false,true);
   snprintf(msg,sizeof(msg),"AUX %d Confirmed", idx+1);
@@ -1180,7 +1230,7 @@ static void style_w1p_status_pill(int state){
 }
 
 static void style_estop_pill(bool active){
-  // v26.10.02.04: the middle status banner follows the SRVR-resolved state.
+  // v26.10.02.05: the middle status banner follows the SRVR-resolved state.
   // A local CTRL-TS UART/display gap must not invent "E-Stop CTRL" while SRVR
   // is still sending Status | Active. Real CTRL/W1P E-Stops are still shown
   // immediately when SRVR sends status=E-Stop... / status_level=red.
@@ -1228,7 +1278,7 @@ static void refresh_status_ui(){
   style_status_pill_cached(0,pill_ctrl,lbl_ctrl,"CTRL",g_ctrl_ok);
   if(pill_srvr && lbl_srvr) style_status_pill_cached(1,pill_srvr,lbl_srvr,"SRVR",g_srvr_ok);
   style_w1p_status_pill(g_w1p_health);
-  // v26.10.02.04: do not turn the main middle box red purely because the
+  // v26.10.02.05: do not turn the main middle box red purely because the
   // CTRL-TS local UART/display link hiccuped. The SRVR status packet is the
   // authoritative source for Active / Un-Calibrated / E-Stop display state.
   bool stopped_visual = (g_status_level >= 2) || g_estop_active;
@@ -1258,15 +1308,29 @@ static bool is_within_aux(lv_obj_t *target){
 }
 
 static void bg_event_cb(lv_event_t *e){
-  if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const lv_event_code_t code = lv_event_get_code(e);
+  if(code != LV_EVENT_PRESSED && code != LV_EVENT_CLICKED) return;
   lv_obj_t *target = lv_event_get_target(e);
   if(is_within_aux(target)) return;
-  cancel_pending_aux();
+  // Match AUX buttons: callback records intent only; main loop owns UI state.
+  queue_aux_cancel();
 }
 
 static void aux_event_cb(lv_event_t *e){
+  if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   int idx=(int)(intptr_t)lv_event_get_user_data(e);
-  confirm_aux_idx(idx, true);
+  // Never allocate String objects, mutate AUX/UI state, or queue RS485 traffic
+  // inside the LVGL task callback. The main loop owns those operations.
+  queue_aux_touch((uint8_t)idx);
+}
+
+static void service_aux_touch_events(){
+  if(pop_aux_cancel()) cancel_pending_aux();
+  for(int n=0; n<8; ++n){
+    int idx = pop_aux_touch();
+    if(idx < 0) break;
+    confirm_aux_idx(idx, true);
+  }
 }
 
 static String getField(const String &line, const char *key){
@@ -1517,8 +1581,9 @@ static void settings_event_cb(lv_event_t *e){
     g_cfg_subnet = g_edit_subnet;
     g_cfg_gateway = g_edit_gateway;
     send_settings_to_ctrl(true);
-    if(lbl_settings_note) set_label_text_if_changed(lbl_settings_note, "Applied. Resetting CTRL-TS and CTRL...");
-    g_settings_reset_due_ms = millis() + 900;
+    if(lbl_settings_note) set_label_text_if_changed(lbl_settings_note, "Applied. CTRL reset requested.");
+    // CTRL-TS network settings live in CTRL; an ordinary settings commit must
+    // never reboot the touchscreen.
     return;
   }
 }
@@ -1576,13 +1641,7 @@ static void update_progress_marker(){
   const int bar_left = BAR_LIMIT_LEFT;
   const int bar_right = BAR_LIMIT_RIGHT;
   const int marker_w = 5;
-  float pos = g_pos;
-  float nearp = g_near;
-  float farp = g_far;
-  float frac = 0.0f;
-  if(farp > nearp + 0.001f) frac = (pos - nearp) / (farp - nearp);
-  if(frac < 0.0f) frac = 0.0f;
-  if(frac > 1.0f) frac = 1.0f;
+  float frac = constrain(g_pos_frac, 0.0f, 1.0f);
   int x = (int)(bar_left + frac * (float)(bar_right - bar_left - marker_w));
   if(x < bar_left) x = bar_left;
   if(x > bar_right - marker_w) x = bar_right - marker_w;
@@ -1602,10 +1661,7 @@ static void update_reference_marker(){
   const int bar_left = BAR_LIMIT_LEFT;
   const int bar_right = BAR_LIMIT_RIGHT;
   const int marker_w = 3;
-  float frac = 0.0f;
-  if(g_far > g_near + 0.001f) frac = (g_ref - g_near) / (g_far - g_near);
-  if(frac < 0.0f) frac = 0.0f;
-  if(frac > 1.0f) frac = 1.0f;
+  float frac = constrain(g_ref_frac, 0.0f, 1.0f);
   int marker_x = (int)(bar_left + frac * (float)(bar_right - bar_left - marker_w));
   if(marker_x < bar_left) marker_x = bar_left;
   if(marker_x > bar_right - marker_w) marker_x = bar_right - marker_w;
@@ -1704,6 +1760,12 @@ static void apply_hmi_packet(const String &line){
   g_near      = getFieldFloat(line, "near", g_near);
   g_ref       = getFieldFloat(line, "ref", g_ref);
   g_far       = getFieldFloat(line, "far", g_far);
+  // Prefer SRVR's canonical normalized coordinates; fall back to the legacy
+  // local calculation when talking to an older SRVR packet.
+  float posFallback = (g_far > g_near + 0.001f) ? ((g_pos-g_near)/(g_far-g_near)) : 0.0f;
+  float refFallback = (g_far > g_near + 0.001f) ? ((g_ref-g_near)/(g_far-g_near)) : 0.0f;
+  g_pos_frac = constrain(getFieldFloat(line, "pos_frac", posFallback), 0.0f, 1.0f);
+  g_ref_frac = constrain(getFieldFloat(line, "ref_frac", refFallback), 0.0f, 1.0f);
   g_to_near   = getFieldFloat(line, "to_near", g_to_near);
   g_to_far    = getFieldFloat(line, "to_far", g_to_far);
   g_speed_mps = getFieldFloat(line, "speed_mps", g_speed_mps);
@@ -1755,7 +1817,7 @@ static void apply_hmi_packet(const String &line){
     else g_status_level = 0;
   }
 
-  // v26.10.02.04: if SRVR sends explicit status/status_level, trust it as
+  // v26.10.02.05: if SRVR sends explicit status/status_level, trust it as
   // the authoritative display state. Do not override it locally with a CTRL
   // error just because the touchscreen/CTRL UART side saw a transient gap.
   g_estop_active = packet_estop;
@@ -1880,7 +1942,7 @@ static void apply_hmi_packet(const String &line){
   if(mode_changed || (prev_status_text != g_status_text) || (prev_status_level != g_status_level) || (prev_estop != g_estop_active) || (prev_estop_source != g_estop_source) || (prev_ctrl != g_ctrl_ok) || (prev_srvr != g_srvr_ok) || (prev_w1p != g_w1p_ok) || (prev_w1p_health != g_w1p_health)) {
     refresh_status_ui();
   }
-  // v26.10.02.04: no left-strip/full-screen invalidation on packets; progress marker animates locally.
+  // v26.10.02.05: no left-strip/full-screen invalidation on packets; progress marker animates locally.
 }
 
 
@@ -1889,7 +1951,7 @@ static void apply_layout_packet(const String &line){
   // on CTRL cannot overwrite the screen title/version or trigger header redraws.
   String hint = getField(line, "hint");
   if(lbl_title) set_label_text_if_changed(lbl_title, "HV P2P\nCTRL-TS");
-  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.02.04");
+  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.02.05");
   if(hint.length() && hint.startsWith("ERROR")) set_touch_debug(hint.c_str());
   for(int i=0;i<AUX_COUNT;i++){
     String key = String("aux") + String(i+1);
@@ -2299,7 +2361,7 @@ static void create_ui(){
   lv_obj_t *brand=make_panel(frame,SX,HEADER_Y,70,HEADER_H,C_BG,0x63d84e,7);
   lbl_title=make_label(brand,"HV P2P\nCTRL-TS",0,6,&lv_font_montserrat_12,lv_color_hex(C_FG),70);
   lv_obj_set_style_text_line_space(lbl_title,-2,0);
-  lbl_subtitle=make_label(frame,"v26.10.02.04",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
+  lbl_subtitle=make_label(frame,"v26.10.02.05",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
 
   pill_ctrl=make_panel(frame,255,HEADER_Y,126,HEADER_H,C_PANEL,C_BORDER,5);
   dot_ctrl=lv_obj_create(pill_ctrl); lv_obj_set_pos(dot_ctrl,9,15); lv_obj_set_size(dot_ctrl,8,8); lv_obj_set_style_radius(dot_ctrl,LV_RADIUS_CIRCLE,0); lv_obj_set_style_border_width(dot_ctrl,0,0); lv_obj_set_style_bg_color(dot_ctrl,lv_color_hex(0xef5757),0); lv_obj_clear_flag(dot_ctrl,LV_OBJ_FLAG_SCROLLABLE);
@@ -2451,7 +2513,7 @@ static void service_link_state(){
 
   bool link_alive = last_hmi_rx && ((millis() - last_hmi_rx) <= HMI_TIMEOUT_MS);
   if(!link_alive) {
-    // v26.10.02.04: local UART/display timeout is a CTRL-TS link warning, not
+    // v26.10.02.05: local UART/display timeout is a CTRL-TS link warning, not
     // proof of a real CTRL E-Stop. Keep the last SRVR-resolved status banner so
     // the touchscreen cannot randomly show "Status | E-Stop CTRL" while SRVR
     // remains "Status | Active". The CTRL status pill can still show ERROR.
@@ -2470,8 +2532,11 @@ void setup(){
   // retain LCD_BL=HIGH across ESP.restart(), so assert blackout first on the
   // deliberate headless boot. No flash access is required to decide this mode.
   const esp_reset_reason_t earlyResetReason = esp_reset_reason();
+  g_boot_reset_reason = earlyResetReason;
+  g_boot_id = esp_random();
+  if(g_boot_id == 0) g_boot_id = 1;
   delay(20);
-  Serial.printf("[WS-HMI] early reset_reason=%d\n", (int)earlyResetReason);
+  Serial.printf("[WS-HMI] early reset_reason=%d boot_id=%08lX\n", (int)earlyResetReason, (unsigned long)g_boot_id);
   bool safeHeadlessBoot = fw_prepare_headless_mode();
   if(safeHeadlessBoot && !fw_headless_blackout()){
     Serial.println("[FW SAFE] blackout setup failed; abandoning headless update");
@@ -2546,7 +2611,6 @@ void setup(){
 }
 
 void loop(){
-  if(g_settings_reset_due_ms && millis() >= g_settings_reset_due_ms) ESP.restart();
   fw_service_reboot();
 
   if(fw_display_owned()){
@@ -2559,6 +2623,7 @@ void loop(){
     lvgl_port_unlock();
   } else {
     lvgl_port_lock(-1);
+    service_aux_touch_events();
     handle_hmi_rx();
     if(!fw_display_owned()){
       service_runtime_connection_screen();

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER="26.10.02.04"
+VER="26.10.02.05"
 W=(ROOT/f"HV_P2P_W1P_EDGEBOX_v{VER}/HV_P2P_W1P_EDGEBOX_v{VER}.ino").read_text()
 C=(ROOT/f"HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino").read_text()
 T=(ROOT/f"HV_P2P_CTRL_TS_v{VER}/HV_P2P_CTRL_TS_v{VER}.ino").read_text()
@@ -23,7 +23,7 @@ edgebox_fqbn = N[N.index('EDGEBOX_FQBN'):N.index('HMI_FQBN')]
 assert 'PartitionScheme=app3M_fat9M_16MB' in edgebox_fqbn
 assert 'PartitionScheme=custom' not in edgebox_fqbn
 
-# v26.10.02.04 operator input / safety refinements.
+# v26.10.02.05 operator input / safety refinements.
 assert 'self.reverse_joystick = False' in B
 assert 'VEL_KEEPALIVE_S = 0.15' in B
 assert 'def joystickPercentage' in B
@@ -36,9 +36,9 @@ assert 'sgmSelectChannelVerified(SGM_CONFIG_AI0_CONT_800SPS_6V144, "AI0 E-stop")
 assert 'sgmEnsureChannelVerified(SGM_CONFIG_AI1_CONT_800SPS_6V144, "AI1 joystick")' in C
 assert 'Always restore and verify AI1' in C
 assert 'CTRL_ESTOP_HEALTHY_MIN_V = 3.5f' in C and 'CTRL_ESTOP_HEALTHY_CONFIRM_SAMPLES = 3' in C
-# v26.10.02.04 direction-regression guard: CTRL normalises physical Left/Right
+# v26.10.02.05 direction-regression guard: CTRL normalises physical Left/Right
 # before SRVR, so the default backend direction is Normal and sign is preserved.
-BT=(ROOT/'SRVR_GitHub_v26.10.02.04/tools/test_backend_logic.py').read_text()
+BT=(ROOT/'SRVR_GitHub_v26.10.02.05/tools/test_backend_logic.py').read_text()
 assert 'assert b.reverse_joystick is False' in BT
 assert 'physical Left=-1' in B
 assert 'b.requested_speed_mps < 0.0' in BT
@@ -53,7 +53,7 @@ assert 'def systemStatusLevel' in B and 'System Un-Calibrated' in B
 assert 'g_boot_session_id' in W and 'BOOT_ID=' in W
 assert 'fw_ensure_update_screen' in T and 'fw_display_owned' in T
 assert 'if(fw_display_owned())' in T and 'CTRL-TS self-flash' in T
-# v26.10.02.04 safe CTRL-TS self-update architecture.  The .02.01/.02.02
+# v26.10.02.05 safe CTRL-TS self-update architecture.  The .02.01/.02.02
 # experiment that changed RGB PCLK/bounce buffers and restarted RGB DMA while
 # flash was being written is intentionally prohibited.  A displayed FW_BEGIN
 # stages the exact target in retained internal RAM then reboots into a
@@ -73,7 +73,7 @@ assert 'g_fw_safe_reboot_due_ms' in T and 'fw_safe_reboot_retry' in T
 assert 'text == "fw_safe_reboot_retry"' in C and 'holding discovery until reboot completes' in C
 assert '"|safe_ota=2"' in T
 assert 'g_hmiSafeOtaLevel' in C and 'g_hmiSafeOtaCapable = g_hmiSafeOtaLevel >= 2' in C
-assert 'manual USB bootstrap to v26.10.02.04 or newer required' in C
+assert 'manual USB bootstrap to v26.10.02.05 or newer required' in C
 assert 'fw_compare_release_versions' in T and 'fw_downgrade_blocked' in T
 assert 'no firmware transfer started for 60 s' in T and 'lastActivity = last_hmi_rx' not in T
 begin=T[T.index('static void fw_handle_begin'):T.index('static void fw_handle_block')]
@@ -107,7 +107,7 @@ assert 'lcd_init()' not in headless_branch and 'psramFound()' not in headless_br
 reboot_start=T.index('static void fw_handle_reboot')
 assert 'fw_clear_headless_update_state();' in T[reboot_start:T.index('static void fw_service_reboot', reboot_start)]
 
-# v26.10.02.04 field-feedback regressions: a newer SRVR must be noticed without
+# v26.10.02.05 field-feedback regressions: a newer SRVR must be noticed without
 # power-cycling field nodes *and without periodic HTTP in the healthy real-time
 # loops*. SRVR's normal UDP beacons invalidate an old match; only the already
 # fail-closed unmatched/update path may perform HTTP/SHA/OTA work.
@@ -161,7 +161,7 @@ assert 'self.calibration_open and self.calibration_type == "Winch"' in aux
 assert 'self.joystick_calibration_open' in aux and 'self.joystickCalibrationNext()' in aux and 'self.openJoystickCalibration()' in aux
 assert 'cal_active=' in B and 'cal_kind=' in B and 'cal_instruction=' in B
 assert 'g_cal_overlay=make_panel' in T and 'apply_calibration_overlay_fields' in T
-assert 'Hold Joystick Left, then press Confirm' in B
+assert 'Hold Joystick Left, then Press Confirm' in B
 assert 'Use the assigned AUX: press once for Confirm?' not in T
 assert 'g_cal_hint_lbl' not in T
 assert 'lv_obj_move_foreground(g_cal_overlay)' not in T
@@ -198,5 +198,42 @@ assert 'self._commit_setup_draft(notify=False)' in joy
 assert 'Joystick calibration saved' in joy
 assert 'def joystickPercentage' in B and 'self._calibrated_joystick(self._ctrl_axis) * 100.0' in B
 assert 'freed_snap = self._freed_snapshot()' in B
+
+# v26.10.02.05 bench-hardening regressions: ordinary AUX confirmation must never
+# execute UI/protocol/String work in the LVGL callback or reboot CTRL-TS. Reset
+# identity is relayed through CTRL so a future hardware reset is diagnosable.
+aux_cb=T[T.index('static void aux_event_cb'):T.index('static void service_aux_touch_events', T.index('static void aux_event_cb'))]
+assert 'queue_aux_touch' in aux_cb and 'confirm_aux_idx' not in aux_cb and 'send_hmi_command' not in aux_cb and 'String(' not in aux_cb
+assert 'static void service_aux_touch_events()' in T
+bg_cb=T[T.index('static void bg_event_cb'):T.index('static void aux_event_cb', T.index('static void bg_event_cb'))]
+assert 'queue_aux_cancel' in bg_cb and 'cancel_pending_aux' not in bg_cb
+assert 'service_aux_touch_events();' in T[T.index('void loop()'):]
+assert 'g_settings_reset_due_ms' not in T
+assert '|boot_id=' in T and '|reset_reason=' in T
+assert 'g_hmiReportedBootId' in C and 'g_hmiReportedResetReason' in C
+assert 'reboot detected old_boot=' in C and '|boot_id=' in C and '|reset_reason=' in C
+assert 'fw_pct=' in C and 'hmiFwProgressPct()' in C
+assert 'ctrlTsFirmwareProgress' in B and 'CTRL-TS] reboot detected' in B
+
+# Human-readable calibration instructions preserve commas; only packed list
+# fields sanitize commas. The exact requested joystick prompts are locked here.
+assert 'def _display_field(value, limit: int = 24, *, replace_comma: bool = True)' in B
+assert 'cal_instruction={self._display_field(cal_instruction, 64, replace_comma=False)}' in B
+for prompt in ('Hold Joystick Left, then Press Confirm',
+               'Release Joystick to Centre, then Press Confirm',
+               'Hold Joystick Right, then Press Confirm'):
+    assert prompt in B
+
+# SRVR and CTRL-TS share one canonical Near->Far coordinate for current/REF
+# markers; the top status banner must not prepend unsupported diamond glyphs.
+MQ=(ROOT/f'SRVR_GitHub_v{VER}/qml/Main.qml').read_text()
+SD=(ROOT/f'SRVR_GitHub_v{VER}/qml/components/SpanDiagram.qml').read_text()
+assert 'text:backend.bannerText' in MQ and '♢' not in MQ and '◇' not in MQ
+assert 'def _span_fraction' in B and 'def positionFraction' in B and 'def refFraction' in B
+assert 'pos_frac=' in B and 'ref_frac=' in B
+assert 'g_pos_frac' in T and 'g_ref_frac' in T
+assert 'float frac = constrain(g_pos_frac' in T and 'float frac = constrain(g_ref_frac' in T
+assert 'currentFraction:backend.positionFraction' in MQ and 'refFraction:backend.refFraction' in MQ
+assert 'property real currentFraction: -1' in SD and 'property real refFraction: -1' in SD
 
 print('AUDIT_REGRESSIONS_PASS')

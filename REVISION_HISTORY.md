@@ -1,5 +1,30 @@
 # HV P2P Revision History
 
+## v26.10.02.05
+- Follow-up to v26.10.02.04 after bench reports of intentional-but-unexplained
+  CTRL-TS black self-update periods, intermittent resets after AUX Confirm,
+  calibration punctuation errors, SRVR/CTRL-TS REF mismatch and an unsupported
+  SRVR status diamond.
+- Kept CTRL-TS self-flash display-off/headless for RGB/PSRAM safety, but added
+  CTRL `fw_pct` relay and SRVR Setup progress display so the operator can see the
+  headless transfer percentage while the physical touchscreen is dark.
+- Hardened AUX touch ownership: the LVGL callback now queues only a fixed uint8
+  index; all confirmation/UI/String/RS485 work executes later in the Arduino main
+  loop under the LVGL mutex. Removed the dormant touchscreen settings self-reboot
+  timer.
+- Added CTRL-TS per-boot `boot_id` + ESP `reset_reason` to HELLO, relayed by CTRL
+  into SRVR HMI_STATUS and logged by SRVR on boot-ID changes.
+- Corrected Joystick Calibration prompts to preserve commas and use `Press
+  Confirm` for Left/Centre/Right.
+- Added one SRVR-authoritative normalized Near->Far coordinate for position and REF
+  and use it in both SRVR Top/Side diagrams and CTRL-TS travel markers.
+- Removed the hard-coded `♢` / `◇` prefix from the SRVR top status banner.
+- Preserved W1P 500 ms watchdog, ~150 ms SRVR non-zero velocity refresh, AI0/AI1
+  mapping, firmware authority, predictive limits, hard limits and Leadshine motion
+  architecture.
+- Local source verification passes 370 EdgeBox integration checks and 53 build-pipeline checks; native compilation and physical touchscreen/reset testing remain GitHub Actions / bench gates.
+- macOS bundle metadata advanced to `2610.2.5`.
+
 ## v26.10.02.04
 - Bench-fix successor to v26.10.02.03 after the safe CTRL-TS updater could remain
   indefinitely at **Restarting in safe update mode | 0%**.

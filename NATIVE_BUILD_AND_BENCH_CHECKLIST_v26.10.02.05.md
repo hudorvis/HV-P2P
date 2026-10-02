@@ -1,0 +1,150 @@
+# HV P2P v26.10.02.05 Native Build and Bench Checklist
+
+## Release gate order
+
+1. Require `ALL_SOURCE_CHECKS_PASS` from the repository source suite.
+2. Run GitHub Actions native firmware/desktop jobs; do not substitute fabricated
+   local binaries for release artifacts.
+3. Use only the matching Complete Release / STAGED_SOURCE / firmware artifacts.
+4. Bench-test CTRL/CTRL-TS/W1P with the winch unable to move.
+5. Only after display/update/safety gates pass, continue to unloaded then loaded
+   motion commissioning.
+
+## CTRL-TS boot and AUX stability — highest-priority .05 bench gate
+
+- Power-cycle CTRL-TS at least 10 times. Every boot must reach a correctly scaled
+  800x480 splash/main UI with no colour cycling, repeated rows or displaced bands.
+- Repeat **each AUX tile** first-select + second-confirm at least 20 times.
+- Specifically test AUX assignments for:
+  - Joystick Calibration;
+  - Limit Calibration;
+  - Winch Calibration;
+  - Drive Mode;
+  - Battery Change Mode;
+  - Acceleration Mode.
+- No ordinary AUX action is permitted to restart CTRL-TS.
+- If a restart occurs, preserve SRVR/CTRL logs. `.05` must report a changed
+  CTRL-TS `boot_id` and `reset_reason`, allowing the reset class to be identified
+  without depending only on USB serial.
+- Confirm runtime SRVR loss returns to the resident `Waiting for SRVR` splash and
+  link recovery restores the main UI without an ESP restart.
+
+## Joystick Calibration wizard
+
+- Assign `Joystick Calibration` to an AUX tile.
+- Prompts must read exactly:
+  - **Hold Joystick Left, then Press Confirm**
+  - **Release Joystick to Centre, then Press Confirm**
+  - **Hold Joystick Right, then Press Confirm**
+- There must be no lower `Use the assigned AUX...` description row.
+- Each confirmed step must advance exactly once and clear the previous Confirmed
+  latch so the next step is immediately available.
+- The wizard must remain scaled correctly and must not reboot CTRL-TS.
+- After completion, SRVR joystick Value/Percentage must use the calibrated range.
+
+## CTRL-TS self-update — intentional black headless phase
+
+The physical CTRL-TS display is intentionally **off** while CTRL-TS programs its
+own flash. This is the safe design; RGB/LVGL/PSRAM are not initialized in the
+headless updater.
+
+1. Start a controlled automatic CTRL-TS update from a matched `.04+` safe-OTA
+   baseline.
+2. The touchscreen may first show the firmware dashboard / safe-reboot message.
+3. It must then deliberately go dark. There must be no green/blue/white/black
+   cycling, duplicated rows or partial UI during flash programming.
+4. While the physical screen is dark, open SRVR Setup and verify the CTRL-TS
+   Update row shows the headless phase and increasing percentage.
+5. CTRL serial should show FW block progress and exact size/SHA verification.
+6. After verified reboot, CTRL-TS must return to the correctly scaled normal UI
+   and report matching version/SHA.
+7. If no transfer starts after safe reboot, the 60 s recovery guard must return
+   the unit to the normal application rather than leave it black forever.
+
+**Manual Arduino flash note:** a manual CTRL-TS flash has no trusted staged-image
+SHA metadata. If CTRL carries the exact GitHub release image it may immediately
+perform one same-version exact-image synchronization. That is expected. Monitor
+its percentage in SRVR and allow it to finish.
+
+## W1P / CTRL firmware progress
+
+- While CTRL-TS is in normal UI mode, controlled W1P and CTRL updates should show
+  their phase/percentage on the touchscreen firmware dashboard.
+- CTRL-TS's own update percentage is viewed in SRVR while the panel is off.
+- A firmware update must never unblock motion safety merely because its progress
+  display is active.
+
+## Canonical position / REF display consistency
+
+- Set a known Near/Far span and a REF point at several locations, including about
+  5%, 50% and 95% of span.
+- Compare the CTRL-TS travel bar with SRVR Run Top View and Side View.
+- REF must occupy the same horizontal fraction on all three displays.
+- Repeat for current position/skate marker.
+- Include a valid reference of exactly `0.0` where the configured span permits it,
+  verifying that `0.0` is not mistaken for an unset (`None`) reference.
+
+## SRVR status bar
+
+- Confirm red status appears as plain text such as **E-Stop | W1P** or
+  **E-Stop | CTRL & W1P** with no leading diamond/unknown character.
+- Confirm yellow `System Un-Calibrated` and green `System Ready` also contain no
+  decorative unknown glyph.
+
+## Automatic SRVR release convergence
+
+- Launch a newer SRVR with compatible older CTRL/W1P nodes running; do not reboot
+  the nodes first.
+- Confirm release mismatch is detected through lightweight UDP authority beacons,
+  then the nodes enter the fail-closed update path.
+- Leave a matched CTRL running for several minutes: there must be no periodic
+  blocking HTTP authority polling in the 25 ms control loop.
+- Verify a newer field firmware is never downgraded by the legacy bridge.
+
+## CTRL analogue / joystick bench
+
+- AI0/pin 14 = physical normally-closed 5 V E-stop status only.
+- AI1/pin 16 = joystick signal only.
+- AGND/pin 12 = common analogue ground.
+- Confirm the 249-ohm current-input shunts remain removed for voltage input use.
+- Confirm E-stop is healthy high and fails unsafe on press/open/input fault.
+- Confirm SGM58031 at 0x48 with no analogue fault.
+- Verify calibrated joystick Left/Centre/Right gives approximately -100 / 0 /
+  +100% in SRVR.
+- Step joystick rapidly centre -> full travel repeatedly; reject periodic 1-2 s
+  stalls or obviously stale displayed values.
+
+## Safety/watchdog regression
+
+- W1P independent VEL freshness watchdog remains 500 ms.
+- SRVR non-zero VEL refresh remains approximately 150 ms.
+- Under safe bench conditions interrupt command traffic and verify W1P stops /
+  inhibits independently.
+- Verify CTRL physical E-stop, W1P E-stop/internal safety, CTRL-TS link fault and
+  firmware-authority mismatch all fail safe with correct source reporting.
+- After every new SRVR/W1P power session, system must remain yellow
+  `System Un-Calibrated` until Limit Calibration or a known Slip/re-reference is
+  deliberately completed.
+
+## Predictive limits / Leadshine / loaded-motion commissioning
+
+Only after all display/update/safety gates above pass:
+
+- Verify Near/Far hard limits in both directions.
+- Commission predictive/dynamic soft-limit taper from low speed upward.
+- Verify W1P local protection still acts if SRVR updates are interrupted.
+- Confirm Leadshine communication at commissioned 115200 8N1 slave 1.
+- Verify failed Modbus writes cannot trigger stale PR0 movement.
+- Test Speed/Dynamic regulation unloaded/light-load first, then progressively
+  increase intended slope/payload while monitoring drive/regeneration limits.
+
+## Release acceptance archive
+
+Archive:
+
+- successful GitHub Actions native build logs;
+- Complete Release SHA-256/checksum manifests;
+- CTRL/CTRL-TS serial and SRVR logs for headless OTA;
+- repeated AUX/calibration-wizard video/bench results;
+- E-stop/watchdog/limit commissioning records;
+- Leadshine and loaded-motion acceptance results.

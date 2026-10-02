@@ -127,7 +127,7 @@ ApplicationWindow {
             readonly property int statusLevel: backend.systemStatusLevel
             color:statusLevel===0?"#16331a":(statusLevel===1?"#3a3216":"#3a1619")
             border.color:statusLevel===0?"#34783b":(statusLevel===1?"#8d7b32":"#8b3b42"); border.width:1
-            Text { anchors.centerIn:parent; text:(parent.statusLevel===0?"♢  ":"◇  ")+backend.bannerText; color:parent.statusLevel===0?green:(parent.statusLevel===1?"#e7c94a":red); font.pixelSize:f(25); font.letterSpacing:f(1.4); font.weight:Font.Medium }
+            Text { anchors.centerIn:parent; text:backend.bannerText; color:parent.statusLevel===0?green:(parent.statusLevel===1?"#e7c94a":red); font.pixelSize:f(25); font.letterSpacing:f(1.4); font.weight:Font.Medium }
             MouseArea { anchors.fill:parent; cursorShape:Qt.PointingHandCursor; onClicked:backend.toggleSrvrEStop() }
         }
 
@@ -160,8 +160,8 @@ ApplicationWindow {
                     anchors.fill:parent; spacing:f(8)
                     // Run and Free-D now use the exact same calculated cable profile.
                     // Run overlays Presets/REF/Skate; Free-D overlays P1..P5 geometry.
-                    Panel { width:parent.width; height:(parent.height-f(16)-f(252))*0.50; SpanDiagram { anchors.fill:parent; title:"Top View"; subtitle:"X (Tracking) / Z (Offset)"; cableProfile:backend.cableProfile; currentPosition:backend.position-backend.nearLimit; nearLimit:0; farLimit:backend.farLimit-backend.nearLimit; refPoint:backend.refPoint-backend.nearLimit; presets:backend.presets; showPresets:true; showGeometryPoints:false; showSkate:true; showReference:true; nearRamp:backend.nearRampDistance; farRamp:backend.farRampDistance } }
-                    Panel { width:parent.width; height:(parent.height-f(16)-f(252))*0.50; SpanDiagram { anchors.fill:parent; title:"Side View"; subtitle:"X (Tracking) / Y (Sag)"; sideView:true; cableProfile:backend.cableProfile; currentPosition:backend.position-backend.nearLimit; nearLimit:0; farLimit:backend.farLimit-backend.nearLimit; refPoint:backend.refPoint-backend.nearLimit; presets:backend.presets; showPresets:true; showGeometryPoints:false; showSkate:true; showReference:true; nearRamp:backend.nearRampDistance; farRamp:backend.farRampDistance } }
+                    Panel { width:parent.width; height:(parent.height-f(16)-f(252))*0.50; SpanDiagram { anchors.fill:parent; title:"Top View"; subtitle:"X (Tracking) / Z (Offset)"; cableProfile:backend.cableProfile; currentPosition:backend.position-backend.nearLimit; currentFraction:backend.positionFraction; nearLimit:0; farLimit:backend.farLimit-backend.nearLimit; refPoint:backend.refPoint-backend.nearLimit; refFraction:backend.refFraction; presets:backend.presets; showPresets:true; showGeometryPoints:false; showSkate:true; showReference:true; nearRamp:backend.nearRampDistance; farRamp:backend.farRampDistance } }
+                    Panel { width:parent.width; height:(parent.height-f(16)-f(252))*0.50; SpanDiagram { anchors.fill:parent; title:"Side View"; subtitle:"X (Tracking) / Y (Sag)"; sideView:true; cableProfile:backend.cableProfile; currentPosition:backend.position-backend.nearLimit; currentFraction:backend.positionFraction; nearLimit:0; farLimit:backend.farLimit-backend.nearLimit; refPoint:backend.refPoint-backend.nearLimit; refFraction:backend.refFraction; presets:backend.presets; showPresets:true; showGeometryPoints:false; showSkate:true; showReference:true; nearRamp:backend.nearRampDistance; farRamp:backend.farRampDistance } }
 
                     Item {
                         width:parent.width; height:f(252)

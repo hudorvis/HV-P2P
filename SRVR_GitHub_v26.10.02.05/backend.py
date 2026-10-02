@@ -221,7 +221,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.02.04", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.02.05", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -230,7 +230,7 @@ class HVP2PBackend(QObject):
         self._legacy_fw_push_last_attempt = {"ctrl": 0.0, "w1p": 0.0}
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.02.04+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.02.05+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -357,6 +357,9 @@ class HVP2PBackend(QObject):
         self._ctrl_ts_version = ""
         self._ctrl_ts_required_version = ""
         self._ctrl_ts_fw_state = "idle"
+        self._ctrl_ts_fw_pct = 0
+        self._ctrl_ts_boot_id = ""
+        self._ctrl_ts_reset_reason = -1
         self._ctrl_ts_image_available = False
         self._ctrl_ts_compatible_reported = False
         self._ctrl_ts_age_ms = 999999
@@ -683,6 +686,22 @@ class HVP2PBackend(QObject):
         self._ctrl_ts_version = str(fields.get("version", ""))
         self._ctrl_ts_required_version = str(fields.get("required", self._ctrl_ts_required_version))
         self._ctrl_ts_fw_state = str(fields.get("fw_state", self._ctrl_ts_fw_state or "idle"))
+        try:
+            self._ctrl_ts_fw_pct = max(0, min(100, int(float(fields.get("fw_pct", self._ctrl_ts_fw_pct)))))
+        except Exception:
+            pass
+        new_boot_id = str(fields.get("boot_id", "")).strip()
+        try:
+            new_reset_reason = int(float(fields.get("reset_reason", self._ctrl_ts_reset_reason)))
+        except Exception:
+            new_reset_reason = self._ctrl_ts_reset_reason
+        if new_boot_id and new_boot_id != "unknown" and new_boot_id != self._ctrl_ts_boot_id:
+            if self._ctrl_ts_boot_id:
+                self._log(f"[CTRL-TS] reboot detected boot {self._ctrl_ts_boot_id} -> {new_boot_id}; reset_reason={new_reset_reason}")
+            else:
+                self._log(f"[CTRL-TS] boot {new_boot_id}; reset_reason={new_reset_reason}")
+            self._ctrl_ts_boot_id = new_boot_id
+        self._ctrl_ts_reset_reason = new_reset_reason
         self._ctrl_ts_image_available = str(fields.get("image", "0")).strip() == "1"
         self._ctrl_ts_compatible_reported = str(fields.get("compatible", fields.get("ctrl_ts", "0"))).strip() == "1"
         try:
@@ -1648,8 +1667,12 @@ class HVP2PBackend(QObject):
             self._log(f"[AUX] {label} failed ({action}): {exc}")
 
     @staticmethod
-    def _display_field(value, limit: int = 24) -> str:
-        text = str(value if value is not None else "").replace("|", "/").replace(",", "/").replace("\r", " ").replace("\n", " ").strip()
+    def _display_field(value, limit: int = 24, *, replace_comma: bool = True) -> str:
+        text = str(value if value is not None else "").replace("|", "/").replace("\r", " ").replace("\n", " ").strip()
+        # Commas delimit packed preset lists, but they are valid human-readable
+        # punctuation in standalone fields such as calibration instructions.
+        if replace_comma:
+            text = text.replace(",", "/")
         return text[:max(1, int(limit))]
 
     def _build_controller_display_packet(self) -> str:
@@ -1666,7 +1689,8 @@ class HVP2PBackend(QObject):
         pos_rel = pos_abs - near_abs
         far_rel = far_abs - near_abs
         ref_set = self.state.ref_point.position_m is not None
-        ref_rel = float(self.state.ref_point.position_m or near_abs) - near_abs
+        ref_abs = float(self.state.ref_point.position_m if self.state.ref_point.position_m is not None else near_abs)
+        ref_rel = ref_abs - near_abs
         to_near = max(0.0, pos_abs - near_abs)
         to_far = max(0.0, far_abs - pos_abs)
         ramp_near = self._ramp_distance(self.state.near_limit, max(0.001, far_rel))
@@ -1706,9 +1730,9 @@ class HVP2PBackend(QObject):
             cal_step = int(self.joystick_calibration_step)
             cal_title = str(self.joystick_calibration_title or "Joystick Calibration")
             cal_instruction = (
-                "Hold Joystick Left, then press Confirm" if cal_step == 0 else
-                "Release Joystick to Centre, then press Confirm" if cal_step == 1 else
-                "Hold Joystick Right, then press Confirm"
+                "Hold Joystick Left, then Press Confirm" if cal_step == 0 else
+                "Release Joystick to Centre, then Press Confirm" if cal_step == 1 else
+                "Hold Joystick Right, then Press Confirm"
             )
         elif self.calibration_open:
             cal_kind = str(self.calibration_type or "Limit")
@@ -1743,6 +1767,7 @@ class HVP2PBackend(QObject):
             "DSP1", f"pos={pos_rel:.2f}", f"to_near={to_near:.2f}", f"to_far={to_far:.2f}",
             f"speed_mps={speed:.2f}", f"speed_kmh={speed*3.6:.2f}",
             "near=0.00", f"ref={ref_rel:.2f}", f"far={far_rel:.2f}",
+            f"pos_frac={self._span_fraction(pos_abs):.6f}", f"ref_frac={self._span_fraction(ref_abs):.6f}",
             f"ramp_near={ramp_near:.2f}", f"ramp_far={ramp_far:.2f}",
             f"ref_vis={1 if ref_set else 0}", f"estop={estop}",
             f"estop_src={self._display_field(source)}", f"status={self._display_field(status)}",
@@ -1758,7 +1783,7 @@ class HVP2PBackend(QObject):
             f"service={1 if self._service_override_active() else 0}", f"flags={int(self._ctrl_flags)}",
             f"cal_active={1 if cal_active else 0}", f"cal_kind={self._display_field(cal_kind, 16)}",
             f"cal_step={cal_step}", f"cal_title={self._display_field(cal_title, 32)}",
-            f"cal_instruction={self._display_field(cal_instruction, 64)}",
+            f"cal_instruction={self._display_field(cal_instruction, 64, replace_comma=False)}",
             f"aux1={labels[0]}", f"aux2={labels[1]}", f"aux3={labels[2]}", f"aux4={labels[3]}", f"aux5={labels[4]}",
             f"max_mps={max_mps:.2f}", f"max_kmh={max_mps*3.6:.2f}", f"mode={mode_name}",
             f"drive_mode={mode_name}", f"accel_mode={self._display_field(self.acceleration_mode)}",
@@ -2225,6 +2250,21 @@ class HVP2PBackend(QObject):
             return z0
         t = (float(x) - x0) / dx
         return z0 + (z1-z0)*t
+
+    def _span_fraction(self, position) -> float:
+        """Return one canonical Near->Far normalized coordinate for all UIs."""
+        near = float(self.state.near_limit.position_m or 0.0)
+        far = float(self.state.far_limit.position_m if self.state.far_limit.position_m is not None else near + self.state.total_length_m)
+        if far < near:
+            near, far = far, near
+        span = far - near
+        if span <= 1e-9:
+            return 0.0
+        try:
+            value = float(position)
+        except Exception:
+            value = near
+        return max(0.0, min(1.0, (value - near) / span))
 
     def _cable_span_bounds(self):
         """Return Free-D X bounds relative to the calibrated Near Limit."""
@@ -2844,7 +2884,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.02.04 moves the installed joystick polarity correction into CTRL,
+        # v26.10.02.05 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same
@@ -3236,6 +3276,7 @@ class HVP2PBackend(QObject):
             "transferring": "Updating",
             "verifying": "Verifying",
             "rebooting": "Rebooting",
+            "safe_reboot": "Restarting in safe update mode",
             "image_missing": "Image not staged",
             "manual_bootstrap": "Manual USB bootstrap required",
         }
@@ -3244,6 +3285,16 @@ class HVP2PBackend(QObject):
                 return "Idle"
             return "Up to date" if current and authority_current else "Update required"
         return states.get(raw, raw)
+    @Property(int, notify=stateChanged)
+    def ctrlTsFirmwareProgress(self): return int(max(0, min(100, self._ctrl_ts_fw_pct)))
+    @Property(str, notify=stateChanged)
+    def ctrlTsBootId(self): return str(self._ctrl_ts_boot_id or "—")
+    @Property(int, notify=stateChanged)
+    def ctrlTsResetReason(self): return int(self._ctrl_ts_reset_reason)
+    @Property(float, notify=stateChanged)
+    def positionFraction(self): return float(self._span_fraction(self.position))
+    @Property(float, notify=stateChanged)
+    def refFraction(self): return float(self._span_fraction(self.refPoint))
     @Property(bool, notify=stateChanged)
     def ctrlTsImageAvailable(self): return bool(self._ctrl_ts_image_available)
     @Property(bool, notify=stateChanged)
