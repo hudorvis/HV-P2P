@@ -22,6 +22,8 @@ static constexpr uint32_t HTTP_IO_TIMEOUT_MS = 4000;
 static constexpr uint32_t IMAGE_STALL_TIMEOUT_MS = 5000;
 static constexpr uint8_t ESP_IMAGE_MAGIC = 0xE9;
 
+using ProgressCallback = void (*)(size_t received, size_t total, const char *phase);
+
 struct Manifest {
   String schema;
   String authority;
@@ -236,7 +238,7 @@ class TokenScanner {
 
 static inline bool downloadAndStage(const IPAddress &server, const Manifest &m,
                                     const char *expectedRole, const char *expectedTarget,
-                                    String &error) {
+                                    String &error, ProgressCallback progress = nullptr) {
   if (!m.valid || m.role != expectedRole || m.target != expectedTarget) { error = "manifest_target_mismatch"; return false; }
   const esp_partition_t *next = esp_ota_get_next_update_partition(nullptr);
   if (!next || m.size > next->size) { error = "ota_slot_too_small"; return false; }
@@ -264,6 +266,8 @@ static inline bool downloadAndStage(const IPAddress &server, const Manifest &m,
   uint8_t buf[1024];
   size_t total = 0;
   uint32_t lastProgress = millis();
+  int lastPct = -1;
+  if (progress) progress(0, m.size, "Downloading");
   bool ok = true;
   while (total < m.size) {
     const size_t remain = m.size - total;
@@ -278,6 +282,8 @@ static inline bool downloadAndStage(const IPAddress &server, const Manifest &m,
       if (Update.write(buf, (size_t)got) != (size_t)got) { ok = false; error = "image_flash_write"; break; }
       total += (size_t)got;
       lastProgress = millis();
+      const int pct = m.size ? int((100ULL * total) / m.size) : 0;
+      if (progress && pct != lastPct) { lastPct = pct; progress(total, m.size, "Downloading"); }
     } else {
       if (!http.connected() && total < m.size) { ok = false; error = "image_stream_closed"; break; }
       if ((millis() - lastProgress) > IMAGE_STALL_TIMEOUT_MS) { ok = false; error = "image_stream_stall"; break; }
@@ -286,6 +292,7 @@ static inline bool downloadAndStage(const IPAddress &server, const Manifest &m,
     }
   }
 
+  if (ok && progress) progress(total, m.size, "Verifying");
   uint8_t digest[32];
   if (ok && mbedtls_sha256_finish(&ctx, digest) != 0) { ok = false; error = "image_hash_finish"; }
   mbedtls_sha256_free(&ctx);
@@ -296,6 +303,7 @@ static inline bool downloadAndStage(const IPAddress &server, const Manifest &m,
   if (actual != lowerCopy(m.sha256)) { Update.abort(); error = "image_sha256_mismatch"; return false; }
   if (!scanner.complete()) { Update.abort(); error = "image_embedded_identity_mismatch"; return false; }
   if (!Update.end(true) || Update.hasError()) { Update.abort(); error = "update_finalize"; return false; }
+  if (progress) progress(m.size, m.size, "Complete");
   return true;
 }
 

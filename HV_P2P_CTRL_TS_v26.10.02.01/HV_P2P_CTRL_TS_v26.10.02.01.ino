@@ -11,8 +11,10 @@
 #include <Preferences.h>
 #include <mbedtls/sha256.h>
 #include <esp_ota_ops.h>
+#include <esp_lcd_panel_rgb.h>
+#include <esp_system.h>
 
-#define CTRL_TS_SEMVER "v26.10.01.04"
+#define CTRL_TS_SEMVER "v26.10.02.01"
 #define CTRL_TS_VERSION "HV P2P CTRL-TS " CTRL_TS_SEMVER
 #define CTRL_TS_HW_ID "WS-ESP32S3-7"
 #define HMI_BAUD 115200
@@ -58,6 +60,15 @@ static const size_t FW_MAX_IMAGE_SIZE = 0x380000; // matches the conservative ap
 // need to modify the received block. Keep the parsed RS485 frame const and copy
 // only the OTA data bytes into this dedicated scratch buffer before writing.
 static uint8_t g_fw_write_buf[HVP2PRS485::MAX_PAYLOAD - 4];
+// ESP32-S3 RGB panels share the MSPI fabric with flash/PSRAM. During OTA flash
+// writes the Waveshare bounce-buffer path can momentarily lose RGB timing and
+// produce the vertical/column shift seen on the real 7-inch panel. Slow the RGB
+// pixel clock while CTRL-TS is programming flash and explicitly re-arm the RGB
+// stream at VSYNC after each write. Espressif documents both mechanisms for
+// short flash/OTA operations on ESP32-S3 RGB panels.
+static constexpr uint32_t FW_RGB_PCLK_HZ = 6000000UL;
+static constexpr uint32_t NORMAL_RGB_PCLK_HZ = 16000000UL;
+static bool g_fw_rgb_slowed = false;
 // LVGL 8.3 provides 10%% opacity steps only. Preserve the approved 35%% ramp
 // appearance with an explicit 8-bit opacity value (round(0.35 * 255) = 89).
 static constexpr lv_opa_t HV_OPA_35 = (lv_opa_t)89;
@@ -84,9 +95,16 @@ static lv_obj_t *boot_status_lbl = nullptr;
 static lv_obj_t *boot_progress_bar = nullptr;
 static lv_obj_t *boot_canvas = nullptr;
 static lv_obj_t *g_main_scr = nullptr;
+static lv_obj_t *g_fw_screen = nullptr;
 static lv_obj_t *g_fw_connection_lbl = nullptr;
+static lv_obj_t *g_fw_row_lbl[3] = {nullptr,nullptr,nullptr};
+static lv_obj_t *g_fw_row_bar[3] = {nullptr,nullptr,nullptr};
+static bool g_fw_row_active[3] = {false,false,false};
+static int g_fw_row_pct[3] = {0,0,0};
+static String g_fw_row_phase[3] = {"Idle","Idle","Idle"};
 static bool g_fw_runtime_screen = false;
 static int g_fw_last_display_pct = -1;
+static uint32_t g_fw_external_release_due_ms = 0;
 static lv_color_t *boot_canvas_buf = nullptr;
 static lv_color_t *boot_decode_buf = nullptr;
 static int boot_w = 0;
@@ -124,6 +142,9 @@ static lv_obj_t *middle_panel,*cell_to_near,*cell_speed,*cell_to_far;
 static lv_obj_t *lbl_max_speed,*lbl_current_kmh,*lbl_max_kmh,*lbl_current_pos;
 static lv_obj_t *lbl_drive_mode,*lbl_accel_mode,*lbl_battery_mode,*lbl_srvr_time,*lbl_uptime,*lbl_near_value,*lbl_far_value;
 static lv_obj_t *aux_text_lbl[AUX_COUNT];
+static lv_obj_t *g_cal_overlay=nullptr,*g_cal_title_lbl=nullptr,*g_cal_step_lbl=nullptr,*g_cal_instruction_lbl=nullptr,*g_cal_hint_lbl=nullptr;
+static bool g_calibration_overlay_active=false;
+static String g_last_cal_overlay_title="";
 static int selected_aux=-1,confirmed_aux=-1;
 static uint32_t clear_confirm_at=0,last_hb=0,last_hmi_rx=0;
 static uint16_t g_last_flags=0;
@@ -182,7 +203,7 @@ static float g_last_ramp_near_draw = -999999.0f;
 static float g_last_ramp_far_draw = -999999.0f;
 
 // -------------------- CTRL-TS Settings page --------------------
-// Safe v26.10.01.04 approach: no backlight/brightness writes. This page only
+// Safe v26.10.02.01 approach: no backlight/brightness writes. This page only
 // edits CTRL network settings over UART and therefore should preserve the known
 // Keep the proven splash/boot path; do not write to the backlight controller.
 static lv_obj_t *settings_overlay = nullptr;
@@ -231,7 +252,7 @@ static void force_screen_refresh(){
 }
 
 static void screen_keepalive(){
-  // v26.10.01.04: no periodic full-screen or left-strip invalidation or brightness writes.
+  // v26.10.02.01: no periodic full-screen or left-strip invalidation or brightness writes.
   // The Waveshare/LVGL port refreshes changed objects itself; forcing a full
   // screen refresh every second caused the visible 1-second flicker/glitch.
   if(!g_ui_ready) return;
@@ -242,7 +263,7 @@ static void set_label_text_if_changed(lv_obj_t *lbl, const char *txt){
   const char *cur = lv_label_get_text(lbl);
   if(cur && strcmp(cur, txt) == 0) return;
   lv_label_set_text(lbl, txt);
-  // v26.10.01.04: label-only invalidation. Parent/full-strip invalidation can
+  // v26.10.02.01: label-only invalidation. Parent/full-strip invalidation can
   // cause the known vertical tear on the left AUX area of this panel.
   lv_obj_invalidate(lbl);
 }
@@ -320,95 +341,139 @@ static void boot_set_status(const char *txt){
   Serial.print("[BOOT] "); Serial.println(next);
 }
 
+static String boot_get_field(const String &line, const char *key);
+
+static bool fw_any_row_active(){
+  return g_fw_row_active[0] || g_fw_row_active[1] || g_fw_row_active[2];
+}
+
 static bool fw_display_owned(){
-  return bool(g_fw_update_active || g_fw_finalized || g_fw_reboot_due_ms);
+  return bool(g_fw_update_active || g_fw_finalized || g_fw_reboot_due_ms || fw_any_row_active() || g_fw_external_release_due_ms);
 }
 
 static String fw_connection_text(){
-  return String("CTRL Connected | SRVR ") + (g_boot_srvr_confirmed ? "Connected" : "Waiting");
+  return String("CTRL ") + (g_boot_ctrl_confirmed ? "Connected" : "Waiting") +
+         " | SRVR " + (g_boot_srvr_confirmed ? "Connected" : "Waiting");
+}
+
+static int fw_device_index(const String &device){
+  String d=device; d.toUpperCase();
+  if(d == "W1P") return 0;
+  if(d == "CTRL") return 1;
+  if(d == "CTRL-TS" || d == "CTRL_TS" || d == "CTRLTS") return 2;
+  return -1;
+}
+
+static const char* fw_device_name(int idx){
+  static const char *NAMES[3] = {"W1P", "CTRL", "CTRL-TS"};
+  return (idx>=0 && idx<3) ? NAMES[idx] : "NODE";
 }
 
 static void fw_ensure_update_screen(){
-  // Firmware transfer always owns a dedicated, opaque, low-redraw screen. In
-  // v26.10.01.01 a transfer that started during boot reused the JPEG splash
-  // canvas; progress redraws over that large canvas produced the vertically
-  // displaced/duplicated splash seen on the real Waveshare panel. Replace the
-  // splash as soon as FW_BEGIN arrives, just as we replace the normal UI at
-  // runtime, and keep this screen loaded until verified reboot/failure.
-  if(g_fw_runtime_screen && boot_scr) return;
+  if(g_fw_screen){
+    if(lv_scr_act() != g_fw_screen) lv_scr_load(g_fw_screen);
+    g_fw_runtime_screen = true;
+    return;
+  }
   lvgl_port_lock(-1);
-  lv_obj_t *previous_scr = boot_scr;
   const int w = lv_disp_get_hor_res(NULL) > 0 ? lv_disp_get_hor_res(NULL) : 800;
-  const int h = lv_disp_get_ver_res(NULL) > 0 ? lv_disp_get_ver_res(NULL) : 480;
-  lv_obj_t *update_scr = lv_obj_create(NULL);
-  boot_scr = update_scr;
-  lv_obj_clear_flag(boot_scr, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_bg_color(boot_scr, lv_color_hex(0x06101c), 0);
-  lv_obj_set_style_bg_opa(boot_scr, LV_OPA_COVER, 0);
+  g_fw_screen = lv_obj_create(NULL);
+  lv_obj_clear_flag(g_fw_screen, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_bg_color(g_fw_screen, lv_color_hex(0x06101c), 0);
+  lv_obj_set_style_bg_opa(g_fw_screen, LV_OPA_COVER, 0);
 
-  lv_obj_t *title = lv_label_create(boot_scr);
-  lv_label_set_text(title, "HV P2P CTRL-TS\nFirmware Update");
+  lv_obj_t *title = lv_label_create(g_fw_screen);
+  lv_label_set_text(title, "HV P2P\nFirmware Update");
   lv_obj_set_style_text_font(title, &lv_font_montserrat_24, 0);
   lv_obj_set_style_text_color(title, lv_color_hex(0xf0f2f1), 0);
   lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_width(title, w);
-  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 105);
+  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 44);
 
-  g_fw_connection_lbl = lv_label_create(boot_scr);
+  g_fw_connection_lbl = lv_label_create(g_fw_screen);
   lv_label_set_text(g_fw_connection_lbl, fw_connection_text().c_str());
-  lv_obj_set_style_text_font(g_fw_connection_lbl, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_font(g_fw_connection_lbl, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(g_fw_connection_lbl, lv_color_hex(0x72ed21), 0);
   lv_obj_set_style_text_align(g_fw_connection_lbl, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_width(g_fw_connection_lbl, w);
-  lv_obj_align(g_fw_connection_lbl, LV_ALIGN_TOP_MID, 0, 205);
+  lv_obj_align(g_fw_connection_lbl, LV_ALIGN_TOP_MID, 0, 112);
 
-  boot_status_lbl = lv_label_create(boot_scr);
-  lv_label_set_text(boot_status_lbl, "Preparing firmware update | 0%");
-  lv_obj_set_style_text_font(boot_status_lbl, &lv_font_montserrat_18, 0);
-  lv_obj_set_style_text_color(boot_status_lbl, lv_color_hex(0xd8ecff), 0);
-  lv_obj_set_style_text_align(boot_status_lbl, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_width(boot_status_lbl, w);
-  lv_obj_align(boot_status_lbl, LV_ALIGN_TOP_MID, 0, 258);
+  for(int i=0;i<3;i++){
+    const int y = 170 + i*88;
+    g_fw_row_lbl[i] = lv_label_create(g_fw_screen);
+    String initial = String(fw_device_name(i)) + " | Waiting";
+    lv_label_set_text(g_fw_row_lbl[i], initial.c_str());
+    lv_obj_set_style_text_font(g_fw_row_lbl[i], &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(g_fw_row_lbl[i], lv_color_hex(0xd8ecff), 0);
+    lv_obj_set_width(g_fw_row_lbl[i], w-160);
+    lv_obj_align(g_fw_row_lbl[i], LV_ALIGN_TOP_MID, 0, y);
 
-  boot_progress_bar = lv_bar_create(boot_scr);
-  lv_obj_set_size(boot_progress_bar, w - 160, 18);
-  lv_obj_align(boot_progress_bar, LV_ALIGN_TOP_MID, 0, 315);
-  lv_bar_set_range(boot_progress_bar, 0, 100);
-  lv_bar_set_value(boot_progress_bar, 0, LV_ANIM_OFF);
-  lv_obj_set_style_bg_color(boot_progress_bar, lv_color_hex(0x203142), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(boot_progress_bar, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(boot_progress_bar, lv_color_hex(0x49d8ff), LV_PART_INDICATOR);
-  lv_obj_set_style_bg_opa(boot_progress_bar, LV_OPA_COVER, LV_PART_INDICATOR);
-  lv_obj_clear_flag(boot_progress_bar, LV_OBJ_FLAG_HIDDEN);
+    g_fw_row_bar[i] = lv_bar_create(g_fw_screen);
+    lv_obj_set_size(g_fw_row_bar[i], w-160, 16);
+    lv_obj_align(g_fw_row_bar[i], LV_ALIGN_TOP_MID, 0, y+31);
+    lv_bar_set_range(g_fw_row_bar[i], 0, 100);
+    lv_bar_set_value(g_fw_row_bar[i], 0, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(g_fw_row_bar[i], lv_color_hex(0x203142), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(g_fw_row_bar[i], LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(g_fw_row_bar[i], lv_color_hex(0x49d8ff), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(g_fw_row_bar[i], LV_OPA_COVER, LV_PART_INDICATOR);
+  }
 
-  lv_scr_load(boot_scr);
-  if(previous_scr && previous_scr != boot_scr) lv_obj_del(previous_scr);
-  boot_status_bar = nullptr;
-  boot_canvas = nullptr;
-  if(boot_canvas_buf){ free(boot_canvas_buf); boot_canvas_buf = nullptr; }
+  lv_scr_load(g_fw_screen);
+#if defined(LV_VERSION_MAJOR) && (LV_VERSION_MAJOR >= 8)
+  // Finish the first full-screen render before any flash write begins. This keeps
+  // the RGB scanout on a complete opaque framebuffer during OTA.
+  lv_refr_now(NULL);
+#endif
   g_fw_runtime_screen = true;
-  g_fw_last_display_pct = -1;
   g_boot_status_cache = "";
   lvgl_port_unlock();
 }
 
+static void fw_set_device_status(const String &device, const String &phase, int pct, bool active){
+  const int idx = fw_device_index(device);
+  if(idx < 0) return;
+  pct = constrain(pct, 0, 100);
+  if(!active && !fw_any_row_active() && !g_fw_update_active && !g_fw_finalized && !g_fw_reboot_due_ms && !g_fw_external_release_due_ms){
+    g_fw_row_active[idx] = false;
+    g_fw_row_pct[idx] = pct;
+    g_fw_row_phase[idx] = phase.length() ? phase : "Idle";
+    return;
+  }
+  fw_ensure_update_screen();
+  g_fw_row_active[idx] = active;
+  g_fw_row_pct[idx] = pct;
+  g_fw_row_phase[idx] = phase.length() ? phase : (active ? "Updating" : "Idle");
+  lvgl_port_lock(-1);
+  if(g_fw_connection_lbl) set_label_text_if_changed(g_fw_connection_lbl, fw_connection_text().c_str());
+  if(g_fw_row_lbl[idx]){
+    String text = String(fw_device_name(idx)) + " | " + g_fw_row_phase[idx] + " | " + String(pct) + "%";
+    set_label_text_if_changed(g_fw_row_lbl[idx], text.c_str());
+  }
+  if(g_fw_row_bar[idx] && lv_bar_get_value(g_fw_row_bar[idx]) != pct){
+    lv_bar_set_value(g_fw_row_bar[idx], pct, LV_ANIM_OFF);
+    lv_obj_invalidate(g_fw_row_bar[idx]);
+  }
+  lvgl_port_unlock();
+  if(active) g_fw_external_release_due_ms = 0;
+  else if(!fw_any_row_active() && !g_fw_update_active && !g_fw_finalized && !g_fw_reboot_due_ms)
+    g_fw_external_release_due_ms = millis() + 8000;
+}
+
+static void fw_process_status_line(const String &line){
+  String device = boot_get_field(line, "device");
+  String phase = boot_get_field(line, "phase");
+  String pctText = boot_get_field(line, "pct");
+  String activeText = boot_get_field(line, "active");
+  const bool active = !(activeText == "0" || activeText == "false" || activeText == "off");
+  fw_set_device_status(device, phase, pctText.length() ? pctText.toInt() : 0, active);
+}
+
 static void fw_set_status_pct(const char *phase, int pct){
   pct = constrain(pct, 0, 100);
-  fw_ensure_update_screen();
-  if(g_fw_connection_lbl){
-    String conn = fw_connection_text();
-    lvgl_port_lock(-1);
-    set_label_text_if_changed(g_fw_connection_lbl, conn.c_str());
-    lvgl_port_unlock();
-  }
-  if(pct != g_fw_last_display_pct){
-    boot_set_progress(pct);
-    g_fw_last_display_pct = pct;
-  }
-  char status[112];
-  snprintf(status, sizeof(status), "CTRL Connected | SRVR %s | %s | %d%%",
-           g_boot_srvr_confirmed ? "Connected" : "Waiting", phase ? phase : "Updating CTRL-TS firmware", pct);
-  boot_set_status(status);
+  if(pct == g_fw_last_display_pct && String(phase ? phase : "") == g_fw_row_phase[2]) return;
+  g_fw_last_display_pct = pct;
+  fw_set_device_status("CTRL-TS", String(phase ? phase : "Updating"), pct, true);
 }
 
 static String boot_get_field(const String &line, const char *key){
@@ -886,7 +951,7 @@ static void confirm_aux_idx(int idx, bool send_command){
   selected_aux = -1;
   g_selected_aux_ms = 0;
   confirmed_aux = idx;
-  clear_confirm_at = now_ms + 2000;  // v26.10.01.04: confirmed AUX tile stays lit for 2 seconds
+  clear_confirm_at = now_ms + 2000;  // v26.10.02.01: confirmed AUX tile stays lit for 2 seconds
   g_aux_suppress_until_ms[idx] = now_ms + 400;
   style_aux(idx,false,true);
   snprintf(msg,sizeof(msg),"AUX %d Confirmed", idx+1);
@@ -948,7 +1013,7 @@ static void style_w1p_status_pill(int state){
 }
 
 static void style_estop_pill(bool active){
-  // v26.10.01.04: the middle status banner follows the SRVR-resolved state.
+  // v26.10.02.01: the middle status banner follows the SRVR-resolved state.
   // A local CTRL-TS UART/display gap must not invent "E-Stop CTRL" while SRVR
   // is still sending Status | Active. Real CTRL/W1P E-Stops are still shown
   // immediately when SRVR sends status=E-Stop... / status_level=red.
@@ -996,7 +1061,7 @@ static void refresh_status_ui(){
   style_status_pill_cached(0,pill_ctrl,lbl_ctrl,"CTRL",g_ctrl_ok);
   if(pill_srvr && lbl_srvr) style_status_pill_cached(1,pill_srvr,lbl_srvr,"SRVR",g_srvr_ok);
   style_w1p_status_pill(g_w1p_health);
-  // v26.10.01.04: do not turn the main middle box red purely because the
+  // v26.10.02.01: do not turn the main middle box red purely because the
   // CTRL-TS local UART/display link hiccuped. The SRVR status packet is the
   // authoritative source for Active / Un-Calibrated / E-Stop display state.
   bool stopped_visual = (g_status_level >= 2) || g_estop_active;
@@ -1061,6 +1126,58 @@ static bool getFieldBool(const String &line, const char *key, bool def){
   String v = getField(line, key);
   if(!v.length()) return def;
   return (v == "1" || v == "true" || v == "TRUE");
+}
+
+static void apply_external_fw_fields(const String &line){
+  String v;
+  v = getField(line, "fw_ctrl_active");
+  if(v.length()){
+    const bool active = getFieldBool(line, "fw_ctrl_active", false);
+    String phase = getField(line, "fw_ctrl_phase");
+    int pct = (int)getFieldFloat(line, "fw_ctrl_pct", 0);
+    fw_set_device_status("CTRL", phase.length()?phase:"Updating", pct, active);
+  }
+  v = getField(line, "fw_w1p_active");
+  if(v.length()){
+    const bool active = getFieldBool(line, "fw_w1p_active", false);
+    String phase = getField(line, "fw_w1p_phase");
+    int pct = (int)getFieldFloat(line, "fw_w1p_pct", 0);
+    fw_set_device_status("W1P", phase.length()?phase:"Updating", pct, active);
+  }
+}
+
+static void apply_calibration_overlay_fields(const String &line){
+  if(!g_cal_overlay) return;
+  const bool active = getFieldBool(line, "cal_active", false);
+  if(!active){
+    if(g_calibration_overlay_active){
+      lv_obj_add_flag(g_cal_overlay, LV_OBJ_FLAG_HIDDEN);
+      g_calibration_overlay_active = false;
+      g_last_cal_overlay_title = "";
+    }
+    return;
+  }
+  String kind = getField(line, "cal_kind");
+  String title = getField(line, "cal_title");
+  String instruction = getField(line, "cal_instruction");
+  int step = (int)getFieldFloat(line, "cal_step", 0);
+  if(!title.length()) title = kind.length() ? kind + " Calibration" : "Calibration";
+  if(!instruction.length()) instruction = "Set the requested position, then confirm with the assigned AUX button.";
+  if(title != g_last_cal_overlay_title){
+    // A completed AUX confirmation has advanced the wizard. Return the assigned
+    // tile to Ready immediately rather than leaving it locked as Confirmed for
+    // two seconds, so the next calibration step can be selected naturally.
+    if(confirmed_aux >= 0){ style_aux(confirmed_aux, false, false); confirmed_aux = -1; clear_confirm_at = 0; }
+    g_last_cal_overlay_title = title;
+  }
+  String stepText = String("Step ") + String(step + 1) + (kind == "Joystick" ? " of 3" : (kind == "Winch" ? " of 2" : " of 3"));
+  set_label_text_if_changed(g_cal_title_lbl, title.c_str());
+  set_label_text_if_changed(g_cal_step_lbl, stepText.c_str());
+  set_label_text_if_changed(g_cal_instruction_lbl, instruction.c_str());
+  set_label_text_if_changed(g_cal_hint_lbl, "Use the assigned AUX: press once for Confirm?, then press again to confirm this step.");
+  lv_obj_clear_flag(g_cal_overlay, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_move_foreground(g_cal_overlay);
+  g_calibration_overlay_active = true;
 }
 
 static int split_csv(const String &src, String out[], int max_items){
@@ -1452,7 +1569,7 @@ static void apply_hmi_packet(const String &line){
     else g_status_level = 0;
   }
 
-  // v26.10.01.04: if SRVR sends explicit status/status_level, trust it as
+  // v26.10.02.01: if SRVR sends explicit status/status_level, trust it as
   // the authoritative display state. Do not override it locally with a CTRL
   // error just because the touchscreen/CTRL UART side saw a transient gap.
   g_estop_active = packet_estop;
@@ -1511,6 +1628,8 @@ static void apply_hmi_packet(const String &line){
   s = String(g_near, 2) + " m"; set_label_text_if_changed(lbl_near_value, s.c_str());
   s = String(g_far, 2) + " m"; set_label_text_if_changed(lbl_far_value, s.c_str());
 
+  apply_calibration_overlay_fields(line);
+
   String aux;
   aux = getField(line, "aux1"); if(aux.length()){ aux = display_aux_label(aux); g_aux_labels[0] = aux; refresh_aux_text(0); }
   aux = getField(line, "aux2"); if(aux.length()){ aux = display_aux_label(aux); g_aux_labels[1] = aux; refresh_aux_text(1); }
@@ -1566,7 +1685,7 @@ static void apply_hmi_packet(const String &line){
   if(mode_changed || (prev_status_text != g_status_text) || (prev_status_level != g_status_level) || (prev_estop != g_estop_active) || (prev_estop_source != g_estop_source) || (prev_ctrl != g_ctrl_ok) || (prev_srvr != g_srvr_ok) || (prev_w1p != g_w1p_ok) || (prev_w1p_health != g_w1p_health)) {
     refresh_status_ui();
   }
-  // v26.10.01.04: no left-strip/full-screen invalidation on packets; progress marker animates locally.
+  // v26.10.02.01: no left-strip/full-screen invalidation on packets; progress marker animates locally.
 }
 
 
@@ -1575,7 +1694,7 @@ static void apply_layout_packet(const String &line){
   // on CTRL cannot overwrite the screen title/version or trigger header redraws.
   String hint = getField(line, "hint");
   if(lbl_title) set_label_text_if_changed(lbl_title, "HV P2P\nCTRL-TS");
-  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.01.04");
+  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.02.01");
   if(hint.length() && hint.startsWith("ERROR")) set_touch_debug(hint.c_str());
   for(int i=0;i<AUX_COUNT;i++){
     String key = String("aux") + String(i+1);
@@ -1591,19 +1710,24 @@ static void apply_layout_packet(const String &line){
 static void process_text_from_ctrl(String line, bool boot_phase){
   line.trim();
   if(!line.length()) return;
+  if(line.startsWith("FWSTAT|")){
+    fw_process_status_line(line);
+    return;
+  }
   if(line.startsWith("DSP1|")) line.replace("DSP1|", "HMI1|");
   last_hmi_rx = millis();
+  if(is_valid_hmi_packet(line)){
+    g_boot_ctrl_confirmed = getFieldBool(line, "ctrl", g_boot_ctrl_confirmed);
+    g_boot_srvr_confirmed = getFieldBool(line, "srvr", g_boot_srvr_confirmed);
+    apply_external_fw_fields(line);
+  }
   if(boot_phase){
     boot_process_line(line);
     return;
   }
   if(fw_display_owned()){
-    // Firmware transfer owns the screen. We may update connection truth from a
-    // valid HMI packet, but must not apply normal layout/status widgets.
-    if(is_valid_hmi_packet(line)){
-      g_boot_ctrl_confirmed = getFieldBool(line, "ctrl", g_boot_ctrl_confirmed);
-      g_boot_srvr_confirmed = getFieldBool(line, "srvr", g_boot_srvr_confirmed);
-    }
+    // A firmware dashboard owns the panel. Connection and update-progress truth
+    // above still updates, but normal layout/status widgets cannot overwrite it.
     return;
   }
   if(line.startsWith("CFG1|")) {
@@ -1647,6 +1771,42 @@ static void fw_sha_release(){
   if(g_fw_sha_active){ mbedtls_sha256_free(&g_fw_sha_ctx); g_fw_sha_active=false; }
 }
 
+static esp_lcd_panel_handle_t fw_rgb_panel_handle(){
+  lv_disp_t *disp = lv_disp_get_default();
+  if(!disp || !disp->driver || !disp->driver->user_data) return nullptr;
+  ESP_PanelLcd *lcd = static_cast<ESP_PanelLcd*>(disp->driver->user_data);
+  return lcd ? lcd->getHandle() : nullptr;
+}
+
+static void fw_rgb_restart(){
+  esp_lcd_panel_handle_t panel = fw_rgb_panel_handle();
+  if(panel) (void)esp_lcd_rgb_panel_restart(panel);
+}
+
+static void fw_rgb_prepare_for_flash(){
+  if(g_fw_rgb_slowed) return;
+  esp_lcd_panel_handle_t panel = fw_rgb_panel_handle();
+  if(!panel) return;
+  if(esp_lcd_rgb_panel_set_pclk(panel, FW_RGB_PCLK_HZ) == ESP_OK){
+    g_fw_rgb_slowed = true;
+    // PCLK changes are applied on VSYNC. Give the current full opaque firmware
+    // dashboard at least one frame to settle before Update.begin() can touch flash.
+    delay(30);
+    (void)esp_lcd_rgb_panel_restart(panel);
+    delay(5);
+  }
+}
+
+static void fw_rgb_restore_after_failure(){
+  if(!g_fw_rgb_slowed) return;
+  esp_lcd_panel_handle_t panel = fw_rgb_panel_handle();
+  if(panel){
+    (void)esp_lcd_rgb_panel_set_pclk(panel, NORMAL_RGB_PCLK_HZ);
+    (void)esp_lcd_rgb_panel_restart(panel);
+  }
+  g_fw_rgb_slowed = false;
+}
+
 static void fw_abort(const char *reason, uint16_t seq=0){
   if(g_fw_update_active) Update.abort();
   fw_sha_release();
@@ -1663,8 +1823,8 @@ static void fw_abort(const char *reason, uint16_t seq=0){
   String msg = String("fw_abort|") + (reason ? reason : "unknown");
   Serial.printf("[FW RX] %s\n", msg.c_str());
   if(seq) fw_send_text(HVP2PRS485::ERROR_MSG, seq, msg);
-  boot_set_progress(0);
-  boot_set_status("Firmware update failed | waiting for CTRL");
+  fw_rgb_restore_after_failure();
+  fw_set_device_status("CTRL-TS", "Failed", 0, false);
 }
 
 static void fw_handle_begin(const HVP2PRS485::Frame &frame){
@@ -1697,8 +1857,20 @@ static void fw_handle_begin(const HVP2PRS485::Frame &frame){
   g_fw_finalized = false;
   g_fw_final_size = 0;
   g_fw_final_sha = "";
+  // The display must already be a fully rendered opaque firmware dashboard
+  // before *any* OTA flash operation begins. Update.begin() itself may erase an
+  // OTA region, so showing the screen only after Update.begin() is too late.
+  fw_set_device_status("CTRL-TS", "Preparing", 0, true);
+#if defined(LV_VERSION_MAJOR) && (LV_VERSION_MAJOR >= 8)
+  lvgl_port_lock(-1);
+  lv_refr_now(NULL);
+  lvgl_port_unlock();
+#endif
+  fw_rgb_prepare_for_flash();
   if(!Update.begin(imageSize, U_FLASH)){
     Serial.println("[FW RX] Update.begin failed");
+    fw_rgb_restore_after_failure();
+    fw_set_device_status("CTRL-TS", "Failed", 0, false);
     fw_send_text(HVP2PRS485::ERROR_MSG, frame.seq, "fw_begin_no_space");
     return;
   }
@@ -1741,6 +1913,10 @@ static void fw_handle_block(const HVP2PRS485::Frame &frame){
   }
   memcpy(g_fw_write_buf, frame.payload + 4, dataLen);
   const size_t wrote = Update.write(g_fw_write_buf, dataLen);
+  // Flash programming can desynchronise the ESP32-S3 RGB DMA when PSRAM cache
+  // bandwidth is interrupted. Ask the driver to realign at the next VSYNC after
+  // every block; this does not redraw the LVGL screen.
+  fw_rgb_restart();
   if(wrote != dataLen){
     fw_abort("write_failed", frame.seq);
     return;
@@ -1785,6 +1961,7 @@ static void fw_handle_end(const HVP2PRS485::Frame &frame){
     return;
   }
   bool ok = Update.end(true);
+  fw_rgb_restart();
   if(!ok || Update.hasError()){
     fw_abort("finalize_failed");
     fw_send_text(HVP2PRS485::FW_RESULT, frame.seq, "ok=0|reason=finalize");
@@ -1801,6 +1978,7 @@ static void fw_handle_end(const HVP2PRS485::Frame &frame){
     g_fw_update_active = false;
     g_fw_finalized = false;
     fw_send_text(HVP2PRS485::FW_RESULT, frame.seq, "ok=0|reason=metadata");
+    fw_rgb_restore_after_failure();
     boot_set_status("Firmware metadata failed | existing image retained");
     return;
   }
@@ -1907,7 +2085,7 @@ static void create_ui(){
   lv_obj_t *brand=make_panel(frame,SX,HEADER_Y,70,HEADER_H,C_BG,0x63d84e,7);
   lbl_title=make_label(brand,"HV P2P\nCTRL-TS",0,6,&lv_font_montserrat_12,lv_color_hex(C_FG),70);
   lv_obj_set_style_text_line_space(lbl_title,-2,0);
-  lbl_subtitle=make_label(frame,"v26.10.01.04",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
+  lbl_subtitle=make_label(frame,"v26.10.02.01",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
 
   pill_ctrl=make_panel(frame,255,HEADER_Y,126,HEADER_H,C_PANEL,C_BORDER,5);
   dot_ctrl=lv_obj_create(pill_ctrl); lv_obj_set_pos(dot_ctrl,9,15); lv_obj_set_size(dot_ctrl,8,8); lv_obj_set_style_radius(dot_ctrl,LV_RADIUS_CIRCLE,0); lv_obj_set_style_border_width(dot_ctrl,0,0); lv_obj_set_style_bg_color(dot_ctrl,lv_color_hex(0xef5757),0); lv_obj_clear_flag(dot_ctrl,LV_OBJ_FLAG_SCROLLABLE);
@@ -1992,6 +2170,18 @@ static void create_ui(){
   make_label(footer,"UPTIME",648,9,&lv_font_montserrat_10,lv_color_hex(C_MUTED),55);
   lbl_uptime=make_label(footer,g_uptime.c_str(),705,8,&lv_font_montserrat_10,lv_color_hex(C_FG),68);
 
+  // Calibration wizard occupies the travel/info area only, leaving all five AUX
+  // cards visible and touchable so the assigned AUX remains the step Confirm
+  // control. This applies equally to Limit, Winch and Joystick Calibration.
+  g_cal_overlay=make_panel(frame,SX,TRAVEL_Y,SW,TRAVEL_H+GAP+INFO_H,0x11191f,0x26d5ff,6);
+  g_cal_title_lbl=make_label(g_cal_overlay,"Calibration",28,24,&lv_font_montserrat_24,lv_color_hex(C_CYAN),SW-56);
+  g_cal_step_lbl=make_label(g_cal_overlay,"Step 1",28,72,&lv_font_montserrat_16,lv_color_hex(C_GREEN),SW-56);
+  g_cal_instruction_lbl=make_label(g_cal_overlay,"Set the requested position, then confirm.",28,112,&lv_font_montserrat_18,lv_color_hex(C_FG),SW-56);
+  lv_label_set_long_mode(g_cal_instruction_lbl,LV_LABEL_LONG_WRAP);
+  g_cal_hint_lbl=make_label(g_cal_overlay,"Use the assigned AUX: press once for Confirm?, then press again to confirm this step.",28,176,&lv_font_montserrat_12,lv_color_hex(C_MUTED),SW-56);
+  lv_label_set_long_mode(g_cal_hint_lbl,LV_LABEL_LONG_WRAP);
+  lv_obj_add_flag(g_cal_overlay,LV_OBJ_FLAG_HIDDEN);
+
   // Network settings code remains compiled for service builds, but the locked
   // production face has no separate Settings control. Network values are owned
   // by CTRL/SRVR Setup, keeping the touchscreen surface visually identical.
@@ -2027,6 +2217,14 @@ static void service_runtime_connection_screen(){
   }
 }
 
+static void service_fw_screen_release(){
+  if(!g_fw_external_release_due_ms || millis() < g_fw_external_release_due_ms) return;
+  if(g_fw_update_active || g_fw_finalized || g_fw_reboot_due_ms || fw_any_row_active()) return;
+  g_fw_external_release_due_ms = 0;
+  g_fw_runtime_screen = false;
+  if(g_ui_ready && g_main_scr) lv_scr_load(g_main_scr);
+}
+
 static void service_link_state(){
   if(selected_aux >= 0 && g_selected_aux_ms && (millis() - g_selected_aux_ms > AUX_PENDING_TIMEOUT_MS)){
     cancel_pending_aux();
@@ -2039,7 +2237,7 @@ static void service_link_state(){
 
   bool link_alive = last_hmi_rx && ((millis() - last_hmi_rx) <= HMI_TIMEOUT_MS);
   if(!link_alive) {
-    // v26.10.01.04: local UART/display timeout is a CTRL-TS link warning, not
+    // v26.10.02.01: local UART/display timeout is a CTRL-TS link warning, not
     // proof of a real CTRL E-Stop. Keep the last SRVR-resolved status banner so
     // the touchscreen cannot randomly show "Status | E-Stop CTRL" while SRVR
     // remains "Status | Active". The CTRL status pill can still show ERROR.
@@ -2054,6 +2252,7 @@ void setup(){
   Serial.begin(115200);
   delay(200);
   Serial.println(CTRL_TS_VERSION);
+  Serial.printf("[WS-HMI] reset_reason=%d\n", (int)esp_reset_reason());
   load_fw_identity();
   Serial.printf("[FW RX] identity hash=%s\n", g_fw_image_hash.c_str());
   Serial.println("[WS-HMI] boot: starting framed RS485 thin-HMI runtime");
@@ -2108,14 +2307,27 @@ void setup(){
 void loop(){
   if(g_settings_reset_due_ms && millis() >= g_settings_reset_due_ms) ESP.restart();
   fw_service_reboot();
-  lvgl_port_lock(-1);
-  handle_hmi_rx();
-  if(!fw_display_owned()){
-    service_runtime_connection_screen();
-    service_link_state();
-    screen_keepalive();
+
+  if(fw_display_owned()){
+    // Critical OTA/display isolation: never hold the LVGL mutex across
+    // Update.write(). The .04 loop did so for every firmware block, starving the
+    // Waveshare RGB refresh path and producing the vertical/column corruption
+    // visible on the real panel. Firmware handlers take short LVGL locks only
+    // when a label/bar actually changes.
+    handle_hmi_rx();
+    lvgl_port_lock(-1);
+    service_fw_screen_release();
+    lvgl_port_unlock();
+  } else {
+    lvgl_port_lock(-1);
+    handle_hmi_rx();
+    if(!fw_display_owned()){
+      service_runtime_connection_screen();
+      service_link_state();
+      screen_keepalive();
+    }
+    lvgl_port_unlock();
   }
-  lvgl_port_unlock();
   fw_service_timeout();
   delay(20);
 }

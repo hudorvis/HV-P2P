@@ -1,4 +1,4 @@
-# CTRL Analogue Wiring — v26.10.01.04
+# CTRL Analogue Wiring — v26.10.02.01
 
 The commissioned CTRL EdgeBox uses its onboard SGM58031 with the factory 249-ohm
 4-20 mA shunts removed so AI0..AI3 operate as voltage inputs through the retained

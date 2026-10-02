@@ -1,4 +1,4 @@
-# HV P2P v26.10.01.04 Native Build and Bench Checklist
+# HV P2P v26.10.02.01 Native Build and Bench Checklist
 
 ## GitHub Actions gates
 
@@ -15,10 +15,10 @@
 - macOS Intel, macOS Apple Silicon and Windows x64 SRVR builds/smoke tests must
   all pass before the Complete Release is created.
 
-## v26.10.01.04 field-feedback acceptance
+## v26.10.02.01 field-feedback acceptance
 
 - Start from a genuinely running **v26.10.01.01 CTRL + CTRL-TS**, then launch the
-  GitHub-built v26.10.01.04 SRVR without installing .02/.03 first. Confirm SRVR
+  GitHub-built v26.10.02.01 SRVR without installing .02/.03 first. Confirm SRVR
   detects the older CTRL, initiates the backwards-compatible update automatically,
   CTRL reboots into .04, and then its normal staged-image updater converges CTRL-TS
   to .04. No manual CTRL/CTRL-TS reboot should be required to start convergence.
@@ -50,6 +50,39 @@
 - Confirm AI0 is healthy high when the E-stop is released and goes unsafe when
   pressed/open/faulted.
 - Confirm CTRL serial diagnostics show SGM58031 at 0x48 and no analogue fault.
+
+## CTRL-TS firmware dashboard / RGB stability
+
+1. Start a matched automatic release update with the 7-inch display visible. The
+   firmware screen must be a single opaque dashboard with W1P, CTRL and CTRL-TS
+   rows; an active row must show its current phase and percentage.
+2. On a future update after v26.10.02.01 is already installed, confirm CTRL
+   download progress appears on CTRL-TS before CTRL reboots, W1P progress is
+   relayed through SRVR, and the CTRL-TS row shows local receive/write/verify.
+3. During CTRL-TS local OTA, record the screen for the complete transfer. Reject
+   the release if any vertical/column displacement, duplicated band, splash
+   breakthrough or periodic flash remains. Source tests cannot prove RGB scanout
+   stability on the physical panel.
+4. Force/cancel an update only under safe bench conditions and confirm the display
+   returns to its normal 16 MHz RGB clock after failure/recovery.
+5. Note that the first migration *into* v26.10.02.01 cannot show the new CTRL row
+   while CTRL-TS itself is still running an older UI; validate the full three-row
+   experience on the following matched update or after manually commissioning this
+   release.
+
+## CTRL-TS AUX calibration wizards
+
+- Assign an AUX card to **Limit Calibration**. Open it and complete all three
+  steps. The wizard must remain visible and advance; the ESP must not reboot.
+- Repeat for **Winch Calibration** and its two steps.
+- Assign an AUX card to **Joystick Calibration**. Confirm Left, Centre and Right in
+  sequence. A visible Joystick Calibration wizard must progress through all three
+  steps and the final calibration must become active/saved.
+- The assigned AUX card remains visible during the wizard. Each step uses the
+  existing two-press `Confirm?`/Confirm interaction; once a step advances, the old
+  `Confirmed` latch must clear immediately.
+- If the display genuinely restarts, capture CTRL-TS serial output. The boot line
+  `[WS-HMI] reset_reason=N` is now emitted specifically to identify the reset class.
 
 ## Joystick telemetry / calibrated readout bench
 

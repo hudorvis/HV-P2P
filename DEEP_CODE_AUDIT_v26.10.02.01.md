@@ -1,52 +1,46 @@
-# HV P2P v26.10.01.04 deep code audit / closure
+# HV P2P v26.10.02.01 deep code audit / closure
 
-## v26.10.01.04 field-feedback addendum
+## v26.10.02.01 field-feedback addendum
 
-The v26.10.01.03 bench cycle exposed eight linked UI/firmware issues. All were
-traced against the .03 source before changing the next revision.
+This revision was traced directly from v26.10.01.04 after the 2 October bench
+video and calibration feedback.
 
-1. **AUX calibration wizard restart** — `_handle_aux_action()` unconditionally
-   called `openLimitCalibration()` / `openWinchCalibration()` for every confirmed
-   AUX event. Those methods reset `calibration_step=0`, so each confirmation
-   reopened step 1. .04 opens only on the first event and calls `calibrationNext()`
-   while the matching wizard is already open. Joystick Calibration is added to AUX
-   Assign and uses `joystickCalibrationNext()` the same way.
-2. **Runtime SRVR loss** — the boot splash was no longer available after normal UI
-   creation. .04 keeps the original JPEG splash resident and switches back to it
-   with `Waiting for SRVR` when the SRVR status drops, without rebooting CTRL-TS.
-3. **SRVR app icon** — the packaged PNG/ICO assets now use equal-size `P2P` and
-   `SRVR` rows in the CTRL-TS dark/green visual language.
-4. **Direct .01 -> .03 update gap** — `.03`'s lightweight release beacon is not
-   understood by already-matched `.01` firmware. .04 therefore adds an SRVR-side
-   backwards-compatible bridge: an older connected CTRL/W1P is asynchronously
-   uploaded the exact image from the already-SHA-verified authority bundle through
-   its existing `/update/app` endpoint. It is upgrade-only, rate-limited and never
-   executes HTTP on the SRVR motion/UI timer. Once CTRL updates, the established
-   embedded CTRL-TS updater performs normal display convergence.
-5. **E-Stop slash / square icon** — the formatter now strips a residual leading `/`
-   defensively, and unsupported decorative Unicode glyphs are removed from the
-   Montserrat-only CTRL-TS UI.
-6. **Joystick response** — `.03` had removed the major HTTP stalls but still used a
-   50 ms control interval, eight-sample window and 70/30 IIR. .04 uses a 25 ms
-   interval, five-sample trimmed mean, verified no-op AI1 mux readback when already
-   selected, and a 20/80 light filter. A full-scale step exceeds 96% within two
-   cycles. SRVR's QTimer is also 25 ms, so numeric/track readouts are notified at
-   40 Hz without putting interpolation in the authoritative motion value.
-7. **Unsupported heading glyphs** — DRIVE, SPEED, POSITION and AUX 1..5 are plain
-   supported text, eliminating the same square-box rendering seen beside E-Stop.
-8. **Regression closure** — source checks now lock all of the above, including the
-   upgrade-only ordering guard so a future/newer node cannot be silently downgraded.
+1. **CTRL-TS update corruption:** the video contains a corrupted RGB frame even
+   though the firmware dashboard remains the active LVGL screen. In .04 an OTA
+   block could also execute `Update.write()` while the main loop held the LVGL
+   mutex. v26.10.02.01 removes that lock overlap and treats the remaining issue as
+   an ESP32-S3 RGB/flash/PSRAM scanout problem: the dashboard is rendered before
+   `Update.begin()`, RGB PCLK is reduced to 6 MHz during local flash writes, the
+   RGB panel is restarted/re-aligned after each block, and the GitHub-pinned
+   Waveshare port is patched to a 20-line bounce buffer. A failed update restores
+   the normal 16 MHz clock.
+2. **No operator indication for CTRL/W1P OTA:** .04 exposed firmware state in SRVR
+   but CTRL-TS only had useful local CTRL-TS progress. v26.10.02.01 adds one
+   three-row dashboard. CTRL sends `FWSTAT` directly over RS485 from its authority
+   download callback; W1P sends `FW_PROGRESS` to SRVR and SRVR relays it; CTRL-TS
+   owns its local row. Any active row owns the display.
+3. **Joystick Calibration AUX looked like a reboot:** .04 backend had the new AUX
+   action and stateful open/advance logic, but the touchscreen had no joystick (or
+   common calibration) wizard UI to render the state. v26.10.02.01 adds an
+   explicit overlay for Limit, Winch and Joystick calibration while leaving AUX
+   cards visible as the Confirm controls. Advancing a step clears the previous
+   Confirmed latch immediately. No calibration code calls `ESP.restart()`; boot
+   logging now records `esp_reset_reason()` so a genuine reset can be diagnosed
+   if one is observed again.
 
-The `.03` auto-save and calibrated-Percentage work remains retained. Current
-matched CTRL/W1P firmware continues to use the preferred non-blocking UDP release
-beacon -> fail-closed manifest/SHA/OTA path; the SRVR HTTP push exists only to cross
-the old pre-beacon compatibility boundary.
+The first migration into this revision has one unavoidable visibility limit: an
+older CTRL-TS cannot display UI code it does not yet contain. Because CTRL carries
+the staged CTRL-TS image, CTRL must first reach the new release before it can
+install the new touchscreen firmware. Once v26.10.02.01 is installed, future
+matched upgrades can show CTRL, W1P and CTRL-TS progress on the already-capable
+touchscreen.
 
 ## Scope and baseline
 
-This revision was audited and modified directly from the attached authoritative
-`HV P2P v26.09.29.06` source. The approved .06 UI/layout and existing motion and
-safety architecture were retained unless a reported defect required a change.
+The current revision is modified directly from v26.10.01.04, whose audited lineage
+continues from the attached authoritative `HV P2P v26.09.29.06` baseline. Approved
+UI/layout and existing motion/safety architecture remain unchanged except where a
+reported defect requires correction.
 GitHub Actions remains the authoritative native compiler; physical RS485, E-stop,
 Leadshine and loaded-motion behaviour remain commissioning/bench gates.
 
@@ -59,7 +53,7 @@ was already on AI1, and `sampleCtrlEstopAI0()` could return on an AI0 read failu
 before restoring AI1. Health/diagnostic readers could also consume whichever mux
 channel happened to be active and assign it a semantic label.
 
-v26.10.01.04 makes channel selection part of each analogue transaction. The mux
+v26.10.02.01 makes channel selection part of each analogue transaction. The mux
 write is read back/verified, enough conversion time is allowed, stale data is
 discarded, and the requested channel is then sampled. AI0 E-stop sampling has a
 guaranteed AI1 restore path. Diagnostic joystick voltage/raw values come from the
@@ -78,7 +72,7 @@ allowing a previous position reference to survive a complete new session. The ma
 SRVR banner also considered only E-stop/safety for green readiness, while a
 separate CTRL-TS packet path already knew about an uncalibrated yellow state.
 
-v26.10.01.04 makes position-reference validity non-persistent authority. SRVR
+v26.10.02.01 makes position-reference validity non-persistent authority. SRVR
 starts uncalibrated regardless of saved `not_calibrated_mode`, and imported Run
 configuration cannot clear that requirement. W1P now publishes a per-boot random
 `BOOT_ID`; a new W1P session or changed boot ID invalidates an established runtime
@@ -100,7 +94,7 @@ SRVR then defaulted `reverse_joystick=True` as a downstream compensation. That
 compensation was not applied consistently to the Value/Percentage readouts and
 could double-invert an explicitly captured Left/Centre/Right calibration.
 
-v26.10.01.04 fixes polarity once at the CTRL input boundary: physical Left maps
+v26.10.02.01 fixes polarity once at the CTRL input boundary: physical Left maps
 to negative axis and physical Right to positive. SRVR defaults to Normal and the
 calibrated readout, joystick request and limit-direction path share that sign.
 The configuration migration preserves identity defaults and sign-migrates actual
@@ -115,7 +109,7 @@ startup those LVGL objects were deleted/null, yet runtime `FW_BEGIN/FW_BLOCK`
 handlers continued attempting to update them while the normal HMI/link timers
 kept rendering. The updater therefore had no persistent post-boot screen owner.
 
-v26.10.01.04 creates a dedicated runtime firmware-update screen when needed and
+v26.10.02.01 creates a dedicated runtime firmware-update screen when needed and
 makes the updater the exclusive display owner from update start through verified
 completion/reboot. It shows connection state, stable phase/percentage and a
 progress bar. Normal CFG/HMI screen updates, link-state drawing and keepalive

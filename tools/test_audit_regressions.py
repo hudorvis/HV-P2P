@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER="26.10.01.04"
+VER="26.10.02.01"
 W=(ROOT/f"HV_P2P_W1P_EDGEBOX_v{VER}/HV_P2P_W1P_EDGEBOX_v{VER}.ino").read_text()
 C=(ROOT/f"HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino").read_text()
 T=(ROOT/f"HV_P2P_CTRL_TS_v{VER}/HV_P2P_CTRL_TS_v{VER}.ino").read_text()
@@ -23,7 +23,7 @@ edgebox_fqbn = N[N.index('EDGEBOX_FQBN'):N.index('HMI_FQBN')]
 assert 'PartitionScheme=app3M_fat9M_16MB' in edgebox_fqbn
 assert 'PartitionScheme=custom' not in edgebox_fqbn
 
-# v26.10.01.04 operator input / safety refinements.
+# v26.10.02.01 operator input / safety refinements.
 assert 'self.reverse_joystick = False' in B
 assert 'VEL_KEEPALIVE_S = 0.15' in B
 assert 'def joystickPercentage' in B
@@ -36,9 +36,9 @@ assert 'sgmSelectChannelVerified(SGM_CONFIG_AI0_CONT_800SPS_6V144, "AI0 E-stop")
 assert 'sgmEnsureChannelVerified(SGM_CONFIG_AI1_CONT_800SPS_6V144, "AI1 joystick")' in C
 assert 'Always restore and verify AI1' in C
 assert 'CTRL_ESTOP_HEALTHY_MIN_V = 3.5f' in C and 'CTRL_ESTOP_HEALTHY_CONFIRM_SAMPLES = 3' in C
-# v26.10.01.04 direction-regression guard: CTRL normalises physical Left/Right
+# v26.10.02.01 direction-regression guard: CTRL normalises physical Left/Right
 # before SRVR, so the default backend direction is Normal and sign is preserved.
-BT=(ROOT/'SRVR_GitHub_v26.10.01.04/tools/test_backend_logic.py').read_text()
+BT=(ROOT/'SRVR_GitHub_v26.10.02.01/tools/test_backend_logic.py').read_text()
 assert 'assert b.reverse_joystick is False' in BT
 assert 'physical Left=-1' in B
 assert 'b.requested_speed_mps < 0.0' in BT
@@ -52,9 +52,24 @@ assert 'position_reference_persistent' in B and 'self._not_calibrated = True' in
 assert 'def systemStatusLevel' in B and 'System Un-Calibrated' in B
 assert 'g_boot_session_id' in W and 'BOOT_ID=' in W
 assert 'fw_ensure_update_screen' in T and 'fw_display_owned' in T
-assert 'if(!fw_display_owned())' in T and 'Firmware transfer owns the screen' in T
+assert 'if(fw_display_owned())' in T and 'never hold the LVGL mutex across' in T
+# Persistent RGB-panel corruption during OTA is an ESP32-S3 flash/PSRAM/DMA
+# interaction, not merely an LVGL ownership problem.  Freeze a fully rendered
+# dashboard before flash, lower RGB PCLK while writing and realign the RGB DMA
+# after each block.  The pinned Waveshare port is also patched to a 20-line
+# bounce buffer by the native GitHub build.
+assert '#include <esp_lcd_panel_rgb.h>' in T
+assert 'FW_RGB_PCLK_HZ = 6000000UL' in T and 'NORMAL_RGB_PCLK_HZ = 16000000UL' in T
+assert 'esp_lcd_rgb_panel_set_pclk(panel, FW_RGB_PCLK_HZ)' in T
+assert 'esp_lcd_rgb_panel_restart(panel)' in T
+begin=T[T.index('static void fw_handle_begin'):T.index('static void fw_handle_block')]
+assert begin.index('fw_set_device_status("CTRL-TS", "Preparing"') < begin.index('Update.begin(imageSize, U_FLASH)')
+block=T[T.index('static void fw_handle_block'):T.index('static void fw_handle_end')]
+assert block.index('Update.write(g_fw_write_buf, dataLen)') < block.index('fw_rgb_restart()')
+WPREP=(ROOT/'tools/prepare_waveshare_library.py').read_text()
+assert 'LVGL_PORT_RGB_BOUNCE_BUFFER_SIZE (LVGL_PORT_DISP_WIDTH * 20)' in WPREP
 
-# v26.10.01.04 field-feedback regressions: a newer SRVR must be noticed without
+# v26.10.02.01 field-feedback regressions: a newer SRVR must be noticed without
 # power-cycling field nodes *and without periodic HTTP in the healthy real-time
 # loops*. SRVR's normal UDP beacons invalidate an old match; only the already
 # fail-closed unmatched/update path may perform HTTP/SHA/OTA work.
@@ -74,10 +89,10 @@ assert 'reported_match and version_current and authority_current' in B
 assert 'reported_w1p_match and self._firmware_version_matches_current' in B
 assert 'return self._current_firmware_version()' in B
 assert '"Update required"' in B
-assert 'if(g_fw_runtime_screen && boot_scr) return;' in T
-assert 'lv_obj_t *previous_scr = boot_scr;' in T
-assert 'lv_obj_del(previous_scr)' in T
-assert 'if(pct != g_fw_last_display_pct)' in T
+assert 'static lv_obj_t *g_fw_screen = nullptr;' in T
+assert r'HV P2P\nFirmware Update' in T and 'g_fw_row_bar[3]' in T
+assert 'fw_set_device_status("CTRL-TS"' in T and 'FWSTAT|device=CTRL' in C
+assert 'FW_PROGRESS|device=W1P' in W and 'fw_w1p_pct=' in B and 'fw_ctrl_pct=' in B
 assert 'g_status_text = "E-Stop " + src;' in T
 assert 'detail.startsWith("E-Stop / ")' in T
 assert 'while(detail.startsWith("/"))' in T
@@ -103,6 +118,10 @@ aux=B[B.index('def _handle_aux_action'):B.index('def _display_field', B.index('d
 assert 'self.calibration_open and self.calibration_type == "Limit"' in aux and 'self.calibrationNext()' in aux
 assert 'self.calibration_open and self.calibration_type == "Winch"' in aux
 assert 'self.joystick_calibration_open' in aux and 'self.joystickCalibrationNext()' in aux and 'self.openJoystickCalibration()' in aux
+assert 'cal_active=' in B and 'cal_kind=' in B and 'cal_instruction=' in B
+assert 'g_cal_overlay=make_panel' in T and 'apply_calibration_overlay_fields' in T
+assert 'Use the assigned AUX: press once for Confirm?' in T
+assert '#include <esp_system.h>' in T and 'esp_reset_reason()' in T
 
 # Direct .01 -> current release bridge: old matched firmware cannot understand
 # the later UDP release beacon, so SRVR asynchronously uploads its already

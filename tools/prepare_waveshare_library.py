@@ -55,22 +55,39 @@ def main() -> int:
     text = cpp.read_text(errors="strict")
     # Replace only the exact legacy identifier; do not touch already-suffixed symbols.
     patched, count = re.subn(rf"\b{re.escape(OLD)}\b(?!_000)", NEW, text)
-    if count == 0:
-        if NEW in text and OLD not in re.sub(rf"\b{re.escape(NEW)}\b", "", text):
-            print("WAVESHARE_COMPAT_ALREADY_PATCHED")
-            return 0
+    if count:
+        cpp.write_text(patched)
+    elif not (NEW in text and OLD not in re.sub(rf"\b{re.escape(NEW)}\b", "", text)):
         raise SystemExit(
             f"ERROR: expected legacy Waveshare token {OLD} not found; upstream source changed"
         )
 
-    cpp.write_text(patched)
     verify = cpp.read_text()
     if re.search(rf"\b{re.escape(OLD)}\b(?!_000)", verify):
         raise SystemExit("ERROR: legacy CH422G address token remains after patch")
     if NEW not in verify:
         raise SystemExit("ERROR: replacement CH422G address token missing after patch")
 
-    print(f"WAVESHARE_COMPAT_PATCH_PASS replacements={count} symbol={NEW}")
+    # ESP32-S3 RGB displays are sensitive to PSRAM bandwidth interruptions. The
+    # pinned Waveshare port ships a 10-line internal bounce buffer; use 20 lines
+    # for more headroom during OTA/flash activity while retaining the approved
+    # double-buffer/direct-mode architecture. This is the same mitigation
+    # recommended for this 800x480 RGB panel family.
+    header = libs / "Waveshare_ST7262_LVGL" / "src" / "Waveshare_ST7262_LVGL.h"
+    if not header.is_file():
+        raise SystemExit(f"ERROR: Waveshare header not found: {header}")
+    h = header.read_text(errors="strict")
+    old_bounce = "#define LVGL_PORT_RGB_BOUNCE_BUFFER_SIZE (LVGL_PORT_DISP_WIDTH * 10)"
+    new_bounce = "#define LVGL_PORT_RGB_BOUNCE_BUFFER_SIZE (LVGL_PORT_DISP_WIDTH * 20)"
+    if old_bounce in h:
+        h = h.replace(old_bounce, new_bounce, 1)
+        header.write_text(h)
+    elif new_bounce not in h:
+        raise SystemExit("ERROR: expected Waveshare RGB bounce-buffer definition not found; upstream source changed")
+    if new_bounce not in header.read_text(errors="strict"):
+        raise SystemExit("ERROR: Waveshare RGB bounce-buffer patch did not persist")
+
+    print(f"WAVESHARE_COMPAT_PATCH_PASS replacements={count} symbol={NEW} bounce_lines=20")
     return 0
 
 

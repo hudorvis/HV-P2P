@@ -221,13 +221,21 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.01.04", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.02.01", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
         self._firmware_bundle = firmware_bundle
         self._legacy_fw_push_active = {"ctrl": False, "w1p": False}
         self._legacy_fw_push_last_attempt = {"ctrl": 0.0, "w1p": 0.0}
+        # Operator-visible coordinated firmware update state. W1P reports its
+        # own authority-download progress, while the legacy SRVR bridge updates
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.02.01+
+        # additionally reports directly to CTRL-TS while its own loop is blocked.
+        self._fw_progress = {
+            "ctrl": {"active": False, "phase": "Idle", "pct": 0},
+            "w1p": {"active": False, "phase": "Idle", "pct": 0},
+        }
         self.started = time.time()
         # A short per-process authority session token is advertised to CTRL/W1P on
         # their existing real-time links. A new SRVR process therefore causes one
@@ -817,6 +825,18 @@ class HVP2PBackend(QObject):
             self._ctrl_rx_times.popleft()
         return len(self._ctrl_rx_times) >= CTRL_RX_MIN_PKTS
 
+    def _set_fw_progress(self, role: str, active: bool, phase: str = "Updating", pct: int = 0) -> None:
+        key = "w1p" if str(role).lower().startswith("w1p") else "ctrl"
+        state = self._fw_progress.setdefault(key, {"active": False, "phase": "Idle", "pct": 0})
+        state["active"] = bool(active)
+        state["phase"] = str(phase or ("Updating" if active else "Idle"))[:32]
+        try:
+            state["pct"] = max(0, min(100, int(float(pct))))
+        except Exception:
+            state["pct"] = 0
+        if not active and state["pct"] >= 100:
+            state["phase"] = "Complete"
+
     # --- W1P parsing / motion ---
     def _invalidate_position_reference(self, reason: str) -> None:
         """Require a known-position reference after process/W1P power-session loss."""
@@ -875,6 +895,11 @@ class HVP2PBackend(QObject):
                 self._w1p_ts_age_ms = int(float(fields.get("age_ms", 999999)))
             except Exception:
                 self._w1p_ts_age_ms = 999999
+            return
+        if line.startswith("FW_PROGRESS|"):
+            fields = self._parse_pipe_fields(line)
+            active = str(fields.get("active", "1")).strip().lower() in ("1", "true", "on")
+            self._set_fw_progress("w1p", active, fields.get("phase", "Updating"), fields.get("pct", 0))
             return
         if line.startswith("ERR"):
             self._log(f"[W1P] {line}"); return
@@ -1663,6 +1688,9 @@ class HVP2PBackend(QObject):
             estop = 1
         elif self.battery_change_mode:
             status, level, source, estop = "Battery Change", "yellow", "", 0
+        elif self.joystick_calibration_open:
+            status = "Joystick Calibration"
+            level, source, estop = "yellow", "", 0
         elif self.calibration_open:
             status = "Winch Calibration" if self.calibration_type == "Winch" else "Limit Calibration"
             level, source, estop = "yellow", "", 0
@@ -1670,6 +1698,31 @@ class HVP2PBackend(QObject):
             status, level, source, estop = "System Un-Calibrated", "yellow", "", 0
         else:
             status, level, source, estop = "Active", "green", "", 0
+
+        cal_active = bool(self.joystick_calibration_open or self.calibration_open)
+        if self.joystick_calibration_open:
+            cal_kind = "Joystick"
+            cal_step = int(self.joystick_calibration_step)
+            cal_title = str(self.joystick_calibration_title or "Joystick Calibration")
+            cal_instruction = (
+                "Hold joystick fully LEFT, then confirm" if cal_step == 0 else
+                "Release joystick to CENTRE, then confirm" if cal_step == 1 else
+                "Hold joystick fully RIGHT, then confirm"
+            )
+        elif self.calibration_open:
+            cal_kind = str(self.calibration_type or "Limit")
+            cal_step = int(self.calibration_step)
+            cal_title = str(self.calibration_title or f"{cal_kind} Calibration")
+            if cal_kind == "Winch":
+                cal_instruction = "Set zero position, then confirm" if cal_step == 0 else "Move to 20 m position, then confirm"
+            else:
+                cal_instruction = (
+                    "Move skate to NEAR limit, then confirm" if cal_step == 0 else
+                    "Move skate to FAR limit, then confirm" if cal_step == 1 else
+                    "Move skate to REFERENCE point, then confirm"
+                )
+        else:
+            cal_kind, cal_step, cal_title, cal_instruction = "", 0, "", ""
 
         mode = self.drive_modes[self.active_drive_mode]
         max_mps = float(mode.get("max_speed_mps", self.max_speed_mps))
@@ -1694,8 +1747,17 @@ class HVP2PBackend(QObject):
             f"estop_src={self._display_field(source)}", f"status={self._display_field(status)}",
             f"status_level={level}", f"ctrl={1 if ctrl_ok else 0}", "srvr=1",
             f"srvr_fw={self._current_firmware_version()}", f"fw_session={self._firmware_authority_session}",
+            f"fw_ctrl_active={1 if self._fw_progress['ctrl']['active'] else 0}",
+            f"fw_ctrl_phase={self._display_field(self._fw_progress['ctrl']['phase'], 32)}",
+            f"fw_ctrl_pct={int(self._fw_progress['ctrl']['pct'])}",
+            f"fw_w1p_active={1 if self._fw_progress['w1p']['active'] else 0}",
+            f"fw_w1p_phase={self._display_field(self._fw_progress['w1p']['phase'], 32)}",
+            f"fw_w1p_pct={int(self._fw_progress['w1p']['pct'])}",
             f"w1p={1 if w1p_ok else 0}", f"w1p_state={w1p_state}",
             f"service={1 if self._service_override_active() else 0}", f"flags={int(self._ctrl_flags)}",
+            f"cal_active={1 if cal_active else 0}", f"cal_kind={self._display_field(cal_kind, 16)}",
+            f"cal_step={cal_step}", f"cal_title={self._display_field(cal_title, 32)}",
+            f"cal_instruction={self._display_field(cal_instruction, 64)}",
             f"aux1={labels[0]}", f"aux2={labels[1]}", f"aux3={labels[2]}", f"aux4={labels[3]}", f"aux5={labels[4]}",
             f"max_mps={max_mps:.2f}", f"max_kmh={max_mps*3.6:.2f}", f"mode={mode_name}",
             f"drive_mode={mode_name}", f"accel_mode={self._display_field(self.acceleration_mode)}",
@@ -1771,30 +1833,42 @@ class HVP2PBackend(QObject):
                 "Content-Type: application/octet-stream\r\n\r\n"
             ).encode("ascii")
             post = f"\r\n--{boundary}--\r\n".encode("ascii")
-            body = pre + payload + post
+            total_len = len(pre) + len(payload) + len(post)
+            self._set_fw_progress(role, True, "Uploading", 0)
             conn = http.client.HTTPConnection(str(host), 80, timeout=12.0)
             try:
-                conn.request(
-                    "POST", "/update/app", body=body,
-                    headers={
-                        "Content-Type": f"multipart/form-data; boundary={boundary}",
-                        "Content-Length": str(len(body)),
-                        "Connection": "close",
-                    },
-                )
+                conn.putrequest("POST", "/update/app")
+                conn.putheader("Content-Type", f"multipart/form-data; boundary={boundary}")
+                conn.putheader("Content-Length", str(total_len))
+                conn.putheader("Connection", "close")
+                conn.endheaders()
+                conn.send(pre)
+                sent_payload = 0
+                chunk_size = 64 * 1024
+                for off in range(0, len(payload), chunk_size):
+                    chunk = payload[off:off+chunk_size]
+                    conn.send(chunk)
+                    sent_payload += len(chunk)
+                    pct = int((100 * sent_payload) / max(1, len(payload)))
+                    self._set_fw_progress(role, True, "Uploading", pct)
+                conn.send(post)
+                self._set_fw_progress(role, True, "Verifying", 100)
                 resp = conn.getresponse()
                 text = resp.read(512).decode("utf-8", "ignore").strip()
                 status = int(resp.status)
             finally:
                 conn.close()
             if 200 <= status < 300:
+                self._set_fw_progress(role, False, "Complete", 100)
                 self._log(
                     f"[FW AUTO] {token} legacy bridge accepted {self._current_firmware_version()}; "
                     "device reboot/update started"
                 )
             else:
+                self._set_fw_progress(role, False, "Failed", 100)
                 self._log(f"[FW AUTO] {token} legacy bridge HTTP {status}: {text or 'update rejected'}")
         except Exception as exc:
+            self._set_fw_progress(role, False, "Failed", 0)
             self._log(f"[FW AUTO] {role.upper()} legacy bridge failed: {exc}")
         finally:
             self._legacy_fw_push_active[role] = False
@@ -2739,7 +2813,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.01.04 moves the installed joystick polarity correction into CTRL,
+        # v26.10.02.01 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same

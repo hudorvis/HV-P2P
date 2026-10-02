@@ -1,26 +1,37 @@
 # HV P2P Revision History
 
+## v26.10.02.01
+- Built directly from v26.10.01.04 after the 2 October CTRL-TS OTA/calibration
+  bench cycle.
+- Added one CTRL-TS firmware dashboard for W1P, CTRL and CTRL-TS, with phase and
+  percentage per device. CTRL progress travels directly over RS485; W1P progress
+  is relayed by SRVR; CTRL-TS tracks its local flash/verify state.
+- Hardened the CTRL-TS RGB path during local OTA: `Update.write()` no longer runs
+  under the main LVGL mutex, the dashboard is rendered before flash begins, RGB
+  PCLK is reduced to 6 MHz during programming, the RGB stream is restarted after
+  each block, and the pinned Waveshare build uses a 20-line bounce buffer.
+- Added a visible common CTRL-TS calibration wizard for Limit, Winch and Joystick
+  calibration. AUX cards remain available as the step-confirm controls and the
+  previous Confirmed latch clears as soon as the wizard advances.
+- Added CTRL-TS ESP reset-reason boot logging to distinguish a genuine reset from
+  a UI/state transition during future bench diagnostics.
+- Retained v26.10.01.04 runtime splash, status/glyph, old-release OTA bridge and
+  low-latency joystick improvements.
+- macOS bundle metadata advanced to short `26.10.2`, build `2610.2.1`.
+
 ## v26.10.01.04
 - Built directly from v26.10.01.03 after the next CTRL/CTRL-TS bench cycle.
 - Fixed AUX-assigned Limit/Winch calibration so confirmed AUX presses advance an
-  already-open wizard instead of reopening step 1; added Joystick Calibration as
-  an AUX Assign action with the same open/advance semantics.
-- CTRL-TS now returns to the original resident loading splash with `Waiting for
-  SRVR` on runtime SRVR loss (or `Waiting for CTRL` on CTRL loss) and restores the
-  main UI automatically when links recover.
-- Removed unsupported Unicode decoration from CTRL-TS E-Stop, DRIVE/SPEED/POSITION
-  and AUX headings; hardened E-Stop formatting against a residual leading `/`.
-- Replaced the SRVR desktop icon with equal-size `P2P` / `SRVR` rows in the
-  CTRL-TS dark/green visual language.
-- Closed the direct `.01 -> .04` automatic-update compatibility gap: SRVR can
-  asynchronously push its exact validated bundled CTRL/W1P image through the
-  pre-existing `/update/app` endpoint when an older pre-beacon node is connected.
-  The bridge is upgrade-only and never runs HTTP on the SRVR motion/UI timer.
-- Reduced CTRL joystick/display latency to a 25 ms control interval, 5-sample
-  trimmed mean and 80% new-sample filter; SRVR live-state timer is also 25 ms.
-  Verified AI0/AI1 mux ownership and all existing safety/watchdog paths remain.
-- Added regression coverage for all eight field-reported behaviours.
-- macOS bundle metadata advanced to `2610.1.4`.
+  already-open backend wizard instead of reopening step 1; added Joystick
+  Calibration to the AUX assignment vocabulary.
+- CTRL-TS returns to the original resident loading splash on runtime SRVR/CTRL
+  loss and restores the main UI when connectivity returns.
+- Removed unsupported Unicode decoration/square glyphs and corrected residual
+  E-Stop `/` source formatting.
+- Added the backwards-compatible SRVR OTA bridge for older pre-beacon CTRL/W1P
+  firmware, preserving upgrade-only version ordering.
+- Reduced joystick acquisition/display latency to the 25 ms / five-sample path.
+- Updated the SRVR desktop icon and macOS bundle build metadata to `2610.1.4`.
 
 ## v26.10.01.03
 - Built directly from v26.10.01.02 after joystick/calibration and Settings bench
