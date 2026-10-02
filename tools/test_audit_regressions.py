@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER="26.10.02.01"
+VER="26.10.02.02"
 W=(ROOT/f"HV_P2P_W1P_EDGEBOX_v{VER}/HV_P2P_W1P_EDGEBOX_v{VER}.ino").read_text()
 C=(ROOT/f"HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino").read_text()
 T=(ROOT/f"HV_P2P_CTRL_TS_v{VER}/HV_P2P_CTRL_TS_v{VER}.ino").read_text()
@@ -23,7 +23,7 @@ edgebox_fqbn = N[N.index('EDGEBOX_FQBN'):N.index('HMI_FQBN')]
 assert 'PartitionScheme=app3M_fat9M_16MB' in edgebox_fqbn
 assert 'PartitionScheme=custom' not in edgebox_fqbn
 
-# v26.10.02.01 operator input / safety refinements.
+# v26.10.02.02 operator input / safety refinements.
 assert 'self.reverse_joystick = False' in B
 assert 'VEL_KEEPALIVE_S = 0.15' in B
 assert 'def joystickPercentage' in B
@@ -36,9 +36,9 @@ assert 'sgmSelectChannelVerified(SGM_CONFIG_AI0_CONT_800SPS_6V144, "AI0 E-stop")
 assert 'sgmEnsureChannelVerified(SGM_CONFIG_AI1_CONT_800SPS_6V144, "AI1 joystick")' in C
 assert 'Always restore and verify AI1' in C
 assert 'CTRL_ESTOP_HEALTHY_MIN_V = 3.5f' in C and 'CTRL_ESTOP_HEALTHY_CONFIRM_SAMPLES = 3' in C
-# v26.10.02.01 direction-regression guard: CTRL normalises physical Left/Right
+# v26.10.02.02 direction-regression guard: CTRL normalises physical Left/Right
 # before SRVR, so the default backend direction is Normal and sign is preserved.
-BT=(ROOT/'SRVR_GitHub_v26.10.02.01/tools/test_backend_logic.py').read_text()
+BT=(ROOT/'SRVR_GitHub_v26.10.02.02/tools/test_backend_logic.py').read_text()
 assert 'assert b.reverse_joystick is False' in BT
 assert 'physical Left=-1' in B
 assert 'b.requested_speed_mps < 0.0' in BT
@@ -69,7 +69,7 @@ assert block.index('Update.write(g_fw_write_buf, dataLen)') < block.index('fw_rg
 WPREP=(ROOT/'tools/prepare_waveshare_library.py').read_text()
 assert 'LVGL_PORT_RGB_BOUNCE_BUFFER_SIZE (LVGL_PORT_DISP_WIDTH * 20)' in WPREP
 
-# v26.10.02.01 field-feedback regressions: a newer SRVR must be noticed without
+# v26.10.02.02 field-feedback regressions: a newer SRVR must be noticed without
 # power-cycling field nodes *and without periodic HTTP in the healthy real-time
 # loops*. SRVR's normal UDP beacons invalidate an old match; only the already
 # fail-closed unmatched/update path may perform HTTP/SHA/OTA work.
@@ -120,7 +120,15 @@ assert 'self.calibration_open and self.calibration_type == "Winch"' in aux
 assert 'self.joystick_calibration_open' in aux and 'self.joystickCalibrationNext()' in aux and 'self.openJoystickCalibration()' in aux
 assert 'cal_active=' in B and 'cal_kind=' in B and 'cal_instruction=' in B
 assert 'g_cal_overlay=make_panel' in T and 'apply_calibration_overlay_fields' in T
-assert 'Use the assigned AUX: press once for Confirm?' in T
+assert 'Hold Joystick Left, then press Confirm' in B
+assert 'Use the assigned AUX: press once for Confirm?' not in T
+assert 'g_cal_hint_lbl' not in T
+assert 'lv_obj_move_foreground(g_cal_overlay)' not in T
+assert 'if(!g_calibration_overlay_active)' in T and 'calibration overlay shown' in T
+assert 'const bool calibration_active_now = apply_calibration_overlay_fields(line);' in T
+assert 'if(!calibration_active_now){' in T
+assert 'if(!calibration_active_now) update_progress_marker();' in T
+assert 'lv_obj_invalidate(lbl);' not in T[T.index('static void set_label_text_if_changed'):T.index('static String display_aux_label')]
 assert '#include <esp_system.h>' in T and 'esp_reset_reason()' in T
 
 # Direct .01 -> current release bridge: old matched firmware cannot understand

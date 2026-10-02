@@ -1,6 +1,25 @@
-# HV P2P v26.10.02.01 deep code audit / closure
+# HV P2P v26.10.02.02 deep code audit / closure
 
-## v26.10.02.01 field-feedback addendum
+## v26.10.02.02 calibration-display field-video addendum
+
+Four bench videos were reviewed frame-by-frame. IMG_4951 and IMG_4952 show the
+main face stable through AUX `Confirm?`, then the travel/info region becomes
+vertically repeated/duplicated before the panel goes dark and returns to the
+normal boot splash. The splash subsequently shows the startup countdown form
+`CTRL OK | SRVR OK | starting in ...`, which is generated only by
+`show_boot_splash()` during `setup()`. IMG_4954 shows the wizard can also open
+cleanly, making the defect intermittent rather than a deterministic calibration
+state-machine restart.
+
+Source tracing found that `apply_calibration_overlay_fields()` in .01 called
+`lv_obj_move_foreground(g_cal_overlay)` for every active HMI packet and continued
+to repaint all covered travel/Drive/Speed/Position widgets. The corrupted region
+in the video is the same region owned by that overlay. .02 makes overlay
+ownership edge-triggered and freezes covered rendering while active. No
+calibration code path intentionally calls `ESP.restart()`; reset-reason logging
+remains enabled for any recurrence.
+
+## v26.10.02.02 field-feedback addendum
 
 This revision was traced directly from v26.10.01.04 after the 2 October bench
 video and calibration feedback.
@@ -8,20 +27,20 @@ video and calibration feedback.
 1. **CTRL-TS update corruption:** the video contains a corrupted RGB frame even
    though the firmware dashboard remains the active LVGL screen. In .04 an OTA
    block could also execute `Update.write()` while the main loop held the LVGL
-   mutex. v26.10.02.01 removes that lock overlap and treats the remaining issue as
+   mutex. v26.10.02.02 removes that lock overlap and treats the remaining issue as
    an ESP32-S3 RGB/flash/PSRAM scanout problem: the dashboard is rendered before
    `Update.begin()`, RGB PCLK is reduced to 6 MHz during local flash writes, the
    RGB panel is restarted/re-aligned after each block, and the GitHub-pinned
    Waveshare port is patched to a 20-line bounce buffer. A failed update restores
    the normal 16 MHz clock.
 2. **No operator indication for CTRL/W1P OTA:** .04 exposed firmware state in SRVR
-   but CTRL-TS only had useful local CTRL-TS progress. v26.10.02.01 adds one
+   but CTRL-TS only had useful local CTRL-TS progress. v26.10.02.02 adds one
    three-row dashboard. CTRL sends `FWSTAT` directly over RS485 from its authority
    download callback; W1P sends `FW_PROGRESS` to SRVR and SRVR relays it; CTRL-TS
    owns its local row. Any active row owns the display.
 3. **Joystick Calibration AUX looked like a reboot:** .04 backend had the new AUX
    action and stateful open/advance logic, but the touchscreen had no joystick (or
-   common calibration) wizard UI to render the state. v26.10.02.01 adds an
+   common calibration) wizard UI to render the state. v26.10.02.02 adds an
    explicit overlay for Limit, Winch and Joystick calibration while leaving AUX
    cards visible as the Confirm controls. Advancing a step clears the previous
    Confirmed latch immediately. No calibration code calls `ESP.restart()`; boot
@@ -31,7 +50,7 @@ video and calibration feedback.
 The first migration into this revision has one unavoidable visibility limit: an
 older CTRL-TS cannot display UI code it does not yet contain. Because CTRL carries
 the staged CTRL-TS image, CTRL must first reach the new release before it can
-install the new touchscreen firmware. Once v26.10.02.01 is installed, future
+install the new touchscreen firmware. Once v26.10.02.02 is installed, future
 matched upgrades can show CTRL, W1P and CTRL-TS progress on the already-capable
 touchscreen.
 
@@ -53,7 +72,7 @@ was already on AI1, and `sampleCtrlEstopAI0()` could return on an AI0 read failu
 before restoring AI1. Health/diagnostic readers could also consume whichever mux
 channel happened to be active and assign it a semantic label.
 
-v26.10.02.01 makes channel selection part of each analogue transaction. The mux
+v26.10.02.02 makes channel selection part of each analogue transaction. The mux
 write is read back/verified, enough conversion time is allowed, stale data is
 discarded, and the requested channel is then sampled. AI0 E-stop sampling has a
 guaranteed AI1 restore path. Diagnostic joystick voltage/raw values come from the
@@ -72,7 +91,7 @@ allowing a previous position reference to survive a complete new session. The ma
 SRVR banner also considered only E-stop/safety for green readiness, while a
 separate CTRL-TS packet path already knew about an uncalibrated yellow state.
 
-v26.10.02.01 makes position-reference validity non-persistent authority. SRVR
+v26.10.02.02 makes position-reference validity non-persistent authority. SRVR
 starts uncalibrated regardless of saved `not_calibrated_mode`, and imported Run
 configuration cannot clear that requirement. W1P now publishes a per-boot random
 `BOOT_ID`; a new W1P session or changed boot ID invalidates an established runtime
@@ -94,7 +113,7 @@ SRVR then defaulted `reverse_joystick=True` as a downstream compensation. That
 compensation was not applied consistently to the Value/Percentage readouts and
 could double-invert an explicitly captured Left/Centre/Right calibration.
 
-v26.10.02.01 fixes polarity once at the CTRL input boundary: physical Left maps
+v26.10.02.02 fixes polarity once at the CTRL input boundary: physical Left maps
 to negative axis and physical Right to positive. SRVR defaults to Normal and the
 calibrated readout, joystick request and limit-direction path share that sign.
 The configuration migration preserves identity defaults and sign-migrates actual
@@ -109,7 +128,7 @@ startup those LVGL objects were deleted/null, yet runtime `FW_BEGIN/FW_BLOCK`
 handlers continued attempting to update them while the normal HMI/link timers
 kept rendering. The updater therefore had no persistent post-boot screen owner.
 
-v26.10.02.01 creates a dedicated runtime firmware-update screen when needed and
+v26.10.02.02 creates a dedicated runtime firmware-update screen when needed and
 makes the updater the exclusive display owner from update start through verified
 completion/reboot. It shows connection state, stable phase/percentage and a
 progress bar. Normal CFG/HMI screen updates, link-state drawing and keepalive

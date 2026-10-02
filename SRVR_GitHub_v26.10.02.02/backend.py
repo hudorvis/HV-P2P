@@ -221,7 +221,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.02.01", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.02.02", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -230,7 +230,7 @@ class HVP2PBackend(QObject):
         self._legacy_fw_push_last_attempt = {"ctrl": 0.0, "w1p": 0.0}
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.02.01+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.02.02+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -1705,9 +1705,9 @@ class HVP2PBackend(QObject):
             cal_step = int(self.joystick_calibration_step)
             cal_title = str(self.joystick_calibration_title or "Joystick Calibration")
             cal_instruction = (
-                "Hold joystick fully LEFT, then confirm" if cal_step == 0 else
-                "Release joystick to CENTRE, then confirm" if cal_step == 1 else
-                "Hold joystick fully RIGHT, then confirm"
+                "Hold Joystick Left, then press Confirm" if cal_step == 0 else
+                "Release Joystick to Centre, then press Confirm" if cal_step == 1 else
+                "Hold Joystick Right, then press Confirm"
             )
         elif self.calibration_open:
             cal_kind = str(self.calibration_type or "Limit")
@@ -2813,7 +2813,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.02.01 moves the installed joystick polarity correction into CTRL,
+        # v26.10.02.02 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same

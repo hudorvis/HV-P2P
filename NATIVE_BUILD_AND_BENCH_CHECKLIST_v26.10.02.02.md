@@ -1,4 +1,20 @@
-# HV P2P v26.10.02.01 Native Build and Bench Checklist
+# HV P2P v26.10.02.02 Native Build and Bench Checklist
+
+## v26.10.02.02 calibration-screen acceptance
+
+1. Assign **Joystick Calibration** to an AUX tile. First press must show
+   `Confirm?`; second press must open the calibration wizard without duplicated
+   rows, scaling changes, black-screen reset or startup splash.
+2. Repeat the open/cancel/open sequence at least 20 times. The wizard must remain
+   geometrically stable on every attempt.
+3. Step 1 must read exactly **Hold Joystick Left, then press Confirm** and there
+   must be no lower `Use the assigned AUX...` hint row.
+4. Complete Left -> Centre -> Right. Each confirmed step must advance once and
+   keep the display stable.
+5. Repeat equivalent AUX-driven Limit and Winch Calibration wizard opening and
+   stepping; neither may reset or rescale the display.
+6. If CTRL-TS resets, capture the USB serial line `[WS-HMI] reset_reason=N` from
+   the next boot before further diagnosis.
 
 ## GitHub Actions gates
 
@@ -15,10 +31,10 @@
 - macOS Intel, macOS Apple Silicon and Windows x64 SRVR builds/smoke tests must
   all pass before the Complete Release is created.
 
-## v26.10.02.01 field-feedback acceptance
+## v26.10.02.02 field-feedback acceptance
 
 - Start from a genuinely running **v26.10.01.01 CTRL + CTRL-TS**, then launch the
-  GitHub-built v26.10.02.01 SRVR without installing .02/.03 first. Confirm SRVR
+  GitHub-built v26.10.02.02 SRVR without installing .02/.03 first. Confirm SRVR
   detects the older CTRL, initiates the backwards-compatible update automatically,
   CTRL reboots into .04, and then its normal staged-image updater converges CTRL-TS
   to .04. No manual CTRL/CTRL-TS reboot should be required to start convergence.
@@ -56,7 +72,7 @@
 1. Start a matched automatic release update with the 7-inch display visible. The
    firmware screen must be a single opaque dashboard with W1P, CTRL and CTRL-TS
    rows; an active row must show its current phase and percentage.
-2. On a future update after v26.10.02.01 is already installed, confirm CTRL
+2. On a future update after v26.10.02.02 is already installed, confirm CTRL
    download progress appears on CTRL-TS before CTRL reboots, W1P progress is
    relayed through SRVR, and the CTRL-TS row shows local receive/write/verify.
 3. During CTRL-TS local OTA, record the screen for the complete transfer. Reject
@@ -65,7 +81,7 @@
    stability on the physical panel.
 4. Force/cancel an update only under safe bench conditions and confirm the display
    returns to its normal 16 MHz RGB clock after failure/recovery.
-5. Note that the first migration *into* v26.10.02.01 cannot show the new CTRL row
+5. Note that the first migration *into* v26.10.02.02 cannot show the new CTRL row
    while CTRL-TS itself is still running an older UI; validate the full three-row
    experience on the following matched update or after manually commissioning this
    release.

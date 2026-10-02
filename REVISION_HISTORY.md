@@ -1,5 +1,13 @@
 # HV P2P Revision History
 
+## v26.10.02.02
+- Built directly from v26.10.02.01 after four CTRL-TS bench videos showed an intermittent calibration-screen corruption/reset.
+- Confirmed the failure is a real CTRL-TS restart: IMG_4951/4952 show repeated/vertically duplicated Drive/Speed/Position rows immediately before the boot splash returns with the normal `CTRL OK | SRVR OK | starting in ...` countdown.
+- Removed the calibration render storm: the already-foreground wizard is shown/hidden only on state transitions, `lv_obj_move_foreground()` is no longer called on every HMI packet, covered travel/Drive/Speed/Position widgets are frozen while the opaque wizard is active, and redundant explicit label invalidation was removed.
+- Joystick Calibration step 1 now reads exactly **Hold Joystick Left, then press Confirm**. The lower `Use the assigned AUX...` description row has been removed. Centre/Right instructions use the same operator wording.
+- Added regression locks preventing repeated calibration foreground moves/background rendering and preserving the simplified wizard wording.
+- macOS bundle build metadata advanced to `2610.2.2`.
+
 ## v26.10.02.01
 - Built directly from v26.10.01.04 after the 2 October CTRL-TS OTA/calibration
   bench cycle.

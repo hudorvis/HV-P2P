@@ -14,7 +14,7 @@
 #include <esp_lcd_panel_rgb.h>
 #include <esp_system.h>
 
-#define CTRL_TS_SEMVER "v26.10.02.01"
+#define CTRL_TS_SEMVER "v26.10.02.02"
 #define CTRL_TS_VERSION "HV P2P CTRL-TS " CTRL_TS_SEMVER
 #define CTRL_TS_HW_ID "WS-ESP32S3-7"
 #define HMI_BAUD 115200
@@ -142,7 +142,7 @@ static lv_obj_t *middle_panel,*cell_to_near,*cell_speed,*cell_to_far;
 static lv_obj_t *lbl_max_speed,*lbl_current_kmh,*lbl_max_kmh,*lbl_current_pos;
 static lv_obj_t *lbl_drive_mode,*lbl_accel_mode,*lbl_battery_mode,*lbl_srvr_time,*lbl_uptime,*lbl_near_value,*lbl_far_value;
 static lv_obj_t *aux_text_lbl[AUX_COUNT];
-static lv_obj_t *g_cal_overlay=nullptr,*g_cal_title_lbl=nullptr,*g_cal_step_lbl=nullptr,*g_cal_instruction_lbl=nullptr,*g_cal_hint_lbl=nullptr;
+static lv_obj_t *g_cal_overlay=nullptr,*g_cal_title_lbl=nullptr,*g_cal_step_lbl=nullptr,*g_cal_instruction_lbl=nullptr;
 static bool g_calibration_overlay_active=false;
 static String g_last_cal_overlay_title="";
 static int selected_aux=-1,confirmed_aux=-1;
@@ -203,7 +203,7 @@ static float g_last_ramp_near_draw = -999999.0f;
 static float g_last_ramp_far_draw = -999999.0f;
 
 // -------------------- CTRL-TS Settings page --------------------
-// Safe v26.10.02.01 approach: no backlight/brightness writes. This page only
+// Safe v26.10.02.02 approach: no backlight/brightness writes. This page only
 // edits CTRL network settings over UART and therefore should preserve the known
 // Keep the proven splash/boot path; do not write to the backlight controller.
 static lv_obj_t *settings_overlay = nullptr;
@@ -252,7 +252,7 @@ static void force_screen_refresh(){
 }
 
 static void screen_keepalive(){
-  // v26.10.02.01: no periodic full-screen or left-strip invalidation or brightness writes.
+  // v26.10.02.02: no periodic full-screen or left-strip invalidation or brightness writes.
   // The Waveshare/LVGL port refreshes changed objects itself; forcing a full
   // screen refresh every second caused the visible 1-second flicker/glitch.
   if(!g_ui_ready) return;
@@ -262,10 +262,10 @@ static void set_label_text_if_changed(lv_obj_t *lbl, const char *txt){
   if(!lbl || !txt) return;
   const char *cur = lv_label_get_text(lbl);
   if(cur && strcmp(cur, txt) == 0) return;
+  // LVGL invalidates the label as part of lv_label_set_text(). Do not issue a
+  // second explicit invalidate: on the RGB panel that doubles redraw traffic and
+  // materially worsens PSRAM/DMA contention during fast HMI updates.
   lv_label_set_text(lbl, txt);
-  // v26.10.02.01: label-only invalidation. Parent/full-strip invalidation can
-  // cause the known vertical tear on the left AUX area of this panel.
-  lv_obj_invalidate(lbl);
 }
 
 static String display_aux_label(String s){
@@ -951,7 +951,7 @@ static void confirm_aux_idx(int idx, bool send_command){
   selected_aux = -1;
   g_selected_aux_ms = 0;
   confirmed_aux = idx;
-  clear_confirm_at = now_ms + 2000;  // v26.10.02.01: confirmed AUX tile stays lit for 2 seconds
+  clear_confirm_at = now_ms + 2000;  // v26.10.02.02: confirmed AUX tile stays lit for 2 seconds
   g_aux_suppress_until_ms[idx] = now_ms + 400;
   style_aux(idx,false,true);
   snprintf(msg,sizeof(msg),"AUX %d Confirmed", idx+1);
@@ -1013,7 +1013,7 @@ static void style_w1p_status_pill(int state){
 }
 
 static void style_estop_pill(bool active){
-  // v26.10.02.01: the middle status banner follows the SRVR-resolved state.
+  // v26.10.02.02: the middle status banner follows the SRVR-resolved state.
   // A local CTRL-TS UART/display gap must not invent "E-Stop CTRL" while SRVR
   // is still sending Status | Active. Real CTRL/W1P E-Stops are still shown
   // immediately when SRVR sends status=E-Stop... / status_level=red.
@@ -1061,7 +1061,7 @@ static void refresh_status_ui(){
   style_status_pill_cached(0,pill_ctrl,lbl_ctrl,"CTRL",g_ctrl_ok);
   if(pill_srvr && lbl_srvr) style_status_pill_cached(1,pill_srvr,lbl_srvr,"SRVR",g_srvr_ok);
   style_w1p_status_pill(g_w1p_health);
-  // v26.10.02.01: do not turn the main middle box red purely because the
+  // v26.10.02.02: do not turn the main middle box red purely because the
   // CTRL-TS local UART/display link hiccuped. The SRVR status packet is the
   // authoritative source for Active / Un-Calibrated / E-Stop display state.
   bool stopped_visual = (g_status_level >= 2) || g_estop_active;
@@ -1146,23 +1146,27 @@ static void apply_external_fw_fields(const String &line){
   }
 }
 
-static void apply_calibration_overlay_fields(const String &line){
-  if(!g_cal_overlay) return;
+static bool apply_calibration_overlay_fields(const String &line){
+  if(!g_cal_overlay) return false;
   const bool active = getFieldBool(line, "cal_active", false);
   if(!active){
     if(g_calibration_overlay_active){
+      // Hide exactly once on the active -> inactive transition. The overlay was
+      // created last in the frame and therefore already owns the foreground; no
+      // runtime child reordering is required.
       lv_obj_add_flag(g_cal_overlay, LV_OBJ_FLAG_HIDDEN);
       g_calibration_overlay_active = false;
       g_last_cal_overlay_title = "";
+      Serial.println("[WS-HMI] calibration overlay hidden");
     }
-    return;
+    return false;
   }
   String kind = getField(line, "cal_kind");
   String title = getField(line, "cal_title");
   String instruction = getField(line, "cal_instruction");
   int step = (int)getFieldFloat(line, "cal_step", 0);
   if(!title.length()) title = kind.length() ? kind + " Calibration" : "Calibration";
-  if(!instruction.length()) instruction = "Set the requested position, then confirm with the assigned AUX button.";
+  if(!instruction.length()) instruction = "Set the requested position, then press Confirm";
   if(title != g_last_cal_overlay_title){
     // A completed AUX confirmation has advanced the wizard. Return the assigned
     // tile to Ready immediately rather than leaving it locked as Confirmed for
@@ -1174,10 +1178,21 @@ static void apply_calibration_overlay_fields(const String &line){
   set_label_text_if_changed(g_cal_title_lbl, title.c_str());
   set_label_text_if_changed(g_cal_step_lbl, stepText.c_str());
   set_label_text_if_changed(g_cal_instruction_lbl, instruction.c_str());
-  set_label_text_if_changed(g_cal_hint_lbl, "Use the assigned AUX: press once for Confirm?, then press again to confirm this step.");
-  lv_obj_clear_flag(g_cal_overlay, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_move_foreground(g_cal_overlay);
-  g_calibration_overlay_active = true;
+
+  // The .01 implementation called lv_obj_move_foreground() and cleared HIDDEN
+  // on every 20-40 Hz HMI packet. On real hardware that repeatedly invalidated
+  // the ~780x239 calibration surface while Drive/Speed/Position widgets were
+  // also being repainted underneath it. The resulting RGB/PSRAM redraw storm is
+  // visible in IMG_4951/4952 as repeated vertical rows immediately before reset.
+  // Show the already-foreground overlay exactly once, then only mutate labels
+  // whose contents actually change.
+  if(!g_calibration_overlay_active){
+    lv_obj_clear_flag(g_cal_overlay, LV_OBJ_FLAG_HIDDEN);
+    g_calibration_overlay_active = true;
+    Serial.printf("[WS-HMI] calibration overlay shown kind=%s step=%d free_psram=%u\n",
+                  kind.c_str(), step + 1, (unsigned)ESP.getFreePsram());
+  }
+  return true;
 }
 
 static int split_csv(const String &src, String out[], int max_items){
@@ -1569,7 +1584,7 @@ static void apply_hmi_packet(const String &line){
     else g_status_level = 0;
   }
 
-  // v26.10.02.01: if SRVR sends explicit status/status_level, trust it as
+  // v26.10.02.02: if SRVR sends explicit status/status_level, trust it as
   // the authoritative display state. Do not override it locally with a CTRL
   // error just because the touchscreen/CTRL UART side saw a transient gap.
   g_estop_active = packet_estop;
@@ -1610,25 +1625,34 @@ static void apply_hmi_packet(const String &line){
   }
   uint16_t flags_now = (uint16_t)getFieldFloat(line, "flags", (float)g_last_flags);
 
+  // Apply wizard ownership before rendering the travel/info region. While the
+  // opaque wizard covers that region, keep model values current but freeze the
+  // hidden Drive/Speed/Position/travel widgets so they cannot create a second
+  // stream of invalidations underneath the overlay. The first packet after the
+  // wizard closes redraws them from the latest cached values.
+  const bool calibration_active_now = apply_calibration_overlay_fields(line);
+
   String s;
-  s = String(g_to_near, 2); set_label_text_if_changed(lbl_to_near, s.c_str());
-  s = String(g_to_far, 2); set_label_text_if_changed(lbl_to_far, s.c_str());
-  s = String(g_speed_mps, 1); set_label_text_if_changed(lbl_speed_combo, s.c_str());
-  s = String(g_speed_kmh, 1); set_label_text_if_changed(lbl_current_kmh, s.c_str());
-  s = String(g_max_mps, 1); set_label_text_if_changed(lbl_max_speed, s.c_str());
-  s = String(g_max_kmh, 1); set_label_text_if_changed(lbl_max_kmh, s.c_str());
-  s = String(g_pos, 2); set_label_text_if_changed(lbl_current_pos, s.c_str());
-  set_label_text_if_changed(lbl_drive_mode, g_drive_mode.c_str());
-  set_label_text_if_changed(lbl_accel_mode, g_accel_mode.c_str());
-  set_label_text_if_changed(lbl_battery_mode, g_battery_mode.c_str());
+  if(!calibration_active_now){
+    s = String(g_to_near, 2); set_label_text_if_changed(lbl_to_near, s.c_str());
+    s = String(g_to_far, 2); set_label_text_if_changed(lbl_to_far, s.c_str());
+    s = String(g_speed_mps, 1); set_label_text_if_changed(lbl_speed_combo, s.c_str());
+    s = String(g_speed_kmh, 1); set_label_text_if_changed(lbl_current_kmh, s.c_str());
+    s = String(g_max_mps, 1); set_label_text_if_changed(lbl_max_speed, s.c_str());
+    s = String(g_max_kmh, 1); set_label_text_if_changed(lbl_max_kmh, s.c_str());
+    s = String(g_pos, 2); set_label_text_if_changed(lbl_current_pos, s.c_str());
+    set_label_text_if_changed(lbl_drive_mode, g_drive_mode.c_str());
+    set_label_text_if_changed(lbl_accel_mode, g_accel_mode.c_str());
+    set_label_text_if_changed(lbl_battery_mode, g_battery_mode.c_str());
+    s = String(g_near, 2) + " m"; set_label_text_if_changed(lbl_near_value, s.c_str());
+    s = String(g_far, 2) + " m"; set_label_text_if_changed(lbl_far_value, s.c_str());
+  }
+  // Header/footer remain live during calibration; only the covered motion region
+  // is frozen.
   set_label_text_if_changed(lbl_srvr_time, g_srvr_time.c_str());
   set_label_text_if_changed(lbl_uptime, g_uptime.c_str());
   set_label_text_if_changed(lbl_ctrl_ip, g_ctrl_ip.c_str());
   set_label_text_if_changed(lbl_w1p_ip, g_w1p_ip.c_str());
-  s = String(g_near, 2) + " m"; set_label_text_if_changed(lbl_near_value, s.c_str());
-  s = String(g_far, 2) + " m"; set_label_text_if_changed(lbl_far_value, s.c_str());
-
-  apply_calibration_overlay_fields(line);
 
   String aux;
   aux = getField(line, "aux1"); if(aux.length()){ aux = display_aux_label(aux); g_aux_labels[0] = aux; refresh_aux_text(0); }
@@ -1642,7 +1666,7 @@ static void apply_hmi_packet(const String &line){
   String preset_abs_field = getField(line, "preset_abs");
   String preset_vis_field = getField(line, "preset_vis");
   bool preset_fields_changed = (preset_names_field != g_last_preset_names_field) || (preset_pos_field != g_last_preset_pos_field) || (preset_abs_field != g_last_preset_abs_field) || (preset_vis_field != g_last_preset_vis_field);
-  if((preset_names_field.length() || preset_pos_field.length() || preset_vis_field.length()) && preset_fields_changed){
+  if(!calibration_active_now && (preset_names_field.length() || preset_pos_field.length() || preset_vis_field.length()) && preset_fields_changed){
     g_last_preset_names_field = preset_names_field;
     g_last_preset_pos_field = preset_pos_field;
     g_last_preset_abs_field = preset_abs_field;
@@ -1666,8 +1690,8 @@ static void apply_hmi_packet(const String &line){
   }
 
   apply_flags_to_aux(flags_now);
-  update_progress_marker();
-  bool ref_changed = (fabsf(g_ref - g_last_ref_draw) > 0.05f) || (fabsf(g_near - g_last_near_draw) > 0.05f) || (fabsf(g_far - g_last_far_draw) > 0.05f);
+  if(!calibration_active_now) update_progress_marker();
+  bool ref_changed = !calibration_active_now && ((fabsf(g_ref - g_last_ref_draw) > 0.05f) || (fabsf(g_near - g_last_near_draw) > 0.05f) || (fabsf(g_far - g_last_far_draw) > 0.05f));
   if(ref_changed){
     g_last_ref_draw = g_ref;
     g_last_near_draw = g_near;
@@ -1675,7 +1699,7 @@ static void apply_hmi_packet(const String &line){
     update_reference_marker();
     update_preset_markers();
   }
-  bool ramp_changed = ref_changed || (fabsf(g_ramp_near - g_last_ramp_near_draw) > 0.05f) || (fabsf(g_ramp_far - g_last_ramp_far_draw) > 0.05f);
+  bool ramp_changed = !calibration_active_now && (ref_changed || (fabsf(g_ramp_near - g_last_ramp_near_draw) > 0.05f) || (fabsf(g_ramp_far - g_last_ramp_far_draw) > 0.05f));
   if(ramp_changed){
     g_last_ramp_near_draw = g_ramp_near;
     g_last_ramp_far_draw = g_ramp_far;
@@ -1685,7 +1709,7 @@ static void apply_hmi_packet(const String &line){
   if(mode_changed || (prev_status_text != g_status_text) || (prev_status_level != g_status_level) || (prev_estop != g_estop_active) || (prev_estop_source != g_estop_source) || (prev_ctrl != g_ctrl_ok) || (prev_srvr != g_srvr_ok) || (prev_w1p != g_w1p_ok) || (prev_w1p_health != g_w1p_health)) {
     refresh_status_ui();
   }
-  // v26.10.02.01: no left-strip/full-screen invalidation on packets; progress marker animates locally.
+  // v26.10.02.02: no left-strip/full-screen invalidation on packets; progress marker animates locally.
 }
 
 
@@ -1694,7 +1718,7 @@ static void apply_layout_packet(const String &line){
   // on CTRL cannot overwrite the screen title/version or trigger header redraws.
   String hint = getField(line, "hint");
   if(lbl_title) set_label_text_if_changed(lbl_title, "HV P2P\nCTRL-TS");
-  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.02.01");
+  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.02.02");
   if(hint.length() && hint.startsWith("ERROR")) set_touch_debug(hint.c_str());
   for(int i=0;i<AUX_COUNT;i++){
     String key = String("aux") + String(i+1);
@@ -2085,7 +2109,7 @@ static void create_ui(){
   lv_obj_t *brand=make_panel(frame,SX,HEADER_Y,70,HEADER_H,C_BG,0x63d84e,7);
   lbl_title=make_label(brand,"HV P2P\nCTRL-TS",0,6,&lv_font_montserrat_12,lv_color_hex(C_FG),70);
   lv_obj_set_style_text_line_space(lbl_title,-2,0);
-  lbl_subtitle=make_label(frame,"v26.10.02.01",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
+  lbl_subtitle=make_label(frame,"v26.10.02.02",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
 
   pill_ctrl=make_panel(frame,255,HEADER_Y,126,HEADER_H,C_PANEL,C_BORDER,5);
   dot_ctrl=lv_obj_create(pill_ctrl); lv_obj_set_pos(dot_ctrl,9,15); lv_obj_set_size(dot_ctrl,8,8); lv_obj_set_style_radius(dot_ctrl,LV_RADIUS_CIRCLE,0); lv_obj_set_style_border_width(dot_ctrl,0,0); lv_obj_set_style_bg_color(dot_ctrl,lv_color_hex(0xef5757),0); lv_obj_clear_flag(dot_ctrl,LV_OBJ_FLAG_SCROLLABLE);
@@ -2172,14 +2196,14 @@ static void create_ui(){
 
   // Calibration wizard occupies the travel/info area only, leaving all five AUX
   // cards visible and touchable so the assigned AUX remains the step Confirm
-  // control. This applies equally to Limit, Winch and Joystick Calibration.
+  // control. It is created last, so it is permanently the top child and never
+  // needs lv_obj_move_foreground() at runtime. Keep the wizard intentionally
+  // simple: title, step and one operator instruction row only.
   g_cal_overlay=make_panel(frame,SX,TRAVEL_Y,SW,TRAVEL_H+GAP+INFO_H,0x11191f,0x26d5ff,6);
-  g_cal_title_lbl=make_label(g_cal_overlay,"Calibration",28,24,&lv_font_montserrat_24,lv_color_hex(C_CYAN),SW-56);
-  g_cal_step_lbl=make_label(g_cal_overlay,"Step 1",28,72,&lv_font_montserrat_16,lv_color_hex(C_GREEN),SW-56);
-  g_cal_instruction_lbl=make_label(g_cal_overlay,"Set the requested position, then confirm.",28,112,&lv_font_montserrat_18,lv_color_hex(C_FG),SW-56);
+  g_cal_title_lbl=make_label(g_cal_overlay,"Calibration",28,30,&lv_font_montserrat_24,lv_color_hex(C_CYAN),SW-56);
+  g_cal_step_lbl=make_label(g_cal_overlay,"Step 1",28,82,&lv_font_montserrat_16,lv_color_hex(C_GREEN),SW-56);
+  g_cal_instruction_lbl=make_label(g_cal_overlay,"Set the requested position, then press Confirm",28,132,&lv_font_montserrat_18,lv_color_hex(C_FG),SW-56);
   lv_label_set_long_mode(g_cal_instruction_lbl,LV_LABEL_LONG_WRAP);
-  g_cal_hint_lbl=make_label(g_cal_overlay,"Use the assigned AUX: press once for Confirm?, then press again to confirm this step.",28,176,&lv_font_montserrat_12,lv_color_hex(C_MUTED),SW-56);
-  lv_label_set_long_mode(g_cal_hint_lbl,LV_LABEL_LONG_WRAP);
   lv_obj_add_flag(g_cal_overlay,LV_OBJ_FLAG_HIDDEN);
 
   // Network settings code remains compiled for service builds, but the locked
@@ -2237,7 +2261,7 @@ static void service_link_state(){
 
   bool link_alive = last_hmi_rx && ((millis() - last_hmi_rx) <= HMI_TIMEOUT_MS);
   if(!link_alive) {
-    // v26.10.02.01: local UART/display timeout is a CTRL-TS link warning, not
+    // v26.10.02.02: local UART/display timeout is a CTRL-TS link warning, not
     // proof of a real CTRL E-Stop. Keep the last SRVR-resolved status banner so
     // the touchscreen cannot randomly show "Status | E-Stop CTRL" while SRVR
     // remains "Status | Active". The CTRL status pill can still show ERROR.

@@ -1,4 +1,4 @@
-# Arduino IDE Commissioning Settings — v26.10.02.01
+# Arduino IDE Commissioning Settings — v26.10.02.02
 
 GitHub Actions remains authoritative for release compilation. These settings are for initial/manual bench flashing only.
 
@@ -32,7 +32,7 @@ If CTRL-TS reports `no mem for frame buffer`, verify PSRAM is enabled before tro
 
 The GitHub release build patches the pinned Waveshare LVGL port to use a **20-line
 RGB bounce buffer** (the upstream pinned source uses 10 lines). It also compiles
-the v26.10.02.01 CTRL-TS firmware with the runtime OTA mitigation that temporarily
+the v26.10.02.02 CTRL-TS firmware with the runtime OTA mitigation that temporarily
 reduces RGB PCLK to 6 MHz and re-aligns the RGB stream after flash blocks. For a
 manual CTRL-TS source build intended to reproduce the release exactly, use the
 GitHub `STAGED_SOURCE`/workflow-prepared dependencies rather than an unpatched
