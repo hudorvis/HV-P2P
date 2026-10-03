@@ -221,7 +221,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.02.05", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.03.01", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -230,7 +230,7 @@ class HVP2PBackend(QObject):
         self._legacy_fw_push_last_attempt = {"ctrl": 0.0, "w1p": 0.0}
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.02.05+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.03.01+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -363,6 +363,11 @@ class HVP2PBackend(QObject):
         self._ctrl_ts_image_available = False
         self._ctrl_ts_compatible_reported = False
         self._ctrl_ts_age_ms = 999999
+        self._ctrl_ts_poll_timeouts = 0
+        self._ctrl_ts_events_rejected = 0
+        self._ctrl_ts_queue_drops = 0
+        self._ctrl_ts_parser_crc = 0
+        self._ctrl_ts_parser_resync = 0
         self._ctrl_fw_version = ""
         self._w1p_fw_version = ""
         # Firmware authority is safety state, not merely diagnostic metadata.
@@ -708,6 +713,39 @@ class HVP2PBackend(QObject):
             self._ctrl_ts_age_ms = int(float(fields.get("age_ms", 999999)))
         except Exception:
             self._ctrl_ts_age_ms = 999999
+        # RS485 diagnostics are monotonic counters from CTRL/CTRL-TS. Log only
+        # changes in fault counters so bench testing can correlate AUX failures
+        # with transport faults without flooding the normal status log.
+        def _diag_int(name, current):
+            try:
+                return max(0, int(float(fields.get(name, current))))
+            except Exception:
+                return current
+        new_poll_timeouts = _diag_int("poll_timeouts", self._ctrl_ts_poll_timeouts)
+        new_events_rejected = _diag_int("events_reject", self._ctrl_ts_events_rejected)
+        new_queue_drops = _diag_int("ts_queue_drops", self._ctrl_ts_queue_drops)
+        new_parser_crc = _diag_int("parser_crc", self._ctrl_ts_parser_crc) + _diag_int("ts_parser_crc", 0)
+        new_parser_resync = _diag_int("parser_resync", self._ctrl_ts_parser_resync) + _diag_int("ts_parser_resync", 0)
+        if new_poll_timeouts > self._ctrl_ts_poll_timeouts:
+            self._log(f"[CTRL-TS RS485] poll timeout count={new_poll_timeouts}")
+        if new_events_rejected > self._ctrl_ts_events_rejected:
+            self._log(f"[CTRL-TS RS485] stale/rejected EVENT count={new_events_rejected}")
+        if new_queue_drops > self._ctrl_ts_queue_drops:
+            self._log(f"[CTRL-TS RS485] touchscreen event queue drops={new_queue_drops}")
+        if new_parser_crc > self._ctrl_ts_parser_crc:
+            self._log(f"[CTRL-TS RS485] combined parser CRC errors={new_parser_crc}")
+        if new_parser_resync > self._ctrl_ts_parser_resync:
+            self._log(f"[CTRL-TS RS485] combined parser resyncs={new_parser_resync}")
+        self._ctrl_ts_poll_timeouts = new_poll_timeouts
+        self._ctrl_ts_events_rejected = new_events_rejected
+        self._ctrl_ts_queue_drops = new_queue_drops
+        self._ctrl_ts_parser_crc = new_parser_crc
+        self._ctrl_ts_parser_resync = new_parser_resync
+        self._ctrl_ts_poll_timeouts = 0
+        self._ctrl_ts_events_rejected = 0
+        self._ctrl_ts_queue_drops = 0
+        self._ctrl_ts_parser_crc = 0
+        self._ctrl_ts_parser_resync = 0
         self._ads1115_status_last_seen = now
         self._ads1115_connected_reported = str(fields.get("ads", fields.get("ads1115", "0"))).strip() == "1"
 
@@ -2884,7 +2922,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.02.05 moves the installed joystick polarity correction into CTRL,
+        # v26.10.03.01 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same

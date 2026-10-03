@@ -9,6 +9,7 @@ checks=[
     ['python3',str(ROOT/'tools'/'test_hmi_fw_retry_contract.py')],
     ['python3',str(ROOT/'tools'/'test_hmi_target_gate.py')],
     ['python3',str(ROOT/'tools'/'test_hmi_transport_contract.py')],
+    ['python3',str(ROOT/'tools'/'test_hmi_bus_serialization_contract.py')],
     ['python3',str(ROOT/'tools'/'test_ctrl_ts_safe_update_contract.py')],
     ['python3',str(ROOT/'tools'/'test_splash_render_contract.py')],
     ['python3',str(ROOT/'tools'/'test_leadshine_commissioning_contract.py')],
@@ -24,7 +25,7 @@ checks=[
     ['python3',str(ROOT/'tools'/'test_release_consistency.py')],
     ['python3',str(ROOT/'tools'/'test_source_hygiene.py')],
     ['python3',str(ROOT/'tools'/'test_python_syntax.py')],
-    ['python3',str(ROOT/'SRVR_GitHub_v26.10.02.05'/'tools'/'validate_project.py')],
+    ['python3',str(ROOT/'SRVR_GitHub_v26.10.03.01'/'tools'/'validate_project.py')],
 ]
 env=os.environ.copy(); env['PYTHONDONTWRITEBYTECODE']='1'
 for cmd in checks:
@@ -37,7 +38,7 @@ try:
 except Exception:
     print('\nBACKEND_RUNTIME_TEST_SKIPPED: PySide6 not installed in source-audit environment')
 else:
-    cmd=['python3',str(ROOT/'SRVR_GitHub_v26.10.02.05'/'tools'/'test_backend_logic.py')]
+    cmd=['python3',str(ROOT/'SRVR_GitHub_v26.10.03.01'/'tools'/'test_backend_logic.py')]
     print('\n==>', ' '.join(cmd), flush=True)
     subprocess.run(cmd,check=True,cwd=ROOT,env=env)
 print('\nALL_SOURCE_CHECKS_PASS')

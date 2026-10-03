@@ -14,7 +14,7 @@
 #include <esp_system.h>
 #include <esp_attr.h>
 
-#define CTRL_TS_SEMVER "v26.10.02.05"
+#define CTRL_TS_SEMVER "v26.10.03.01"
 #define CTRL_TS_VERSION "HV P2P CTRL-TS " CTRL_TS_SEMVER
 #define CTRL_TS_HW_ID "WS-ESP32S3-7"
 #define HMI_BAUD 115200
@@ -31,7 +31,12 @@ static HVP2PRS485::Parser g_rs485Parser;
 static HVP2PRS485::Frame g_rs485RxFrame;
 static uint16_t g_rs485Seq = 1;
 static bool g_ctrl_fw_compatible = false;
-static String g_event_queue[8];
+static const uint8_t HMI_EVENT_QUEUE_SIZE = 8;
+static const size_t HMI_EVENT_TEXT_MAX = 224;
+struct HmiQueuedEvent { uint16_t id; char text[HMI_EVENT_TEXT_MAX]; };
+static HmiQueuedEvent g_event_queue[HMI_EVENT_QUEUE_SIZE];
+static uint16_t g_next_event_id = 1;
+static uint32_t g_event_queue_drops = 0;
 static uint8_t g_event_head = 0, g_event_tail = 0;
 // LVGL callbacks execute in the Waveshare LVGL task. Keep them heap-free and
 // side-effect-free: a touch callback only queues an AUX index, and the Arduino
@@ -222,7 +227,7 @@ static float g_last_ramp_near_draw = -999999.0f;
 static float g_last_ramp_far_draw = -999999.0f;
 
 // -------------------- CTRL-TS Settings page --------------------
-// Safe v26.10.02.05 approach: no backlight/brightness writes. This page only
+// Safe v26.10.03.01 approach: no backlight/brightness writes. This page only
 // edits CTRL network settings over UART and therefore should preserve the known
 // Keep the proven splash/boot path; do not write to the backlight controller.
 static lv_obj_t *settings_overlay = nullptr;
@@ -270,7 +275,7 @@ static void force_screen_refresh(){
 }
 
 static void screen_keepalive(){
-  // v26.10.02.05: no periodic full-screen or left-strip invalidation or brightness writes.
+  // v26.10.03.01: no periodic full-screen or left-strip invalidation or brightness writes.
   // The Waveshare/LVGL port refreshes changed objects itself; forcing a full
   // screen refresh every second caused the visible 1-second flicker/glitch.
   if(!g_ui_ready) return;
@@ -517,19 +522,28 @@ static String boot_get_field(const String &line, const char *key){
   return line.substring(start, end);
 }
 
-static bool queue_hmi_event(const String &line){
-  uint8_t next = uint8_t((g_event_head + 1) % 8);
-  if(next == g_event_tail) return false;
-  g_event_queue[g_event_head] = line;
+static bool queue_hmi_event(const char *line){
+  if(!line || !*line) return false;
+  uint8_t next = uint8_t((g_event_head + 1) % HMI_EVENT_QUEUE_SIZE);
+  if(next == g_event_tail) { g_event_queue_drops++; return false; }
+  HmiQueuedEvent &slot = g_event_queue[g_event_head];
+  slot.id = g_next_event_id++;
+  if(g_next_event_id == 0) g_next_event_id = 1;
+  strlcpy(slot.text, line, sizeof(slot.text));
   g_event_head = next;
   return true;
 }
-static String pop_hmi_event(){
-  if(g_event_tail == g_event_head) return String();
-  String out = g_event_queue[g_event_tail];
-  g_event_queue[g_event_tail] = "";
-  g_event_tail = uint8_t((g_event_tail + 1) % 8);
-  return out;
+static const HmiQueuedEvent* peek_hmi_event(){
+  if(g_event_tail == g_event_head) return nullptr;
+  return &g_event_queue[g_event_tail];
+}
+static bool ack_hmi_event(uint16_t eventId){
+  if(g_event_tail == g_event_head) return false;
+  HmiQueuedEvent &slot = g_event_queue[g_event_tail];
+  if(slot.id != eventId) return false;
+  slot.id = 0; slot.text[0] = '\0';
+  g_event_tail = uint8_t((g_event_tail + 1) % HMI_EVENT_QUEUE_SIZE);
+  return true;
 }
 static bool queue_aux_touch(uint8_t idx){
   if(idx >= AUX_COUNT) return false;
@@ -1168,14 +1182,15 @@ static void confirm_aux_idx(int idx, bool send_command){
   selected_aux = -1;
   g_selected_aux_ms = 0;
   confirmed_aux = idx;
-  clear_confirm_at = now_ms + 2000;  // v26.10.02.05: confirmed AUX tile stays lit for 2 seconds
+  clear_confirm_at = now_ms + 2000;  // v26.10.03.01: confirmed AUX tile stays lit for 2 seconds
   g_aux_suppress_until_ms[idx] = now_ms + 400;
   style_aux(idx,false,true);
   snprintf(msg,sizeof(msg),"AUX %d Confirmed", idx+1);
   set_touch_debug(msg);
   if(send_command){
-    String cmd = String("AUX") + String(idx + 1);
-    send_hmi_command(cmd.c_str());
+    char cmd[8];
+    snprintf(cmd, sizeof(cmd), "AUX%u", unsigned(idx + 1));
+    send_hmi_command(cmd);
   }
 }
 
@@ -1230,7 +1245,7 @@ static void style_w1p_status_pill(int state){
 }
 
 static void style_estop_pill(bool active){
-  // v26.10.02.05: the middle status banner follows the SRVR-resolved state.
+  // v26.10.03.01: the middle status banner follows the SRVR-resolved state.
   // A local CTRL-TS UART/display gap must not invent "E-Stop CTRL" while SRVR
   // is still sending Status | Active. Real CTRL/W1P E-Stops are still shown
   // immediately when SRVR sends status=E-Stop... / status_level=red.
@@ -1278,7 +1293,7 @@ static void refresh_status_ui(){
   style_status_pill_cached(0,pill_ctrl,lbl_ctrl,"CTRL",g_ctrl_ok);
   if(pill_srvr && lbl_srvr) style_status_pill_cached(1,pill_srvr,lbl_srvr,"SRVR",g_srvr_ok);
   style_w1p_status_pill(g_w1p_health);
-  // v26.10.02.05: do not turn the main middle box red purely because the
+  // v26.10.03.01: do not turn the main middle box red purely because the
   // CTRL-TS local UART/display link hiccuped. The SRVR status packet is the
   // authoritative source for Active / Un-Calibrated / E-Stop display state.
   bool stopped_visual = (g_status_level >= 2) || g_estop_active;
@@ -1294,7 +1309,7 @@ static void refresh_status_ui(){
 
 static void send_hmi_command(const char *cmd){
   if(!cmd || !*cmd) return;
-  if(!queue_hmi_event(String(cmd))) Serial.println("[WS-HMI] event queue full; event dropped");
+  if(!queue_hmi_event(cmd)) Serial.printf("[WS-HMI] event queue full; event dropped count=%lu\n", (unsigned long)g_event_queue_drops);
   else Serial.printf("[WS-HMI EVENT QUEUED] %s\n", cmd);
 }
 
@@ -1817,7 +1832,7 @@ static void apply_hmi_packet(const String &line){
     else g_status_level = 0;
   }
 
-  // v26.10.02.05: if SRVR sends explicit status/status_level, trust it as
+  // v26.10.03.01: if SRVR sends explicit status/status_level, trust it as
   // the authoritative display state. Do not override it locally with a CTRL
   // error just because the touchscreen/CTRL UART side saw a transient gap.
   g_estop_active = packet_estop;
@@ -1942,7 +1957,7 @@ static void apply_hmi_packet(const String &line){
   if(mode_changed || (prev_status_text != g_status_text) || (prev_status_level != g_status_level) || (prev_estop != g_estop_active) || (prev_estop_source != g_estop_source) || (prev_ctrl != g_ctrl_ok) || (prev_srvr != g_srvr_ok) || (prev_w1p != g_w1p_ok) || (prev_w1p_health != g_w1p_health)) {
     refresh_status_ui();
   }
-  // v26.10.02.05: no left-strip/full-screen invalidation on packets; progress marker animates locally.
+  // v26.10.03.01: no left-strip/full-screen invalidation on packets; progress marker animates locally.
 }
 
 
@@ -1951,7 +1966,7 @@ static void apply_layout_packet(const String &line){
   // on CTRL cannot overwrite the screen title/version or trigger header redraws.
   String hint = getField(line, "hint");
   if(lbl_title) set_label_text_if_changed(lbl_title, "HV P2P\nCTRL-TS");
-  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.02.05");
+  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.03.01");
   if(hint.length() && hint.startsWith("ERROR")) set_touch_debug(hint.c_str());
   for(int i=0;i<AUX_COUNT;i++){
     String key = String("aux") + String(i+1);
@@ -2321,9 +2336,25 @@ static void process_rs485_frame(const HVP2PRS485::Frame &frame, bool boot_phase)
       return;
     }
     // This is the only normal-operating transmit opportunity for CTRL-TS.
-    String ev = pop_hmi_event();
+    // Peek rather than pop: the event remains queued until CTRL explicitly ACKs
+    // its event_id, making a lost/corrupt EVENT retry-safe.
+    const HmiQueuedEvent *ev = peek_hmi_event();
+    char payload[HMI_EVENT_TEXT_MAX + 112];
+    snprintf(payload, sizeof(payload), "EV1|id=%u|drops=%lu|crc=%lu|resync=%lu|cmd=%s",
+             ev ? unsigned(ev->id) : 0U,
+             (unsigned long)g_event_queue_drops,
+             (unsigned long)g_hmiParser.crcErrors(),
+             (unsigned long)g_hmiParser.resyncs(),
+             ev ? ev->text : "");
     rs485_slave_turnaround_guard();
-    HVP2PRS485::sendText(HMI, HVP2PRS485::EVENT, frame.seq, ev);
+    HVP2PRS485::sendFrame(HMI, HVP2PRS485::EVENT, frame.seq,
+                         reinterpret_cast<const uint8_t*>(payload), uint16_t(strlen(payload)));
+    return;
+  }
+  if(frame.type == HVP2PRS485::ACK){
+    String text = HVP2PRS485::payloadString(frame);
+    String idText = boot_get_field(text, "event_id");
+    if(idText.length()) ack_hmi_event((uint16_t)idText.toInt());
     return;
   }
   if(frame.type == HVP2PRS485::FW_BEGIN){ fw_handle_begin(frame); return; }
@@ -2361,7 +2392,7 @@ static void create_ui(){
   lv_obj_t *brand=make_panel(frame,SX,HEADER_Y,70,HEADER_H,C_BG,0x63d84e,7);
   lbl_title=make_label(brand,"HV P2P\nCTRL-TS",0,6,&lv_font_montserrat_12,lv_color_hex(C_FG),70);
   lv_obj_set_style_text_line_space(lbl_title,-2,0);
-  lbl_subtitle=make_label(frame,"v26.10.02.05",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
+  lbl_subtitle=make_label(frame,"v26.10.03.01",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
 
   pill_ctrl=make_panel(frame,255,HEADER_Y,126,HEADER_H,C_PANEL,C_BORDER,5);
   dot_ctrl=lv_obj_create(pill_ctrl); lv_obj_set_pos(dot_ctrl,9,15); lv_obj_set_size(dot_ctrl,8,8); lv_obj_set_style_radius(dot_ctrl,LV_RADIUS_CIRCLE,0); lv_obj_set_style_border_width(dot_ctrl,0,0); lv_obj_set_style_bg_color(dot_ctrl,lv_color_hex(0xef5757),0); lv_obj_clear_flag(dot_ctrl,LV_OBJ_FLAG_SCROLLABLE);
@@ -2513,7 +2544,7 @@ static void service_link_state(){
 
   bool link_alive = last_hmi_rx && ((millis() - last_hmi_rx) <= HMI_TIMEOUT_MS);
   if(!link_alive) {
-    // v26.10.02.05: local UART/display timeout is a CTRL-TS link warning, not
+    // v26.10.03.01: local UART/display timeout is a CTRL-TS link warning, not
     // proof of a real CTRL E-Stop. Keep the last SRVR-resolved status banner so
     // the touchscreen cannot randomly show "Status | E-Stop CTRL" while SRVR
     // remains "Status | Active". The CTRL status pill can still show ERROR.

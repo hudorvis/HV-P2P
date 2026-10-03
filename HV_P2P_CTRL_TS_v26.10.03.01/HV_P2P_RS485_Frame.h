@@ -97,7 +97,7 @@ static inline String payloadString(const Frame &frame) {
 
 class Parser {
 public:
-  Parser() { reset(); }
+  Parser() : crcErrors_(0), resyncs_(0) { reset(); }
 
   void reset() {
     state_ = SEEK_MAGIC;
@@ -109,9 +109,12 @@ public:
     lastByteMs_ = 0;
   }
 
+  uint32_t crcErrors() const { return crcErrors_; }
+  uint32_t resyncs() const { return resyncs_; }
+
   bool feed(uint8_t b, Frame &out) {
     const uint32_t now = millis();
-    if (lastByteMs_ && (now - lastByteMs_) > RX_INTERBYTE_TIMEOUT_MS) reset();
+    if (lastByteMs_ && (now - lastByteMs_) > RX_INTERBYTE_TIMEOUT_MS) { resyncs_++; reset(); }
     lastByteMs_ = now;
 
     if (state_ == SEEK_MAGIC) {
@@ -134,6 +137,7 @@ public:
       const uint8_t version = header_[0];
       expectedLength_ = (uint16_t(header_[4]) << 8) | header_[5];
       if (version != PROTOCOL_VERSION || expectedLength_ > MAX_PAYLOAD) {
+        resyncs_++;
         reset();
         return false;
       }
@@ -159,6 +163,8 @@ public:
     const uint32_t got = (uint32_t(crc_[0]) << 24) | (uint32_t(crc_[1]) << 16) | (uint32_t(crc_[2]) << 8) | uint32_t(crc_[3]);
     const uint32_t want = frameCrc(version, type, seq, len, payload_);
     if (got != want) {
+      crcErrors_++;
+      resyncs_++;
       reset();
       return false;
     }
@@ -185,6 +191,8 @@ private:
   uint8_t crc_[4];
   uint8_t crcIndex_;
   uint32_t lastByteMs_;
+  uint32_t crcErrors_;
+  uint32_t resyncs_;
 };
 
 } // namespace HVP2PRS485
