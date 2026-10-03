@@ -1,10 +1,10 @@
-# v26.10.03.01 — 2026-10-03
+# v26.10.03.02 — 2026-10-03
 
 CTRL ↔ CTRL-TS RS485 serialization/reliability revision. Fixes overlapping POLL/display transactions, adds explicit POLL timeout, ACK/retry-safe event delivery with event IDs, fixed-buffer CTRL-TS event queue, 4 Hz full display cap, parser/transport diagnostics and dedicated bus-serialization regression coverage. W1P 500 ms velocity watchdog and existing motion/safety architecture are unchanged.
 
 # HV P2P Revision History
 
-## v26.10.03.01
+## v26.10.03.02
 - Follow-up to v26.10.02.04 after bench reports of intentional-but-unexplained
   CTRL-TS black self-update periods, intermittent resets after AUX Confirm,
   calibration punctuation errors, SRVR/CTRL-TS REF mismatch and an unsupported

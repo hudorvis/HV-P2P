@@ -1,4 +1,4 @@
-# HV P2P v26.10.03.01 — CTRL ↔ CTRL-TS RS485 deep audit
+# HV P2P v26.10.03.02 — CTRL ↔ CTRL-TS RS485 deep audit
 
 Authoritative base: `HV P2P v26.10.02.05 - GitHub Ready Source.zip`.
 
@@ -13,7 +13,7 @@ Authoritative base: `HV P2P v26.10.02.05 - GitHub Ready Source.zip`.
 7. Parser CRC/header/inter-byte failures were silently reset, which hid physical/protocol corruption from diagnostics.
 8. Existing tests verified stale EVENT rejection but did not verify that the master scheduler prevented the stale condition or serialized the bus.
 
-## v26.10.03.01 transport changes
+## v26.10.03.02 transport changes
 
 - Normal HMI traffic is now single-flight. While `g_hmiPollOutstanding` is true, CTRL sends no POLL, HELLO or normal TEXT/display packet.
 - `HMI_POLL_RESPONSE_TIMEOUT_MS` is 35 ms. A timed-out transaction is abandoned explicitly and counted before the bus can be reused.

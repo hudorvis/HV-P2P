@@ -1,4 +1,4 @@
-# HV P2P v26.10.03.01 change summary
+# HV P2P v26.10.03.02 change summary
 
 This revision starts directly from the approved `v26.10.02.05` GitHub-ready source and addresses the CTRL ↔ CTRL-TS half-duplex RS485 instability without changing the approved UI or W1P/Leadshine motion architecture.
 
@@ -30,3 +30,9 @@ Added `tools/test_hmi_bus_serialization_contract.py` to reproduce the .02.05 sta
 - Approved CTRL-TS/SRVR UI design and calibration wording.
 
 GitHub Actions/native compilation remains authoritative for firmware binaries.
+
+## v26.10.03.02 native-build correction
+
+- Corrected CTRL-TS RS485 diagnostic counters to reference the actual `g_rs485Parser` instance rather than the CTRL-only `g_hmiParser` symbol.
+- Added `test_ctrl_ts_parser_diagnostics_contract.py` and included it in the full source-check runner so this cross-target parser-name regression is caught before GitHub native compilation.
+- No UI, W1P watchdog, motion-control, Leadshine, E-stop, hard-limit, predictive stopping, or velocity-refresh behavior was changed by this correction.
