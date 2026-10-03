@@ -1,10 +1,18 @@
-# v26.10.03.02 — 2026-10-03
+# v26.10.03.03 — 2026-10-03
 
-CTRL ↔ CTRL-TS RS485 serialization/reliability revision. Fixes overlapping POLL/display transactions, adds explicit POLL timeout, ACK/retry-safe event delivery with event IDs, fixed-buffer CTRL-TS event queue, 4 Hz full display cap, parser/transport diagnostics and dedicated bus-serialization regression coverage. W1P 500 ms velocity watchdog and existing motion/safety architecture are unchanged.
+Bench/runtime follow-up to v26.10.03.02. Extends the single-flight CTRL↔CTRL-TS transport with a 250 ms POLL timeout plus 300 ms master-silent late-response recovery, completion-based POLL cadence, compact priority HMS1 state, and independent SRVR-presence hints in each POLL. Fixes the SRVR cumulative-RS485-counter log storm, captures AUX edges in the UDP listener so Qt stalls cannot lose confirmed commands, moves auto-save fsync/backup I/O off the UI thread, and decimates broad QML state invalidation while preserving the 25 ms control/safety timer. CTRL-TS headless self-update remains intentionally black. W1P 500 ms watchdog and motion/safety architecture remain unchanged. macOS bundle build: 2610.3.3.
+
+## v26.10.03.02
+- Corrected the CTRL-TS native compile error where diagnostics referenced CTRL's `g_hmiParser` instead of CTRL-TS `g_rs485Parser`.
+- Added parser-diagnostics regression coverage.
+
+## v26.10.03.01
+- Introduced single-flight CTRL↔CTRL-TS RS485 scheduling, explicit normal POLL timeout, ACK/retry-safe EVENT IDs, fixed-buffer event queue, 4 Hz bulk HMI cap and communications counters.
+- Superseded by `.03.02` before bench deployment because GitHub native compilation exposed the parser-name typo.
 
 # HV P2P Revision History
 
-## v26.10.03.02
+## v26.10.02.05
 - Follow-up to v26.10.02.04 after bench reports of intentional-but-unexplained
   CTRL-TS black self-update periods, intermittent resets after AUX Confirm,
   calibration punctuation errors, SRVR/CTRL-TS REF mismatch and an unsupported

@@ -1,4 +1,4 @@
-HV P2P v26.10.03.02 - READ THIS FIRST
+HV P2P v26.10.03.03 - READ THIS FIRST
 
 This revision follows the v26.10.02.04 bench cycle.
 
@@ -27,4 +27,4 @@ SHA metadata. Let that exact-image repair finish unless the logs report an error
 Use GitHub Actions-produced native/staged artifacts. Native compilation is not
 fabricated locally.
 
-macOS bundle build: 2610.2.5
+macOS bundle build: 2610.3.3

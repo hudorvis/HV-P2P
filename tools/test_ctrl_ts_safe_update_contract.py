@@ -9,7 +9,7 @@ Native compilation and real-hardware timing remain GitHub/bench gates.
 """
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
-VER = "26.10.03.02"
+VER = "26.10.03.03"
 T = (ROOT/f"HV_P2P_CTRL_TS_v{VER}"/f"HV_P2P_CTRL_TS_v{VER}.ino").read_text()
 C = (ROOT/f"HV_P2P_CTRL_EDGEBOX_v{VER}"/f"HV_P2P_CTRL_EDGEBOX_v{VER}.ino").read_text()
 P = (ROOT/'tools'/'prepare_waveshare_library.py').read_text()
@@ -132,7 +132,7 @@ assert 'g_hmiSafeOtaCapable = g_hmiSafeOtaLevel >= 2' in C
 assert 'if(g_hmiSafeOtaLevel < 2) return false;' in C
 assert 'if(!g_hmiSafeOtaCapable)' in C
 assert 'lacks safe_ota=2' in C
-assert 'manual USB bootstrap to v26.10.03.02 or newer required' in C
+assert 'manual USB bootstrap to v26.10.03.03 or newer required' in C
 assert 'fw_state=" + String(hmiFwStateText())' in C
 assert 'fw_compare_release_versions' in T
 assert 'fw_downgrade_blocked' in T

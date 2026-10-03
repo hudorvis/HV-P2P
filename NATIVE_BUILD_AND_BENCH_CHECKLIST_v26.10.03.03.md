@@ -1,4 +1,4 @@
-# HV P2P v26.10.03.02 Native Build and Bench Checklist
+# HV P2P v26.10.03.03 Native Build and Bench Checklist
 
 ## Release gate order
 
@@ -10,7 +10,7 @@
 5. Only after display/update/safety gates pass, continue to unloaded then loaded
    motion commissioning.
 
-## CTRL-TS boot and AUX stability — highest-priority .05 bench gate
+## CTRL-TS boot and AUX stability — highest-priority .03.03 bench gate
 
 - Power-cycle CTRL-TS at least 10 times. Every boot must reach a correctly scaled
   800x480 splash/main UI with no colour cycling, repeated rows or displaced bands.
@@ -23,11 +23,24 @@
   - Battery Change Mode;
   - Acceleration Mode.
 - No ordinary AUX action is permitted to restart CTRL-TS.
-- If a restart occurs, preserve SRVR/CTRL logs. `.05` must report a changed
+- If a restart occurs, preserve SRVR/CTRL logs. `.03.03` must report a changed
   CTRL-TS `boot_id` and `reset_reason`, allowing the reset class to be identified
   without depending only on USB serial.
 - Confirm runtime SRVR loss returns to the resident `Waiting for SRVR` splash and
   link recovery restores the main UI without an ESP restart.
+
+
+## SRVR Intel macOS responsiveness
+
+- Leave SRVR connected to CTRL/CTRL-TS for at least 10 minutes after deliberately
+  creating one RS485 timeout/error counter. The log must not repeat the same
+  cumulative counter every 250 ms and the Log page must remain responsive.
+- Change several auto-save Settings/Free-D values rapidly. UI interaction must
+  remain responsive while the background config writer persists the latest state.
+- Toggle Battery Change and Drive Mode from SRVR repeatedly and confirm CTRL-TS
+  reflects each change promptly through the compact priority state path.
+- Quit SRVR normally and verify CTRL-TS returns to `Waiting for SRVR` after CTRL's
+  SRVR freshness timeout, without requiring a CTRL-TS reboot.
 
 ## Joystick Calibration wizard
 

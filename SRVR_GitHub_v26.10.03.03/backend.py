@@ -221,7 +221,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.03.02", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.03.03", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -230,7 +230,7 @@ class HVP2PBackend(QObject):
         self._legacy_fw_push_last_attempt = {"ctrl": 0.0, "w1p": 0.0}
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.03.02+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.03.03+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -349,6 +349,11 @@ class HVP2PBackend(QObject):
         # touchscreen-only CTRL-TS controls; the existing 16-bit packet retains
         # backward wire compatibility while carrying the fifth virtual AUX bit.
         self._ctrl_aux_last = [False] * 5
+        # Capture AUX rising edges in the UDP listener thread so touchscreen
+        # commands cannot disappear merely because the Qt/UI timer stalls.
+        self._ctrl_aux_rx_last = [False] * 5
+        self._ctrl_aux_events = queue.Queue(maxsize=32)
+        self._ctrl_aux_event_drops = 0
         # Secondary controller/touchscreen health reporting carried forward from
         # the proven v26.06.26.25 backend. These do not replace the primary
         # joystick/W1P safety path; they drive the Setup link indicators.
@@ -368,6 +373,8 @@ class HVP2PBackend(QObject):
         self._ctrl_ts_queue_drops = 0
         self._ctrl_ts_parser_crc = 0
         self._ctrl_ts_parser_resync = 0
+        self._ctrl_ts_diag_last_log_at = 0.0
+        self._ctrl_ts_diag_last_logged = (0, 0, 0, 0, 0)
         self._ctrl_fw_version = ""
         self._w1p_fw_version = ""
         # Firmware authority is safety state, not merely diagnostic metadata.
@@ -468,6 +475,10 @@ class HVP2PBackend(QObject):
         self._joystick_neutral_required = False
 
         self._config_path = self._config_file_path()
+        self._config_write_queue = queue.Queue(maxsize=1)
+        self._config_write_stop = threading.Event()
+        self._config_write_thread = None
+        self._config_async_ready = False
         self._load_config()
         self._saved_freed_snapshot = self._freed_snapshot()
         self._saved_setup_snapshot = self._setup_snapshot()
@@ -483,6 +494,9 @@ class HVP2PBackend(QObject):
         self._freed_draft_dirty = False
         self.w1p.reconfigure(self.w1p_ip, self.w1p_port)
         if not self.smoke_test:
+            self._config_async_ready = True
+            self._config_write_thread = threading.Thread(target=self._config_write_worker, name="HVP2P-ConfigWriter", daemon=True)
+            self._config_write_thread.start()
             self.w1p.start()
             self._start_controller_listener()
             self._start_freed_input()
@@ -613,10 +627,22 @@ class HVP2PBackend(QObject):
             msg = self._parse_control_packet(data)
             if not msg: continue
             now = time.time()
+            flags_now = int(msg[0])
+            # Edge-capture runs in the UDP receive thread, independently of the
+            # Qt event loop. The UI/motion timer later drains this persistent
+            # queue, so a 120-300 ms CTRL pulse cannot be missed during a UI stall.
+            for aux_i, aux_bit in enumerate(CTRL_AUX_BITS):
+                pressed = bool(flags_now & aux_bit)
+                if pressed and not self._ctrl_aux_rx_last[aux_i]:
+                    try:
+                        self._ctrl_aux_events.put_nowait(aux_i)
+                    except queue.Full:
+                        self._ctrl_aux_event_drops += 1
+                self._ctrl_aux_rx_last[aux_i] = pressed
             with self._lock:
                 self._ctrl_last_seen = now
                 self._ctrl_rx_times.append(now)
-                self._ctrl_flags = msg[0]
+                self._ctrl_flags = flags_now
                 self._ctrl_axis = msg[1]
         try: sock.close()
         except Exception: pass
@@ -663,6 +689,22 @@ class HVP2PBackend(QObject):
         current_parts = self._firmware_version_parts(self._current_firmware_version())
         return bool(reported_parts is not None and current_parts is not None and reported_parts < current_parts)
 
+    @staticmethod
+    def _esp_reset_reason_name(reason: int) -> str:
+        # Arduino-ESP32 esp_reset_reason() values. Keep the numeric value in the
+        # log as the authoritative diagnostic and add a readable label for bench
+        # work so PANIC/WDT/BROWNOUT can be distinguished from software reboot.
+        names = {
+            1: "POWERON", 2: "EXT", 3: "SOFTWARE", 4: "PANIC",
+            5: "INT_WDT", 6: "TASK_WDT", 7: "WDT", 8: "DEEPSLEEP",
+            9: "BROWNOUT", 10: "SDIO", 11: "USB", 12: "JTAG",
+            13: "EFUSE", 14: "PWR_GLITCH", 15: "CPU_LOCKUP",
+        }
+        try:
+            return names.get(int(reason), "UNKNOWN")
+        except Exception:
+            return "UNKNOWN"
+
     def _handle_ctrl_hmi_status(self, line: str):
         """Parse the proven CTRL HMI_STATUS relay packet.
 
@@ -701,10 +743,11 @@ class HVP2PBackend(QObject):
         except Exception:
             new_reset_reason = self._ctrl_ts_reset_reason
         if new_boot_id and new_boot_id != "unknown" and new_boot_id != self._ctrl_ts_boot_id:
+            reset_name = self._esp_reset_reason_name(new_reset_reason)
             if self._ctrl_ts_boot_id:
-                self._log(f"[CTRL-TS] reboot detected boot {self._ctrl_ts_boot_id} -> {new_boot_id}; reset_reason={new_reset_reason}")
+                self._log(f"[CTRL-TS] reboot detected boot {self._ctrl_ts_boot_id} -> {new_boot_id}; reset_reason={new_reset_reason} ({reset_name})")
             else:
-                self._log(f"[CTRL-TS] boot {new_boot_id}; reset_reason={new_reset_reason}")
+                self._log(f"[CTRL-TS] boot {new_boot_id}; reset_reason={new_reset_reason} ({reset_name})")
             self._ctrl_ts_boot_id = new_boot_id
         self._ctrl_ts_reset_reason = new_reset_reason
         self._ctrl_ts_image_available = str(fields.get("image", "0")).strip() == "1"
@@ -713,39 +756,44 @@ class HVP2PBackend(QObject):
             self._ctrl_ts_age_ms = int(float(fields.get("age_ms", 999999)))
         except Exception:
             self._ctrl_ts_age_ms = 999999
-        # RS485 diagnostics are monotonic counters from CTRL/CTRL-TS. Log only
-        # changes in fault counters so bench testing can correlate AUX failures
-        # with transport faults without flooding the normal status log.
-        def _diag_int(name, current):
+        # RS485 diagnostics are cumulative monotonic counters. Never reset the
+        # stored baseline after parsing them: doing so makes every non-zero value
+        # look "new" on every 250 ms report and creates an unbounded Qt log storm.
+        def _diag_int(name, default=0):
             try:
-                return max(0, int(float(fields.get(name, current))))
+                return max(0, int(float(fields.get(name, default))))
             except Exception:
-                return current
+                return max(0, int(default))
         new_poll_timeouts = _diag_int("poll_timeouts", self._ctrl_ts_poll_timeouts)
         new_events_rejected = _diag_int("events_reject", self._ctrl_ts_events_rejected)
         new_queue_drops = _diag_int("ts_queue_drops", self._ctrl_ts_queue_drops)
-        new_parser_crc = _diag_int("parser_crc", self._ctrl_ts_parser_crc) + _diag_int("ts_parser_crc", 0)
-        new_parser_resync = _diag_int("parser_resync", self._ctrl_ts_parser_resync) + _diag_int("ts_parser_resync", 0)
-        if new_poll_timeouts > self._ctrl_ts_poll_timeouts:
-            self._log(f"[CTRL-TS RS485] poll timeout count={new_poll_timeouts}")
-        if new_events_rejected > self._ctrl_ts_events_rejected:
-            self._log(f"[CTRL-TS RS485] stale/rejected EVENT count={new_events_rejected}")
-        if new_queue_drops > self._ctrl_ts_queue_drops:
-            self._log(f"[CTRL-TS RS485] touchscreen event queue drops={new_queue_drops}")
-        if new_parser_crc > self._ctrl_ts_parser_crc:
-            self._log(f"[CTRL-TS RS485] combined parser CRC errors={new_parser_crc}")
-        if new_parser_resync > self._ctrl_ts_parser_resync:
-            self._log(f"[CTRL-TS RS485] combined parser resyncs={new_parser_resync}")
+        new_parser_crc = _diag_int("parser_crc", 0) + _diag_int("ts_parser_crc", 0)
+        new_parser_resync = _diag_int("parser_resync", 0) + _diag_int("ts_parser_resync", 0)
         self._ctrl_ts_poll_timeouts = new_poll_timeouts
         self._ctrl_ts_events_rejected = new_events_rejected
         self._ctrl_ts_queue_drops = new_queue_drops
         self._ctrl_ts_parser_crc = new_parser_crc
         self._ctrl_ts_parser_resync = new_parser_resync
-        self._ctrl_ts_poll_timeouts = 0
-        self._ctrl_ts_events_rejected = 0
-        self._ctrl_ts_queue_drops = 0
-        self._ctrl_ts_parser_crc = 0
-        self._ctrl_ts_parser_resync = 0
+
+        # Fault diagnostics remain visible, but rate-limit them to one compact
+        # summary every two seconds. The Log QML model is regenerated on each
+        # logChanged signal, so repeated 4 Hz counter lines can otherwise starve
+        # the same UI timer that owns motion/AUX processing.
+        diag_now = (new_poll_timeouts, new_events_rejected, new_queue_drops, new_parser_crc, new_parser_resync)
+        if diag_now != self._ctrl_ts_diag_last_logged and any(v > p for v, p in zip(diag_now, self._ctrl_ts_diag_last_logged)):
+            if (now - self._ctrl_ts_diag_last_log_at) >= 2.0:
+                prev = self._ctrl_ts_diag_last_logged
+                delta = tuple(max(0, v - p) for v, p in zip(diag_now, prev))
+                self._log(
+                    "[CTRL-TS RS485] "
+                    f"poll_timeouts={diag_now[0]} (+{delta[0]}), "
+                    f"rejected={diag_now[1]} (+{delta[1]}), "
+                    f"queue_drops={diag_now[2]} (+{delta[2]}), "
+                    f"crc={diag_now[3]} (+{delta[3]}), "
+                    f"resync={diag_now[4]} (+{delta[4]})"
+                )
+                self._ctrl_ts_diag_last_logged = diag_now
+                self._ctrl_ts_diag_last_log_at = now
         self._ads1115_status_last_seen = now
         self._ads1115_connected_reported = str(fields.get("ads", fields.get("ads1115", "0"))).strip() == "1"
 
@@ -2043,11 +2091,26 @@ class HVP2PBackend(QObject):
         if batt_pressed and not self._batt_last:
             self.setBatteryChange(not self.battery_change_mode)
         self._batt_last = batt_pressed
-        for aux_i, aux_bit in enumerate(CTRL_AUX_BITS):
-            pressed = bool(flags & aux_bit)
-            if pressed and not self._ctrl_aux_last[aux_i]:
-                self._handle_aux_action(aux_i, source="ctrl")
-            self._ctrl_aux_last[aux_i] = pressed
+        # Runtime AUX actions are edge-captured by the UDP listener thread and
+        # persist here until consumed. This removes the old dependency on the
+        # Qt timer sampling a short CTRL pulse at exactly the right instant.
+        if self.smoke_test:
+            # Preserve deterministic unit-test/direct-call behaviour when no
+            # listener thread is running.
+            for aux_i, aux_bit in enumerate(CTRL_AUX_BITS):
+                pressed = bool(flags & aux_bit)
+                if pressed and not self._ctrl_aux_last[aux_i]:
+                    self._handle_aux_action(aux_i, source="ctrl")
+                self._ctrl_aux_last[aux_i] = pressed
+        else:
+            for _ in range(16):
+                try:
+                    aux_i = self._ctrl_aux_events.get_nowait()
+                except queue.Empty:
+                    break
+                self._handle_aux_action(int(aux_i), source="ctrl")
+            for aux_i, aux_bit in enumerate(CTRL_AUX_BITS):
+                self._ctrl_aux_last[aux_i] = bool(flags & aux_bit)
 
         self._sync_service_mode_to_winch()
         self._update_battery_change_auto_cancel()
@@ -2474,7 +2537,14 @@ class HVP2PBackend(QObject):
             for _ in range(100):
                 try: self._parse_w1p(self._w1p_rx.get_nowait())
                 except queue.Empty: break
-            self._motion_tick(); self._service_legacy_firmware_push(); self._send_freed(); self._send_ctrl_firmware_beacon(); self._send_controller_display_packet(); self._send_w1p_firmware_beacon(); self.stateChanged.emit()
+            self._motion_tick(); self._service_legacy_firmware_push(); self._send_freed(); self._send_ctrl_firmware_beacon(); self._send_controller_display_packet(); self._send_w1p_firmware_beacon()
+            # Keep the 25 ms control/safety cadence, but do not force the whole
+            # QML property graph to re-evaluate at 40 Hz. 20 Hz is ample for the
+            # desktop display and materially reduces Intel-mac UI load.
+            now_ui = time.monotonic()
+            if (now_ui - getattr(self, "_last_ui_state_emit", 0.0)) >= 0.05:
+                self._last_ui_state_emit = now_ui
+                self.stateChanged.emit()
         except Exception as exc: self._log(f"[SRVR] tick: {exc}")
 
     # --- config ---
@@ -2922,7 +2992,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.03.02 moves the installed joystick polarity correction into CTRL,
+        # v26.10.03.03 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same
@@ -3203,6 +3273,60 @@ class HVP2PBackend(QObject):
             self.drive_modes = self._normalise_drive_modes(self.drive_modes)
             self._apply_active_drive_profile(sync=False)
 
+    def _config_write_worker(self):
+        """Persist auto-save snapshots off the Qt/UI thread.
+
+        The queue intentionally keeps only the latest pending snapshot. Rapid
+        slider/text edits therefore coalesce instead of issuing a backup + file
+        fsync + directory fsync for every intermediate value.
+        """
+        while not self._config_write_stop.is_set() or not self._config_write_queue.empty():
+            try:
+                payload, make_backup = self._config_write_queue.get(timeout=0.10)
+            except queue.Empty:
+                continue
+            # Coalesce any edits that arrived while this job was waiting.
+            while True:
+                try:
+                    payload, make_backup = self._config_write_queue.get_nowait()
+                except queue.Empty:
+                    break
+            try:
+                _atomic_write_text(self._config_path, payload, make_backup=make_backup)
+            except Exception as exc:
+                self._log(f"[Config] save failed: {exc}")
+
+    def _queue_config_write(self, payload: str, make_backup: bool = True):
+        if self.smoke_test or not self._config_async_ready:
+            _atomic_write_text(self._config_path, payload, make_backup=make_backup)
+            return
+        job = (str(payload), bool(make_backup))
+        try:
+            self._config_write_queue.put_nowait(job)
+            return
+        except queue.Full:
+            pass
+        try:
+            self._config_write_queue.get_nowait()
+        except queue.Empty:
+            pass
+        try:
+            self._config_write_queue.put_nowait(job)
+        except queue.Full:
+            # A writer race can refill the single-slot queue; the in-flight write
+            # still contains a very recent complete snapshot, and the next edit
+            # will enqueue again. Never block the UI thread here.
+            pass
+
+    def _stop_config_writer(self):
+        if not getattr(self, "_config_write_thread", None):
+            return
+        self._config_write_stop.set()
+        try:
+            self._config_write_thread.join(timeout=2.0)
+        except Exception:
+            pass
+
     def _save_config(self, include_staged_freed: bool = False, make_backup: bool = True):
         try:
             # Setup/Free-D are auto-save pages. Persist the current live Free-D
@@ -3272,7 +3396,7 @@ class HVP2PBackend(QObject):
                     "highline_mode": str(freed_snap.get("highline_mode", self.highline_mode)),
                 },
             }
-            _atomic_write_text(self._config_path, json.dumps(c, indent=2) + "\n", make_backup=make_backup)
+            self._queue_config_write(json.dumps(c, indent=2) + "\n", make_backup=make_backup)
         except Exception as exc:
             self._log(f"[Config] save failed: {exc}")
 
@@ -4555,6 +4679,7 @@ class HVP2PBackend(QObject):
                 self.timer.stop()
         except Exception:
             pass
+        self._stop_config_writer()
         if self._stop_evt.is_set(): return
         self._stop_evt.set(); self._freed_in_stop.set()
         try: self.w1p.send("STOP"); self.w1p.send("SW_SRVON 0"); time.sleep(.05)
