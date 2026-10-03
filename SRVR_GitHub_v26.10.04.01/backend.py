@@ -248,7 +248,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.03.05", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.04.01", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -257,7 +257,7 @@ class HVP2PBackend(QObject):
         self._legacy_fw_push_last_attempt = {"ctrl": 0.0, "w1p": 0.0}
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.03.05+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.04.01+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -405,6 +405,8 @@ class HVP2PBackend(QObject):
         self._ctrl_ts_psram_free = 0
         self._ctrl_ts_diag_last_log_at = 0.0
         self._ctrl_ts_diag_last_logged = (0, 0, 0, 0, 0)
+        self._ctrl_ts_last_event_id = 0
+        self._ctrl_ts_last_event_cmd = ""
         self._ctrl_fw_version = ""
         self._w1p_fw_version = ""
         # Firmware authority is safety state, not merely diagnostic metadata.
@@ -812,6 +814,15 @@ class HVP2PBackend(QObject):
         self._ctrl_ts_min_heap = reported_min_heap
         self._ctrl_ts_psram_free = reported_psram
         self._ctrl_ts_reset_reason = new_reset_reason
+        try:
+            event_id = max(0, int(float(fields.get("last_event_id", self._ctrl_ts_last_event_id))))
+        except Exception:
+            event_id = self._ctrl_ts_last_event_id
+        event_cmd = str(fields.get("last_event_cmd", self._ctrl_ts_last_event_cmd or "")).strip()
+        if event_id and (event_id != self._ctrl_ts_last_event_id or event_cmd != self._ctrl_ts_last_event_cmd):
+            self._ctrl_ts_last_event_id = event_id
+            self._ctrl_ts_last_event_cmd = event_cmd
+            self._log(f"[CTRL-TS EVENT] CTRL accepted id={event_id} cmd={event_cmd or 'unknown'}")
         self._ctrl_ts_image_available = str(fields.get("image", "0")).strip() == "1"
         self._ctrl_ts_compatible_reported = str(fields.get("compatible", fields.get("ctrl_ts", "0"))).strip() == "1"
         try:
@@ -1887,7 +1898,17 @@ class HVP2PBackend(QObject):
                     if verb == "save": self.saveLimit(which)
                     elif verb == "recall": self.recallLimit(which)
                     elif verb == "slip": self.slipLimit(which)
-            self._log(f"[AUX] {label}: {action}")
+            result = ""
+            if action == "Drive Mode":
+                try:
+                    result = f" -> {self.drive_modes[self.active_drive_mode].get('name', f'Mode {self.active_drive_mode+1}')}"
+                except Exception:
+                    result = f" -> Mode {self.active_drive_mode+1}"
+            elif action in ("Battery Change Mode", "Battery Change"):
+                result = f" -> {'On' if self.battery_change_mode else 'Off'}"
+            elif action in ("Acceleration Mode", "Accel Mode"):
+                result = f" -> {self.acceleration_mode}"
+            self._log(f"[AUX] {label}: {action}{result}")
         except Exception as exc:
             self._log(f"[AUX] {label} failed ({action}): {exc}")
 
@@ -3143,7 +3164,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.03.05 moves the installed joystick polarity correction into CTRL,
+        # v26.10.04.01 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same

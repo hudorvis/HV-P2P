@@ -1,3 +1,12 @@
+# v26.10.04.01 — 2026-10-04
+
+- Fixed the remaining common CTRL-TS AUX-confirm reboot: the production UI sets `lbl_touch_debug=nullptr`, but the two-second Confirmed timeout still called `lv_label_set_text()` directly through that null pointer. The path is now null-safe and regression-locked.
+- Hardened AUX local semantics so a command is not shown as Confirmed unless it actually entered the fixed retry-safe EVENT queue; queue-full leaves the tile at Confirm? for an explicit retry.
+- Added end-to-end event diagnostics: CTRL reports the last accepted event ID/AUX token and SRVR logs both accepted event and resulting Drive/Battery/Acceleration state.
+- Rechecked the reported Battery Change miss: AUX4 is preserved as a 16-bit A7 flag end-to-end; no source-level high-byte truncation was found. New diagnostics are intended to localize any remaining Battery-only issue after the common reboot is removed.
+- Preserved the `.03.05` communications timings/safety architecture and the approved SRVR UI.
+- macOS bundle metadata: short version `26.10.4`, build `2610.4.1`.
+
 # v26.10.03.05 — 2026-10-03
 
 - Whole-project SRVR↔CTRL↔CTRL-TS↔W1P communications audit following `.03.04` bench feedback.

@@ -1,4 +1,4 @@
-# HV P2P v26.10.03.05 Native Build and Bench Checklist
+# HV P2P v26.10.04.01 Native Build and Bench Checklist
 
 ## Release gate order
 
@@ -11,7 +11,7 @@
    motion commissioning.
 
 
-## v26.10.03.05 communications/settings gates
+## v26.10.04.01 communications/settings gates
 
 - Change Drive Mode, Acceleration Mode and Battery Change Mode repeatedly from SRVR. Each selection should close without a 1–2 s UI stall and CTRL-TS should converge to the selected state promptly.
 - Repeat the same actions from CTRL-TS. Verify SRVR changes exactly once per confirmed press; no accepted command may be silently lost or executed twice.
@@ -182,3 +182,12 @@ Archive:
 - repeated AUX/calibration-wizard video/bench results;
 - E-stop/watchdog/limit commissioning records;
 - Leadshine and loaded-motion acceptance results.
+
+## v26.10.04.01 focused bench regression
+
+1. Confirm one CTRL-TS AUX action and leave the screen untouched for at least 5 seconds. The Confirmed state must clear without text/line corruption and without boot ID changing.
+2. Repeat for Drive Mode, Battery Change Mode and the final step of Joystick Calibration.
+3. For every touchscreen action, check SRVR Log for `[CTRL-TS EVENT] CTRL accepted ... cmd=AUXn` followed by `[AUX] CTRL AUXn: ... -> <result>`.
+4. If Battery Change still does not toggle, record those two log lines plus the current CTRL AUX assignment list. Do not infer an RS485 failure if CTRL already reports the event accepted.
+5. If CTRL-TS still reboots, record the new boot ID/reset reason and pre-reset heap/min-heap/PSRAM values. A post-confirm PANIC should no longer be possible from the removed null debug-label write.
+6. During CTRL-TS self-update, black panel after the deliberate handoff remains expected. A preceding firmware dashboard may correspond to CTRL/W1P `FWSTAT`; verify the device label before treating it as a CTRL-TS display regression.
