@@ -1,4 +1,4 @@
-# HV P2P v26.10.03.03 Native Build and Bench Checklist
+# HV P2P v26.10.03.05 Native Build and Bench Checklist
 
 ## Release gate order
 
@@ -10,7 +10,17 @@
 5. Only after display/update/safety gates pass, continue to unloaded then loaded
    motion commissioning.
 
-## CTRL-TS boot and AUX stability — highest-priority .03.03 bench gate
+
+## v26.10.03.05 communications/settings gates
+
+- Change Drive Mode, Acceleration Mode and Battery Change Mode repeatedly from SRVR. Each selection should close without a 1–2 s UI stall and CTRL-TS should converge to the selected state promptly.
+- Repeat the same actions from CTRL-TS. Verify SRVR changes exactly once per confirmed press; no accepted command may be silently lost or executed twice.
+- Change W1P Units/m, Winch Invert, acceleration profile values and calibrated limits with one setting at a time. Verify W1P STATUS converges to each SRVR value and the SRVR value does not revert if a SET datagram is deliberately dropped.
+- Confirm W1P firmware update progress reaches SRVR (`FW_PROGRESS`) during an authority update.
+- Confirm physical E-stop clear and SRVR reconnect leave software Servo Enable inhibited until the joystick-neutral re-arm completes and SRVR explicitly sends `SW_SRVON 1`.
+- Exercise CTRL-TS while bulk position telemetry is changing. AUX response should remain prompt; RS485 poll timeout/CRC/resync counters should remain stable under normal wiring.
+
+## CTRL-TS boot and AUX stability — highest-priority .03.05 bench gate
 
 - Power-cycle CTRL-TS at least 10 times. Every boot must reach a correctly scaled
   800x480 splash/main UI with no colour cycling, repeated rows or displaced bands.
@@ -23,15 +33,19 @@
   - Battery Change Mode;
   - Acceleration Mode.
 - No ordinary AUX action is permitted to restart CTRL-TS.
-- If a restart occurs, preserve SRVR/CTRL logs. `.03.03` must report a changed
-  CTRL-TS `boot_id` and `reset_reason`, allowing the reset class to be identified
-  without depending only on USB serial.
+- If a restart occurs, preserve SRVR/CTRL logs. `.03.05` must report a changed
+  CTRL-TS `boot_id`, readable `reset_reason`, and the last reported touchscreen
+  free-heap/min-heap/free-PSRAM values so the reset can be classified from evidence
+  rather than assumed.
 - Confirm runtime SRVR loss returns to the resident `Waiting for SRVR` splash and
   link recovery restores the main UI without an ESP restart.
 
 
 ## SRVR Intel macOS responsiveness
 
+- Open each Settings/Free-D ComboBox repeatedly (especially Battery Change,
+  Acceleration Mode and Drive Mode). Selecting an item should close the dropdown
+  promptly; reject the previous 1–2 second UI-thread stall.
 - Leave SRVR connected to CTRL/CTRL-TS for at least 10 minutes after deliberately
   creating one RS485 timeout/error counter. The log must not repeat the same
   cumulative counter every 250 ms and the Log page must remain responsive.
@@ -39,8 +53,11 @@
   remain responsive while the background config writer persists the latest state.
 - Toggle Battery Change and Drive Mode from SRVR repeatedly and confirm CTRL-TS
   reflects each change promptly through the compact priority state path.
-- Quit SRVR normally and verify CTRL-TS returns to `Waiting for SRVR` after CTRL's
-  SRVR freshness timeout, without requiring a CTRL-TS reboot.
+- Quit SRVR normally with motion physically prevented. Verify SRVR sends the
+  urgent W1P STOP + software Servo Enable inhibit before teardown, and CTRL-TS
+  returns to `Waiting for SRVR` on the next practical POLL opportunity rather than
+  waiting ~5 seconds. Confirm W1P reports stopped/inhibited and the commissioned
+  BRK-OFF output reaches the braked state.
 
 ## Joystick Calibration wizard
 
@@ -52,6 +69,9 @@
 - There must be no lower `Use the assigned AUX...` description row.
 - Each confirmed step must advance exactly once and clear the previous Confirmed
   latch so the next step is immediately available.
+- Deliberately create moderate SRVR UI activity, then hold Left/Centre/Right and
+  Confirm from CTRL-TS. The captured value must correspond to the joystick position
+  **at the Confirm event**, not wherever the stick is when SRVR later repaints.
 - The wizard must remain scaled correctly and must not reboot CTRL-TS.
 - After completion, SRVR joystick Value/Percentage must use the calibrated range.
 
@@ -63,7 +83,8 @@ headless updater.
 
 1. Start a controlled automatic CTRL-TS update from a matched `.04+` safe-OTA
    baseline.
-2. The touchscreen may first show the firmware dashboard / safe-reboot message.
+2. The touchscreen should remain on its normal UI until the deliberate safe
+   reboot; it should no longer briefly flash a local update-progress dashboard.
 3. It must then deliberately go dark. There must be no green/blue/white/black
    cycling, duplicated rows or partial UI during flash programming.
 4. While the physical screen is dark, open SRVR Setup and verify the CTRL-TS

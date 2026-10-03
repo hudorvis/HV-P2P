@@ -11,8 +11,8 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-SRVR = (ROOT / 'SRVR_GitHub_v26.10.03.03' / 'backend.py').read_text(encoding='utf-8')
-W1P = (ROOT / 'HV_P2P_W1P_EDGEBOX_v26.10.03.03' / 'HV_P2P_W1P_EDGEBOX_v26.10.03.03.ino').read_text(encoding='utf-8')
+SRVR = (ROOT / 'SRVR_GitHub_v26.10.03.05' / 'backend.py').read_text(encoding='utf-8')
+W1P = (ROOT / 'HV_P2P_W1P_EDGEBOX_v26.10.03.05' / 'HV_P2P_W1P_EDGEBOX_v26.10.03.05.ino').read_text(encoding='utf-8')
 
 
 def const(name: str) -> float:
@@ -22,7 +22,7 @@ def const(name: str) -> float:
 
 
 # End-to-end mode mapping and the EL7 command path are locked.
-assert "SET_ACCEL_MODE {'DYNAMIC' if self.acceleration_mode == 'Speed' else 'TRADITIONAL'}" in SRVR
+assert "f\"SET_ACCEL_MODE {'DYNAMIC' if accel_mode == 'Speed' else 'TRADITIONAL'}\"" in SRVR
 assert 'ACCEL_MODE_DYNAMIC' in W1P and 'ACCEL_MODE_TRADITIONAL' in W1P
 assert 'mode == "DYNAMIC" || mode == "SPEED"' in W1P
 assert 'mode == "TRADITIONAL" || mode == "NORMAL" || mode == "POWER"' in W1P

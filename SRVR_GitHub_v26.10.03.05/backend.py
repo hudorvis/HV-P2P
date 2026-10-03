@@ -40,9 +40,9 @@ CTRL_RX_WINDOW_S = 0.75
 CTRL_RX_MIN_PKTS = 2
 JOY_DEADBAND_PCT = 5.0
 WINCH_STATUS_TIMEOUT_S = 0.75
-WINCH_PROBE_INTERVAL_S = 0.05
+WINCH_PROBE_INTERVAL_S = 0.25
 HMI_STATUS_TIMEOUT_S = 3.5
-HMI_DISPLAY_MIN_CHANGE_INTERVAL_S = 0.04
+HMI_DISPLAY_MIN_CHANGE_INTERVAL_S = 0.10
 HMI_DISPLAY_KEEPALIVE_S = 3.0
 VEL_KEEPALIVE_S = 0.15  # refresh unchanged non-zero VEL well inside the 500 ms W1P watchdog
 
@@ -166,6 +166,9 @@ class W1PClient(threading.Thread):
         self.txq: queue.Queue[str] = queue.Queue(maxsize=500)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setblocking(False)
+        # Normal telemetry and shutdown safety writes share one UDP socket. Keep
+        # the direct fail-safe path serialized with the background TX thread.
+        self._tx_lock = threading.Lock()
         self.last_seen = 0.0
         self.last_probe = 0.0
 
@@ -177,6 +180,27 @@ class W1PClient(threading.Thread):
         try: self.txq.put_nowait(str(text))
         except queue.Full: pass
 
+    def emergency_stop(self):
+        """Send STOP + Servo Enable inhibit immediately, bypassing any TX backlog.
+
+        This is used only for SRVR shutdown. The independent W1P 500 ms VEL
+        freshness watchdog remains unchanged as the abnormal-exit fallback.
+        """
+        payload = b"STOP\nSW_SRVON 0\n"
+        try:
+            # Discard ordinary queued settings/status requests so they cannot be
+            # transmitted after the shutdown safety command.
+            with self.txq.mutex:
+                self.txq.queue.clear()
+            with self._tx_lock:
+                # UDP is intentionally duplicated: the commands are idempotent
+                # and this greatly reduces the chance that a single datagram loss
+                # delays the stopped/braked state until a watchdog expires.
+                for _ in range(3):
+                    self.sock.sendto(payload, (self.host, self.port))
+        except Exception as exc:
+            self.log(f"[W1P SAFETY TX] {exc}")
+
     def reconfigure(self, host: str, port: int):
         self.host, self.port, self.last_seen = host, port, 0.0
 
@@ -186,13 +210,16 @@ class W1PClient(threading.Thread):
                 while True:
                     text = self.txq.get_nowait()
                     payload = text if text.endswith("\n") else text + "\n"
-                    self.sock.sendto(payload.encode("ascii", "ignore"), (self.host, self.port))
+                    with self._tx_lock:
+                        self.sock.sendto(payload.encode("ascii", "ignore"), (self.host, self.port))
             except queue.Empty: pass
             except Exception as exc: self.log(f"[W1P TX] {exc}")
             now = time.time()
             if now - self.last_probe >= WINCH_PROBE_INTERVAL_S:
                 self.last_probe = now
-                try: self.sock.sendto(b"STATUS\n", (self.host, self.port))
+                try:
+                    with self._tx_lock:
+                        self.sock.sendto(b"STATUS\n", (self.host, self.port))
                 except Exception: pass
             try:
                 while True:
@@ -200,7 +227,7 @@ class W1PClient(threading.Thread):
                     if addr[0] != self.host: continue
                     for raw in data.decode("ascii", "ignore").splitlines():
                         line = raw.strip()
-                        if line.startswith(("STATUS", "HELLO", "PONG", "OK", "ERR", "W1PTS_AUX", "W1P_HMI_STATUS")):
+                        if line.startswith(("STATUS", "HELLO", "PONG", "OK", "ERR", "FW_PROGRESS", "W1PTS_AUX", "W1P_HMI_STATUS")):
                             self.last_seen = time.time()
                             try: self.rxq.put_nowait(line)
                             except queue.Full: pass
@@ -221,7 +248,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.03.03", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.03.05", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -230,7 +257,7 @@ class HVP2PBackend(QObject):
         self._legacy_fw_push_last_attempt = {"ctrl": 0.0, "w1p": 0.0}
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.03.03+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.03.05+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -373,6 +400,9 @@ class HVP2PBackend(QObject):
         self._ctrl_ts_queue_drops = 0
         self._ctrl_ts_parser_crc = 0
         self._ctrl_ts_parser_resync = 0
+        self._ctrl_ts_heap_free = 0
+        self._ctrl_ts_min_heap = 0
+        self._ctrl_ts_psram_free = 0
         self._ctrl_ts_diag_last_log_at = 0.0
         self._ctrl_ts_diag_last_logged = (0, 0, 0, 0, 0)
         self._ctrl_fw_version = ""
@@ -386,6 +416,17 @@ class HVP2PBackend(QObject):
         self._w1p_fw_match = False
         self._w1p_fw_authority = "unknown"
         self._w1p_status_last_seen = 0.0
+        # SRVR is authoritative for persistent W1P configuration.  W1P STATUS
+        # is confirmation, not a source that may silently overwrite a freshly
+        # selected operator setting after a lost UDP SET command.
+        self._w1p_reported_config = {}
+        self._w1p_settings_pending = set()
+        self._w1p_setting_last_tx = {}
+        self._w1p_setting_last_value = {}
+        self._w1p_setting_last_any_tx = 0.0
+        self._w1p_setting_retry_s = 0.35
+        self._w1p_setting_min_gap_s = 0.04
+        self._config_notify_pending = False
         self._ads1115_status_last_seen = 0.0
         self._ads1115_connected_reported = False
         self._w1p_ts_last_seen = 0.0
@@ -399,6 +440,13 @@ class HVP2PBackend(QObject):
         self._last_ctrl_display_packet = b""
         self._last_ctrl_display_change_tx = 0.0
         self._last_ctrl_display_keepalive_tx = 0.0
+        self._last_ctrl_display_build_at = 0.0
+        # Cache cable profiles so two diagrams on the same page reuse one
+        # calculation instead of repeating 121 sag samples per state signal.
+        self._cable_profile_cache_key = None
+        self._cable_profile_cache_value = []
+        self._freed_profile_cache_key = None
+        self._freed_profile_cache_value = []
         self._stop_evt = threading.Event()
         self._w1p_rx: queue.Queue[str] = queue.Queue(maxsize=1000)
         self.w1p = W1PClient(self.w1p_ip, self.w1p_port, self._w1p_rx, self._log)
@@ -612,6 +660,7 @@ class HVP2PBackend(QObject):
             try: data, addr = sock.recvfrom(2048)
             except socket.timeout: continue
             except OSError: break
+            if self._stop_evt.is_set(): break
             if not data or (self.ctrl_ip and addr[0] != self.ctrl_ip): continue
             if data[0] == HEARTBEAT_CODE:
                 try: sock.sendto(bytes([HEARTBEAT_ACK]), addr)
@@ -635,7 +684,10 @@ class HVP2PBackend(QObject):
                 pressed = bool(flags_now & aux_bit)
                 if pressed and not self._ctrl_aux_rx_last[aux_i]:
                     try:
-                        self._ctrl_aux_events.put_nowait(aux_i)
+                        # Preserve the joystick sample from the same CTRL packet
+                        # as the AUX rising edge. Calibration must not later use a
+                        # different axis value merely because the Qt thread stalled.
+                        self._ctrl_aux_events.put_nowait((aux_i, float(msg[1]), now))
                     except queue.Full:
                         self._ctrl_aux_event_drops += 1
                 self._ctrl_aux_rx_last[aux_i] = pressed
@@ -742,13 +794,23 @@ class HVP2PBackend(QObject):
             new_reset_reason = int(float(fields.get("reset_reason", self._ctrl_ts_reset_reason)))
         except Exception:
             new_reset_reason = self._ctrl_ts_reset_reason
+        def _mem_int(name, default=0):
+            try: return max(0, int(float(fields.get(name, default))))
+            except Exception: return max(0, int(default))
+        reported_heap = _mem_int("ts_heap", self._ctrl_ts_heap_free)
+        reported_min_heap = _mem_int("ts_min_heap", self._ctrl_ts_min_heap)
+        reported_psram = _mem_int("ts_psram", self._ctrl_ts_psram_free)
         if new_boot_id and new_boot_id != "unknown" and new_boot_id != self._ctrl_ts_boot_id:
             reset_name = self._esp_reset_reason_name(new_reset_reason)
+            mem_note = f"; pre-reset heap={reported_heap} min_heap={reported_min_heap} psram={reported_psram}" if self._ctrl_ts_boot_id else ""
             if self._ctrl_ts_boot_id:
-                self._log(f"[CTRL-TS] reboot detected boot {self._ctrl_ts_boot_id} -> {new_boot_id}; reset_reason={new_reset_reason} ({reset_name})")
+                self._log(f"[CTRL-TS] reboot detected boot {self._ctrl_ts_boot_id} -> {new_boot_id}; reset_reason={new_reset_reason} ({reset_name}){mem_note}")
             else:
                 self._log(f"[CTRL-TS] boot {new_boot_id}; reset_reason={new_reset_reason} ({reset_name})")
             self._ctrl_ts_boot_id = new_boot_id
+        self._ctrl_ts_heap_free = reported_heap
+        self._ctrl_ts_min_heap = reported_min_heap
+        self._ctrl_ts_psram_free = reported_psram
         self._ctrl_ts_reset_reason = new_reset_reason
         self._ctrl_ts_image_available = str(fields.get("image", "0")).strip() == "1"
         self._ctrl_ts_compatible_reported = str(fields.get("compatible", fields.get("ctrl_ts", "0"))).strip() == "1"
@@ -1057,9 +1119,6 @@ class HVP2PBackend(QObject):
                 if self._sanity_accept_winch_position(new_pos, fields):
                     self.state.pos_m = new_pos
             if "RAW_POS" in fields: self._last_raw_pos = int(float(fields["RAW_POS"]))
-            if "SPAN_M" in fields: self.state.total_length_m = float(fields["SPAN_M"])
-            if "NL" in fields: self.state.near_limit.position_m = float(fields["NL"])
-            if "FL" in fields: self.state.far_limit.position_m = float(fields["FL"])
             if "VEL_MPS" in fields and self.position_source != "Virtual": self.current_speed_mps = float(fields["VEL_MPS"])
             if "FW" in fields: self._w1p_fw_version = str(fields["FW"])
             reported_w1p_match = str(fields.get("FW_MATCH", "0")).strip() == "1"
@@ -1069,7 +1128,6 @@ class HVP2PBackend(QObject):
                 self._w1p_fw_authority = "stale_release_report"
             if "IP" in fields: self.w1p_reported_ip = str(fields["IP"])
             if "WRITE_EN" in fields: self.winch_drive_writes_enabled = fields["WRITE_EN"].lower() in ("1","true","on")
-            if "UPM" in fields: self.winch_units_per_m = float(fields["UPM"])
             if "SW_SRVON" in fields: self.winch_sw_srvon = fields["SW_SRVON"].lower() in ("1","true","on","ok")
             if "SW_SRVON_READY" in fields: self.winch_sw_srvon_ready = fields["SW_SRVON_READY"].lower() in ("1","true","on","ok","ready")
             if "SW_SRVON_OK" in fields: self.winch_sw_srvon_ok = fields["SW_SRVON_OK"].lower() in ("1","true","on","ok")
@@ -1114,6 +1172,7 @@ class HVP2PBackend(QObject):
             elif rs in ("1","OK","CONNECTED") and cfg != "OK": self.winch_rs_status = "Configuration Fault"
             elif rs in ("1","OK","CONNECTED"): self.winch_rs_status = "Feedback Fault"
             else: self.winch_rs_status = "Disconnected"
+            self._update_w1p_reported_config(fields)
             self._w1p_status_last_seen = time.time()
         except Exception:
             self._invalidate_w1p_status()
@@ -1166,25 +1225,102 @@ class HVP2PBackend(QObject):
             self._log(f"[W1P-POS] Position validation failed closed: {exc}")
             return False
 
-    def _sync_w1p_settings(self):
-        """Synchronise the W1P command contract carried forward from v26.06.26.25."""
-        if self.smoke_test:
-            return
-        self.w1p.send(f"SET_UNITS_PER_M {self.winch_units_per_m:.1f}")
-        self.w1p.send(f"SET_MOTOR_REVERSE {1 if self.reverse_motor else 0}")
-        self.w1p.send(f"SET_ACCEL {self.max_accel_mps2:.3f}")
-        self.w1p.send(f"SET_DECEL {self.max_decel_mps2:.3f}")
-        self.w1p.send(f"SET_CROSSOVER {self.max_crossover_mps2:.3f}")
-        self.w1p.send(f"SET_STOP_DECEL {self.max_stop_decel_mps2:.3f}")
-        self.w1p.send(f"SET_ACCEL_MODE {'DYNAMIC' if self.acceleration_mode == 'Speed' else 'TRADITIONAL'}")
+    def _desired_w1p_settings(self):
+        """Return SRVR-authoritative W1P settings and their wire commands."""
         nl = float(self.state.near_limit.position_m or 0.0)
         fl = float(self.state.far_limit.position_m if self.state.far_limit.position_m is not None else 100.0)
         if fl < nl:
             nl, fl = fl, nl
-        self.w1p.send(f"SET_SPAN {max(.1, fl-nl):.3f}")
-        self.w1p.send(f"SET_LIMIT_NEAR {nl:.3f}")
-        self.w1p.send(f"SET_LIMIT_FAR {fl:.3f}")
-        self._sync_service_mode_to_winch(force=True)
+        service = 1 if self._service_override_active() else 0
+        accel_mode = "Speed" if self.acceleration_mode == "Speed" else "Power"
+        return {
+            "SERVICE": (service, f"SERVICE_MODE {service}"),
+            "MOTOR_REV": (1 if self.reverse_motor else 0, f"SET_MOTOR_REVERSE {1 if self.reverse_motor else 0}"),
+            "UPM": (float(self.winch_units_per_m), f"SET_UNITS_PER_M {self.winch_units_per_m:.1f}"),
+            "ACC_MODE": (accel_mode, f"SET_ACCEL_MODE {'DYNAMIC' if accel_mode == 'Speed' else 'TRADITIONAL'}"),
+            "ACCEL": (float(self.max_accel_mps2), f"SET_ACCEL {self.max_accel_mps2:.3f}"),
+            "DECEL": (float(self.max_decel_mps2), f"SET_DECEL {self.max_decel_mps2:.3f}"),
+            "CROSS": (float(self.max_crossover_mps2), f"SET_CROSSOVER {self.max_crossover_mps2:.3f}"),
+            "STOP_DECEL": (float(self.max_stop_decel_mps2), f"SET_STOP_DECEL {self.max_stop_decel_mps2:.3f}"),
+            "SPAN_M": (max(.1, fl - nl), f"SET_SPAN {max(.1, fl-nl):.3f}"),
+            "NL": (nl, f"SET_LIMIT_NEAR {nl:.3f}"),
+            "FL": (fl, f"SET_LIMIT_FAR {fl:.3f}"),
+        }
+
+    @staticmethod
+    def _w1p_setting_matches(key, reported, desired) -> bool:
+        if reported is None:
+            return False
+        if key == "ACC_MODE":
+            return str(reported).strip().lower() == str(desired).strip().lower()
+        if key in ("SERVICE", "MOTOR_REV"):
+            try: return int(float(reported)) == int(desired)
+            except Exception: return False
+        try:
+            tol = 0.15 if key == "UPM" else 0.0025
+            return abs(float(reported) - float(desired)) <= tol
+        except Exception:
+            return False
+
+    def _update_w1p_reported_config(self, fields: dict):
+        for key in ("SERVICE", "MOTOR_REV", "UPM", "ACC_MODE", "ACCEL", "DECEL", "CROSS", "STOP_DECEL", "SPAN_M", "NL", "FL"):
+            if key in fields:
+                self._w1p_reported_config[key] = fields[key]
+        desired = self._desired_w1p_settings()
+        for key, (want, _cmd) in desired.items():
+            if self._w1p_setting_matches(key, self._w1p_reported_config.get(key), want):
+                self._w1p_settings_pending.discard(key)
+            else:
+                self._w1p_settings_pending.add(key)
+
+    def _mark_w1p_settings_pending(self, keys=None):
+        desired = self._desired_w1p_settings()
+        self._w1p_settings_pending.update(desired.keys() if keys is None else keys)
+
+    def _service_w1p_setting_sync(self):
+        """Pace SET commands and retry until STATUS confirms convergence.
+
+        UDP remains intentionally connectionless; reliability comes from W1P's
+        repeated STATUS report.  At most one setting is emitted per service pass
+        and a mismatched key is retried only after a bounded interval, preventing
+        configuration bursts from delaying VEL/STOP traffic.
+        """
+        if self.smoke_test or not self._w1p_settings_pending or not self.w1p.connected:
+            return
+        now = time.monotonic()
+        if now - self._w1p_setting_last_any_tx < self._w1p_setting_min_gap_s:
+            return
+        desired = self._desired_w1p_settings()
+        order = ("SERVICE", "MOTOR_REV", "UPM", "ACC_MODE", "ACCEL", "DECEL", "CROSS", "STOP_DECEL", "SPAN_M", "NL", "FL")
+        for key in order:
+            if key not in self._w1p_settings_pending or key not in desired:
+                continue
+            want, cmd = desired[key]
+            if self._w1p_setting_matches(key, self._w1p_reported_config.get(key), want):
+                self._w1p_settings_pending.discard(key)
+                continue
+            last_value = self._w1p_setting_last_value.get(key)
+            same_value_retry = self._w1p_setting_matches(key, last_value, want)
+            if same_value_retry and now - float(self._w1p_setting_last_tx.get(key, 0.0)) < self._w1p_setting_retry_s:
+                continue
+            self.w1p.send(cmd)
+            self._w1p_setting_last_tx[key] = now
+            self._w1p_setting_last_value[key] = want
+            self._w1p_setting_last_any_tx = now
+            break
+
+    def _sync_w1p_settings(self):
+        """Request convergence of every persistent W1P setting.
+
+        The old implementation sent an unverified UDP burst once.  A single lost
+        datagram could leave W1P on an old value and its next STATUS would then
+        overwrite SRVR's newly selected setting.  Keep SRVR authoritative and
+        retry paced commands until W1P reports the same values.
+        """
+        if self.smoke_test:
+            return
+        self._mark_w1p_settings_pending()
+        self._service_w1p_setting_sync()
 
     @staticmethod
     def _normalise_ipv4(value: str) -> str:
@@ -1311,7 +1447,10 @@ class HVP2PBackend(QObject):
             return
         self._last_service_mode_sent = enabled
         if not self.smoke_test:
-            self.w1p.send(f"SERVICE_MODE {enabled}")
+            self._mark_w1p_settings_pending(("SERVICE",))
+            # SERVICE affects the permitted motion envelope, so request it on the
+            # next paced sync opportunity rather than waiting for another edit.
+            self._service_w1p_setting_sync()
 
     def _update_battery_change_auto_cancel(self):
         if not self.battery_change_mode or self.state.pos_m is None:
@@ -1681,7 +1820,7 @@ class HVP2PBackend(QObject):
                 pass
         return action
 
-    def _handle_aux_action(self, index: int, source: str = "ctrl"):
+    def _handle_aux_action(self, index: int, source: str = "ctrl", raw_axis=None):
         """Execute one configured physical/touchscreen AUX assignment.
 
         The action vocabulary matches the locked Setup page. AUX1..AUX4 remain
@@ -1717,7 +1856,7 @@ class HVP2PBackend(QObject):
                     self.openWinchCalibration()
             elif action == "Joystick Calibration":
                 if self.joystick_calibration_open:
-                    self.joystickCalibrationNext()
+                    self._joystick_calibration_next(raw_axis)
                 else:
                     self.openJoystickCalibration()
             elif action.startswith("Preset "):
@@ -1888,6 +2027,12 @@ class HVP2PBackend(QObject):
         if not target:
             return
         now = time.time()
+        # Building DSP1 walks a large amount of live/config state. CTRL forwards
+        # bulk HMI at only 4 Hz, so rebuilding it at the 25 ms safety tick wastes
+        # UI-thread time without increasing touchscreen responsiveness.
+        if not force and (now - self._last_ctrl_display_build_at) < HMI_DISPLAY_MIN_CHANGE_INTERVAL_S:
+            return
+        self._last_ctrl_display_build_at = now
         packet = self._build_controller_display_packet().encode("ascii", "ignore")
         changed = packet != self._last_ctrl_display_packet
         if not force:
@@ -2105,10 +2250,16 @@ class HVP2PBackend(QObject):
         else:
             for _ in range(16):
                 try:
-                    aux_i = self._ctrl_aux_events.get_nowait()
+                    aux_event = self._ctrl_aux_events.get_nowait()
                 except queue.Empty:
                     break
-                self._handle_aux_action(int(aux_i), source="ctrl")
+                if isinstance(aux_event, tuple):
+                    aux_i, aux_axis, _aux_time = aux_event
+                else:
+                    # Backward-safe for tests or an event queued before an in-app
+                    # hot transition; normal runtime always uses the tuple above.
+                    aux_i, aux_axis = aux_event, None
+                self._handle_aux_action(int(aux_i), source="ctrl", raw_axis=aux_axis)
             for aux_i, aux_bit in enumerate(CTRL_AUX_BITS):
                 self._ctrl_aux_last[aux_i] = bool(flags & aux_bit)
 
@@ -2537,7 +2688,7 @@ class HVP2PBackend(QObject):
             for _ in range(100):
                 try: self._parse_w1p(self._w1p_rx.get_nowait())
                 except queue.Empty: break
-            self._motion_tick(); self._service_legacy_firmware_push(); self._send_freed(); self._send_ctrl_firmware_beacon(); self._send_controller_display_packet(); self._send_w1p_firmware_beacon()
+            self._motion_tick(); self._service_w1p_setting_sync(); self._service_legacy_firmware_push(); self._send_freed(); self._send_ctrl_firmware_beacon(); self._send_controller_display_packet(); self._send_w1p_firmware_beacon()
             # Keep the 25 ms control/safety cadence, but do not force the whole
             # QML property graph to re-evaluate at 40 Hz. 20 Hz is ample for the
             # desktop display and materially reduces Intel-mac UI load.
@@ -2992,7 +3143,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.03.03 moves the installed joystick polarity correction into CTRL,
+        # v26.10.03.05 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same
@@ -3621,9 +3772,18 @@ class HVP2PBackend(QObject):
     @Property('QVariantList', notify=stateChanged)
     def cableProfile(self):
         # Run always uses the last-applied Free-D geometry/sag configuration.
-        # It retains the live instantaneous cable-shape view. The Free-D page
-        # has a separate moving-skate loaded-path draft preview property below.
-        return self._cable_profile(moving_skate_path=False)
+        # Cache by only the inputs that affect the profile so Top/Side consumers
+        # share one calculation for each live state.
+        geometry_key = tuple((str(p.get("name", "")), p.get("x"), p.get("y"), p.get("z")) for p in self.geometry)
+        key = (
+            self.state.pos_m, self.state.near_limit.position_m, self.state.far_limit.position_m,
+            geometry_key, float(self.cable_weight_kg100m), float(self.cable_tension_kg),
+            float(self.skate_weight_kg), str(self.highline_mode),
+        )
+        if key != self._cable_profile_cache_key:
+            self._cable_profile_cache_key = key
+            self._cable_profile_cache_value = self._cable_profile(moving_skate_path=False)
+        return self._cable_profile_cache_value
     @Property('QVariantMap', notify=stateChanged)
     def freeDInput(self):
         r=self.freed_in_raw; d=self.freed_in
@@ -3734,8 +3894,19 @@ class HVP2PBackend(QObject):
 
     @Property('QVariantList', notify=stateChanged)
     def freeDPreviewCableProfile(self):
-        return self._cable_profile(getattr(self, "_freed_draft", self._freed_snapshot()),
-                                   moving_skate_path=True)
+        snap = getattr(self, "_freed_draft", self._freed_snapshot())
+        geometry = snap.get("geometry", self.geometry)
+        geometry_key = tuple((str(p.get("name", "")), p.get("x"), p.get("y"), p.get("z")) for p in geometry)
+        key = (
+            geometry_key, float(snap.get("cable_weight_kg100m", self.cable_weight_kg100m)),
+            float(snap.get("cable_tension_kg", self.cable_tension_kg)),
+            float(snap.get("skate_weight_kg", snap.get("static_weight_kg", self.skate_weight_kg))),
+            str(snap.get("highline_mode", self.highline_mode)),
+        )
+        if key != self._freed_profile_cache_key:
+            self._freed_profile_cache_key = key
+            self._freed_profile_cache_value = self._cable_profile(snap, moving_skate_path=True)
+        return self._freed_profile_cache_value
 
     @Property('QVariantMap', notify=configChanged)
     def calibrationSummary(self):
@@ -3856,9 +4027,18 @@ class HVP2PBackend(QObject):
     def uptime(self):
         s=int(time.time()-self.started); return f"{s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
 
-    def _notify_config(self):
+    def _emit_config_changed(self):
+        self._config_notify_pending = False
         self.configChanged.emit()
-        self.stateChanged.emit()
+
+    def _notify_config(self):
+        # Return from the QML ComboBox/field callback first so the popup can close
+        # immediately. Multiple edits in the same Qt turn coalesce into one config
+        # invalidation; live telemetry remains on the independent 20 Hz state tick.
+        if self._config_notify_pending:
+            return
+        self._config_notify_pending = True
+        QTimer.singleShot(0, self._emit_config_changed)
 
     # --- QML actions ---
     def _position_relative_to_near(self, pos=None) -> float:
@@ -4103,7 +4283,8 @@ class HVP2PBackend(QObject):
                         f"Winch Invert auto-corrected to {'On' if self.reverse_motor else 'Off'}"
                     )
                     if not self.smoke_test:
-                        self.w1p.send(f"SET_MOTOR_REVERSE {1 if self.reverse_motor else 0}")
+                        self._mark_w1p_settings_pending(("MOTOR_REV",))
+                        self._service_w1p_setting_sync()
                 far = abs(signed_far)
                 self.state.far_limit.position_m = max(0.01, far)
                 raw = getattr(self, "_last_raw_pos", None)
@@ -4467,7 +4648,7 @@ class HVP2PBackend(QObject):
         self._cancel_goto()
         self._send_velocity(0.0, force=True)
         self._log("[Calibration] Joystick calibration started")
-        self.joystickCalibrationChanged.emit(); self.calibrationChanged.emit(); self.stateChanged.emit()
+        self.joystickCalibrationChanged.emit(); self.calibrationChanged.emit()
 
     @Slot()
     def cancelJoystickCalibration(self):
@@ -4476,7 +4657,7 @@ class HVP2PBackend(QObject):
         self._cancel_goto()
         self._send_velocity(0.0, force=True)
         self._log("[Calibration] Joystick calibration cancelled")
-        self.joystickCalibrationChanged.emit(); self.stateChanged.emit()
+        self.joystickCalibrationChanged.emit()
 
     @Slot()
     def joystickCalibrationBack(self):
@@ -4488,9 +4669,9 @@ class HVP2PBackend(QObject):
         self.joystick_calibration_error = ""
         self.joystickCalibrationChanged.emit()
 
-    @Slot()
-    def joystickCalibrationNext(self):
-        raw = max(-1.0, min(1.0, float(self._ctrl_axis)))
+    def _joystick_calibration_next(self, raw_override=None):
+        raw_source = self._ctrl_axis if raw_override is None else raw_override
+        raw = max(-1.0, min(1.0, float(raw_source)))
         if self.joystick_calibration_step == 0:
             self._joystick_cal_pending["left"] = raw
             self.joystick_calibration_step = 1
@@ -4508,7 +4689,7 @@ class HVP2PBackend(QObject):
             if abs(lspan) < 0.05 or abs(rspan) < 0.05 or lspan*rspan >= 0.0:
                 self.joystick_calibration_error = "Invalid calibration range. Left and Right must be on opposite sides of Centre."
                 self._log("[Calibration] Joystick calibration rejected: invalid Left/Centre/Right range")
-                self.joystickCalibrationChanged.emit(); self.stateChanged.emit()
+                self.joystickCalibrationChanged.emit()
                 return
             self.joystick_calibration_error = ""
             self.joystick_calibration_open = False
@@ -4520,7 +4701,11 @@ class HVP2PBackend(QObject):
             self._log(f"[Calibration] Joystick calibration saved L={left:.4f} C={centre:.4f} R={right:.4f}")
         self._cancel_goto()
         self._send_velocity(0.0, force=True)
-        self.joystickCalibrationChanged.emit(); self.configChanged.emit(); self.stateChanged.emit()
+        self.joystickCalibrationChanged.emit(); self.configChanged.emit()
+
+    @Slot()
+    def joystickCalibrationNext(self):
+        self._joystick_calibration_next()
 
     @Slot(str,bool)
     def setFreeDEnabled(self, which, enabled):
@@ -4672,18 +4857,35 @@ class HVP2PBackend(QObject):
             self._freed_draft["lens_cal"][key] = float(value)
             self._commit_freed_draft()
 
+    def _send_srvr_offline(self):
+        target = str(self.ctrl_ip or "").strip()
+        if not target:
+            return
+        try:
+            for _ in range(3):
+                self._ctrl_display_sock.sendto(b"SRVR_OFFLINE\n", (target, SERVER_BIND_PORT))
+        except Exception:
+            pass
+
     @Slot()
     def shutdown(self):
+        # Safety transmission is deliberately FIRST. Do not wait for config flush,
+        # Qt teardown, queued W1P traffic or worker joins before commanding stop,
+        # Servo Enable inhibit and telling CTRL that SRVR is offline.
+        if self._stop_evt.is_set(): return
+        try: self.w1p.emergency_stop()
+        except Exception: pass
+        # Stop the listener before the explicit offline datagrams so a heartbeat
+        # already arriving during teardown cannot be ACKed after SRVR_OFFLINE.
+        self._stop_evt.set(); self._freed_in_stop.set()
+        try: self._send_srvr_offline()
+        except Exception: pass
         try:
             if hasattr(self, "timer"):
                 self.timer.stop()
         except Exception:
             pass
         self._stop_config_writer()
-        if self._stop_evt.is_set(): return
-        self._stop_evt.set(); self._freed_in_stop.set()
-        try: self.w1p.send("STOP"); self.w1p.send("SW_SRVON 0"); time.sleep(.05)
-        except Exception: pass
         self.w1p.close()
         try:
             if self._freed_in_sock: self._freed_in_sock.close()

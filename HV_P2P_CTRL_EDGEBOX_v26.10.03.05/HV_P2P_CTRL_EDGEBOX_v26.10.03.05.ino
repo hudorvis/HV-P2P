@@ -16,7 +16,7 @@
 static bool g_ads_inited = false;
 static uint8_t ADS_ADDR = 0x48;
 
-#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.10.03.03"
+#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.10.03.05"
 #define CTRL_HMI_ARCH "EdgeBox ESP-100 + isolated RS485 Waveshare thin HMI"
 
 IPAddress local_IP(172,20,1,101);
@@ -42,11 +42,12 @@ IPAddress server_IP(172,20,1,100);
 #define HEARTBEAT_INTERVAL_MS 250
 #define CONTROL_INTERVAL_MS   25
 #define DISPLAY_FORWARD_MIN_MS 250
-#define HMI_POLL_INTERVAL_MS 50
+#define HMI_POLL_INTERVAL_MS 60
 #define HMI_POLL_RESPONSE_TIMEOUT_MS 250
 #define HMI_POLL_RECOVERY_QUIET_MS 300
 #define DISPLAY_KEEPALIVE_MS   3000
 #define SRVR_DISPLAY_TIMEOUT_MS 5000
+#define SRVR_PEER_TIMEOUT_MS     750
 #define HMI_BAUD              115200
 #define HMI_UART_RX EDGEBOX_RS485_RX
 #define HMI_UART_TX EDGEBOX_RS485_TX
@@ -233,7 +234,7 @@ static uint32_t lastHmiLayoutForward = 0;
 #define HMI_LAYOUT_MAX_LEN 2200
 static const char* HMI_LAYOUT_NVS_NS = "hmiui";
 static const char* HMI_LAYOUT_NVS_KEY = "layout";
-static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.10.03.03|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
+static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.10.03.05|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
 
 
 
@@ -258,10 +259,10 @@ static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_CTRL";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL_TS,W1P,W1P_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_CTRL_v*.ino.bin firmware. CTRL-TS and W1P files are rejected.";
 static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=CTRL;";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.03.03;";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.03.05;";
 static const char* HV_AUTH_ROLE = "CTRL";
 static const char* HV_AUTH_TARGET = "EDGEBOX_ESP100";
-static const char* HV_AUTH_VERSION = "v26.10.03.03";
+static const char* HV_AUTH_VERSION = "v26.10.03.05";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
@@ -520,7 +521,7 @@ static void hvLoadHmiLayoutConfig() {
     int nl = stored.indexOf('\n');
     if(nl >= 0) stored = stored.substring(0, nl);
     stored.trim();
-    // v26.10.03.03 migration: older CTRL NVS layouts were main4/aux1-aux4.
+    // v26.10.03.05 migration: older CTRL NVS layouts were main4/aux1-aux4.
     // Preserve the operator's stored labels/settings but expose the new AUX5 tile.
     if(stored.indexOf("|layout=main4") >= 0) stored.replace("|layout=main4", "|layout=main5");
     if(stored.indexOf("|aux5=") < 0) stored += "|aux5=AUX 5";
@@ -649,11 +650,16 @@ static String g_latestHmiStatePacket;
 static bool g_hmiStatePacketPending = false;
 static uint32_t g_lastSrvrDisplayMs = 0;
 static uint32_t g_lastSrvrRxMs = 0;
+static bool g_srvrExplicitOffline = false;
 static uint32_t g_lastUnexpectedSrvrLogMs = 0;
 static uint32_t g_lastHmiRxMs = 0;
 static uint32_t g_lastHmiStatusReportMs = 0;
 static String g_lastForwardedDisplayPacket;
 static uint32_t g_lastHmiDisplayKeepaliveMs = 0;
+static uint32_t g_hmiBulkSuppressUntilMs = 0;
+static uint32_t g_hmiTsHeapFree = 0;
+static uint32_t g_hmiTsHeapMin = 0;
+static uint32_t g_hmiTsPsramFree = 0;
 static const uint32_t HMI_LINK_TIMEOUT_MS = 3000;
 
 // SRVR is the release authority. CTRL remains fail-closed until the running
@@ -987,7 +993,7 @@ static void sendHmiStatusToSrvr()
   uint32_t age = g_lastHmiRxMs ? (now - g_lastHmiRxMs) : 999999;
   String line = "HMI_STATUS";
   line += "|ctrl_ts=" + String(hmiLinkConnected() ? 1 : 0);
-  line += "|ctrl_version=v26.10.03.03";
+  line += "|ctrl_version=v26.10.03.05";
   line += "|fw_match=" + String(g_srvrFirmwareMatched ? 1 : 0);
   line += "|fw_authority=" + g_srvrFirmwareState;
   line += "|fw_required=" + (g_srvrRequiredVersion.length() ? g_srvrRequiredVersion : String("unknown"));
@@ -1016,6 +1022,9 @@ static void sendHmiStatusToSrvr()
   line += "|ts_queue_drops=" + String((unsigned long)g_hmiTsQueueDrops);
   line += "|ts_parser_crc=" + String((unsigned long)g_hmiTsParserCrc);
   line += "|ts_parser_resync=" + String((unsigned long)g_hmiTsParserResync);
+  line += "|ts_heap=" + String((unsigned long)g_hmiTsHeapFree);
+  line += "|ts_min_heap=" + String((unsigned long)g_hmiTsHeapMin);
+  line += "|ts_psram=" + String((unsigned long)g_hmiTsPsramFree);
   udp.beginPacket(server_IP, UDP_PORT);
   udp.print(line);
   udp.endPacket();
@@ -1165,6 +1174,10 @@ static void handleUdpRx()
   buf[n] = 0;
 
   if(buf[0] == 0x5A) {
+    // Once SRVR explicitly announces shutdown, do not let a delayed heartbeat
+    // ACK resurrect the old desktop session. A fresh SRVR_FW/DSP packet from a
+    // restarted application clears this latch.
+    if(g_srvrExplicitOffline) return;
     if(!srvrOnline) Serial.println("[SRVR] Handshake OK");
     srvrOnline = true;
     g_lastSrvrRxMs = millis();
@@ -1178,6 +1191,20 @@ static void handleUdpRx()
   if(line == "AUX3") { g_virtualAuxUntil[2] = millis() + 300; return; }
   if(line == "AUX4") { g_virtualAuxUntil[3] = millis() + 300; return; }
   if(line == "AUX5") { g_virtualAuxUntil[4] = millis() + 300; return; }
+  if(line == "SRVR_OFFLINE") {
+    // Graceful desktop shutdown is an explicit safety/connection transition,
+    // not a 5-second display freshness event. The next POLL carries srvr=0,
+    // taking CTRL-TS back to Waiting for SRVR within one poll interval.
+    srvrOnline = false;
+    g_srvrExplicitOffline = true;
+    g_lastSrvrRxMs = 0;
+    g_lastSrvrDisplayMs = 0;
+    g_latestDisplayPacket = "";
+    g_latestHmiStatePacket = "";
+    g_hmiStatePacketPending = false;
+    Serial.println("[SRVR] explicit offline notification received");
+    return;
+  }
   if(line == "PING") {
     udp.beginPacket(udp.remoteIP(), udp.remotePort());
     udp.print("PONG");
@@ -1185,10 +1212,14 @@ static void handleUdpRx()
     return;
   }
   if(line.startsWith("SRVR_FW|")) {
+    g_srvrExplicitOffline = false;
+    srvrOnline = true;
+    g_lastSrvrRxMs = millis();
     applySrvrFirmwareBeacon(line);
     return;
   }
   if(line.startsWith("DSP1|")) {
+    g_srvrExplicitOffline = false;
     srvrOnline = true;
     g_lastSrvrRxMs = millis();
     g_lastSrvrDisplayMs = millis();
@@ -1280,7 +1311,14 @@ static bool hmiSendText(const String &line)
   if(!line.length() || !hmiNormalTxAllowed()) return false;
   hmiMasterTurnaroundGuard();
   const bool ok = HVP2PRS485::sendText(HMI, HVP2PRS485::TEXT, g_hmiSeq++, line);
-  if(ok) g_hmiFramesTx++;
+  if(ok) {
+    g_hmiFramesTx++;
+    // A bulk HMI1 frame occupies roughly 95 ms at 115200 baud. Start the next
+    // POLL interval when that transmission has fully drained, not from an older
+    // poll timestamp, so CTRL-TS gets a quiet apply/render window before it must
+    // answer the next master request.
+    g_lastHmiPollTxMs = millis();
+  }
   return ok;
 }
 
@@ -1378,11 +1416,11 @@ static void hmiFwStart(){
     return;
   }
   // One-time recovery boundary: only a CTRL-TS that explicitly advertises the
-  // v26.10.03.03+ display-off updater may receive an automatic self-update.
+  // v26.10.03.05+ display-off updater may receive an automatic self-update.
   // Older receivers write OTA flash while RGB framebuffers are live in PSRAM,
   // which is the failure mode that produced the observed colour/scale corruption.
   if(!g_hmiSafeOtaCapable){
-    Serial.println("[HMI FW] automatic CTRL-TS update BLOCKED: peer lacks safe_ota=2 capability; manual USB bootstrap to v26.10.03.03 or newer required");
+    Serial.println("[HMI FW] automatic CTRL-TS update BLOCKED: peer lacks safe_ota=2 capability; manual USB bootstrap to v26.10.03.04 or newer required");
     return;
   }
   if(hmiFwActive()) return;
@@ -1407,7 +1445,7 @@ static bool hmiFwHandleFrame(const HVP2PRS485::Frame &frame){
     return true;
   }
   if(frame.type == HVP2PRS485::ERROR_MSG){
-    // v26.10.03.03 safe self-update handoff: the displayed CTRL-TS deliberately
+    // v26.10.03.05 safe self-update handoff: the displayed CTRL-TS deliberately
     // refuses to program flash, stages the exact target for a safe reboot, and asks CTRL to retry
     // after it has rebooted into its display-off updater. Treat this one response
     // as an expected transport transition, not as a failed firmware update.
@@ -1610,9 +1648,15 @@ static void handleHmiFrame(const HVP2PRS485::Frame &frame)
     const String dropsText = hvGetPipeField(payload, "drops");
     const String tsCrcText = hvGetPipeField(payload, "crc");
     const String tsResyncText = hvGetPipeField(payload, "resync");
+    const String tsHeapText = hvGetPipeField(payload, "heap");
+    const String tsMinHeapText = hvGetPipeField(payload, "minheap");
+    const String tsPsramText = hvGetPipeField(payload, "psram");
     if(dropsText.length()) g_hmiTsQueueDrops = (uint32_t)strtoul(dropsText.c_str(), nullptr, 10);
     if(tsCrcText.length()) g_hmiTsParserCrc = (uint32_t)strtoul(tsCrcText.c_str(), nullptr, 10);
     if(tsResyncText.length()) g_hmiTsParserResync = (uint32_t)strtoul(tsResyncText.c_str(), nullptr, 10);
+    if(tsHeapText.length()) g_hmiTsHeapFree = (uint32_t)strtoul(tsHeapText.c_str(), nullptr, 10);
+    if(tsMinHeapText.length()) g_hmiTsHeapMin = (uint32_t)strtoul(tsMinHeapText.c_str(), nullptr, 10);
+    if(tsPsramText.length()) g_hmiTsPsramFree = (uint32_t)strtoul(tsPsramText.c_str(), nullptr, 10);
     const uint16_t eventId = idText.length() ? (uint16_t)idText.toInt() : 0;
     if(eventId && cmd.length()) {
       const bool duplicate = g_hmiHaveAcceptedEventId && eventId == g_hmiLastAcceptedEventId;
@@ -1622,6 +1666,10 @@ static void handleHmiFrame(const HVP2PRS485::Frame &frame)
         g_hmiLastAcceptedEventId = eventId;
         g_hmiHaveAcceptedEventId = true;
         g_hmiEventsAccepted++;
+        // AUX confirmation is the touchscreen's busiest UI moment. Keep the
+        // ~900-byte bulk packet off the bus briefly; the compact HMS1 state
+        // packet still propagates Drive/Battery/calibration changes immediately.
+        g_hmiBulkSuppressUntilMs = millis() + 1000;
         handleHmiEventLine(cmd);
       }
       // Dequeue occurs only after CTRL-TS receives this explicit ACK. If this
@@ -1895,8 +1943,14 @@ void loop()
     sendControl(axis, flags);
   }
 
-  if((now - g_lastSrvrDisplayMs) > SRVR_DISPLAY_TIMEOUT_MS) {
+  // Connection/safety presence follows the 250 ms heartbeat, not the much
+  // slower bulk-display freshness timer. Three missed heartbeat intervals are
+  // enough to mark SRVR offline; graceful shutdown is faster via SRVR_OFFLINE.
+  if(srvrOnline && g_lastSrvrRxMs && (now - g_lastSrvrRxMs) > SRVR_PEER_TIMEOUT_MS) {
     srvrOnline = false;
+    Serial.println("[SRVR] heartbeat timeout; marking SRVR offline");
+  }
+  if(g_lastSrvrDisplayMs && (now - g_lastSrvrDisplayMs) > SRVR_DISPLAY_TIMEOUT_MS) {
     g_latestDisplayPacket = "";
   }
 
@@ -1911,7 +1965,7 @@ void loop()
     }
   }
 
-  // v26.10.03.03: do not resend UIL1 layout on a timer.
+  // v26.10.03.05: do not resend UIL1 layout on a timer.
   // Some Waveshare/LVGL builds visibly flicker when the layout header/config
   // is resent periodically. Layout is now sent only at boot, upload/reset,
   // and in response to a CTRL-TS PING/reconnect request.
@@ -1928,7 +1982,8 @@ void loop()
 
     const bool changed = (nextDisplay != g_lastForwardedDisplayPacket);
     const bool keepalive_due = ((now - g_lastHmiDisplayKeepaliveMs) >= DISPLAY_KEEPALIVE_MS);
-    if(!hmiPriorityStateSent && (changed || keepalive_due) && hmiNormalTxAllowed()) {
+    const bool bulk_suppressed = g_hmiBulkSuppressUntilMs && ((int32_t)(now - g_hmiBulkSuppressUntilMs) < 0);
+    if(!hmiPriorityStateSent && !bulk_suppressed && (changed || keepalive_due) && hmiNormalTxAllowed()) {
       lastDisplayForward = now;
       if(forwardDisplayPacketToHmi(nextDisplay)) {
         g_hmiDisplayFramesTx++;

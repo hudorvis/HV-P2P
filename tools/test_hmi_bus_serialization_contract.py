@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-C=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.03.03/HV_P2P_CTRL_EDGEBOX_v26.10.03.03.ino').read_text()
-T=(ROOT/'HV_P2P_CTRL_TS_v26.10.03.03/HV_P2P_CTRL_TS_v26.10.03.03.ino').read_text()
+C=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.03.05/HV_P2P_CTRL_EDGEBOX_v26.10.03.05.ino').read_text()
+T=(ROOT/'HV_P2P_CTRL_TS_v26.10.03.05/HV_P2P_CTRL_TS_v26.10.03.05.ino').read_text()
 
 # Source contracts: single-flight POLL, explicit timeout, and bulk TX gate.
 assert '#define HMI_POLL_RESPONSE_TIMEOUT_MS 250' in C
@@ -14,7 +14,7 @@ assert 'else if((now - g_lastHmiPollTxMs) >= HMI_POLL_INTERVAL_MS)' in C
 assert 'return g_hmiCompatible && !hmiFwActive() && !g_hmiPollOutstanding && !hmiBusRecoveryQuiet();' in C
 assert 'g_hmiBusQuietUntilMs = now + HMI_POLL_RECOVERY_QUIET_MS;' in C
 assert '} else if(hmiBusRecoveryQuiet()) {' in C
-assert 'if(!hmiPriorityStateSent && (changed || keepalive_due) && hmiNormalTxAllowed())' in C
+assert 'if(!hmiPriorityStateSent && !bulk_suppressed && (changed || keepalive_due) && hmiNormalTxAllowed())' in C
 assert 'if(hmiFwActive()) {' in C and 'Firmware transfer owns the half-duplex bus' in C
 
 # Reliable EVENT contract: touchscreen retains event until explicit ACK and
@@ -22,7 +22,7 @@ assert 'if(hmiFwActive()) {' in C and 'Firmware transfer owns the half-duplex bu
 assert 'peek_hmi_event()' in T
 assert 'ack_hmi_event(uint16_t eventId)' in T
 assert 'frame.type == HVP2PRS485::ACK' in T
-assert 'EV1|id=%u|drops=%lu|crc=%lu|resync=%lu|cmd=%s' in T
+assert 'EV1|id=%u|drops=%lu|crc=%lu|resync=%lu|heap=%lu|minheap=%lu|psram=%lu|cmd=%s' in T
 assert 'g_hmiHaveAcceptedEventId && eventId == g_hmiLastAcceptedEventId' in C
 assert 'hmiAckEvent(frame.seq, eventId);' in C
 assert 'payload.substring(cmdPos + 5)' in C  # preserves embedded pipes in CFG1 commands

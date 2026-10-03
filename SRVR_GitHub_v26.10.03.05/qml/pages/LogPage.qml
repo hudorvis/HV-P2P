@@ -100,7 +100,7 @@ Item {
                         ListView {
                             id:logList;width:parent.width;height:parent.height-root.f(73);clip:true
                             property int revision:backend.logRevision
-                            model:{ var r=revision; return backend.filteredLogEntries(root.logView,root.severity,root.searchText) }
+                            model:{ var r=revision; return root.visible ? backend.filteredLogEntries(root.logView,root.severity,root.searchText) : [] }
                             onCountChanged:if(root.autoScroll) positionViewAtEnd()
                             ScrollBar.vertical:ScrollBar{}
                             delegate:Rectangle {

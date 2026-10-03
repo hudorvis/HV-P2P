@@ -1,6 +1,26 @@
-# v26.10.03.03 — 2026-10-03
+# v26.10.03.05 — 2026-10-03
 
-Bench/runtime follow-up to v26.10.03.02. Extends the single-flight CTRL↔CTRL-TS transport with a 250 ms POLL timeout plus 300 ms master-silent late-response recovery, completion-based POLL cadence, compact priority HMS1 state, and independent SRVR-presence hints in each POLL. Fixes the SRVR cumulative-RS485-counter log storm, captures AUX edges in the UDP listener so Qt stalls cannot lose confirmed commands, moves auto-save fsync/backup I/O off the UI thread, and decimates broad QML state invalidation while preserving the 25 ms control/safety timer. CTRL-TS headless self-update remains intentionally black. W1P 500 ms watchdog and motion/safety architecture remain unchanged. macOS bundle build: 2610.3.3.
+- Whole-project SRVR↔CTRL↔CTRL-TS↔W1P communications audit following `.03.04` bench feedback.
+- Decoupled normal CTRL-TS RS485 service from the main LVGL critical section; CTRL now restarts the POLL interval after a completed normal HMI TEXT transmission. Normal POLL cadence is 60 ms, response timeout 250 ms and late-response quiet window 300 ms.
+- Reduced idle EVENT wire load while retaining full event/diagnostic packets on every real event and at least once per second.
+- Replaced one-shot SRVR→W1P persistent-setting bursts with paced, STATUS-confirmed convergence. SRVR desired configuration remains authoritative and mismatches retry until W1P reports the same value.
+- Reduced redundant SRVR STATUS probing of W1P to 4 Hz while retaining W1P's native 20 Hz STATUS telemetry; admitted `FW_PROGRESS` through the W1P receiver filter.
+- Latched W1P software Servo-Enable inhibit across physical E-stop clear and SRVR reconnect; only SRVR's explicit neutral-verified `SW_SRVON 1` may re-enable it.
+- Deferred/coalesced SRVR config notifications and aligned DSP1 build cadence to 10 Hz to reduce ComboBox/UI-thread stalls without slowing the compact priority CTRL-TS state path.
+- Preserved W1P 500 ms VEL watchdog, ~150 ms SRVR non-zero VEL refresh, AI0/AI1 mapping, hard limits, predictive stopping/dynamic soft limits, approved UI and Leadshine velocity architecture.
+- Added `test_end_to_end_comm_contract_0305.py`; native Arduino/frozen desktop compilation and physical reset/motion checks remain GitHub Actions/bench gates.
+- macOS bundle metadata: short version `26.10.3`, build `2610.3.5`.
+
+# v26.10.03.04 — 2026-10-03
+
+- Bench follow-up to `.03.03` after real hardware showed SRVR dropdown latency, delayed/wrong joystick-calibration values, continued genuine CTRL-TS resets after AUX Confirm, an unnecessary update-screen flash before the intentional headless blackout, and slow SRVR-loss indication.
+- Removed synchronous broad QML `stateChanged` invalidation from config handlers; gated hidden Run/Free-D cable-profile work and hidden Log filtering; cached cable profiles; throttled DSP1 construction before the expensive build.
+- Joystick calibration AUX events now preserve the joystick sample from the exact CTRL datagram that carried the rising edge, so Qt/UI delay cannot substitute a later stick position.
+- CTRL-TS treats compact HMS1 as a state-only render path and CTRL suppresses bulk HMI traffic for 1 s after an accepted touchscreen event. AUX debug uses a fixed buffer; EVENT diagnostics now include free heap/minimum heap/free PSRAM and SRVR logs the last values with reset reason.
+- Removed the brief local CTRL-TS update-dashboard handoff; normal UI remains until the deliberate safe/headless reboot, after which black display during self-programming remains intentional and SRVR shows progress.
+- Graceful SRVR shutdown now directly sends repeated `STOP` + `SW_SRVON 0` to W1P before teardown and explicitly sends `SRVR_OFFLINE` to CTRL. CTRL reports offline to CTRL-TS on the next poll and uses a 750 ms heartbeat timeout for unexpected desktop loss.
+- W1P 500 ms VEL watchdog, ~150 ms SRVR non-zero VEL refresh, AI0/AI1 mapping, E-stop/hard-limit protections, predictive stopping/dynamic soft limits and Leadshine velocity architecture remain unchanged.
+- macOS bundle metadata: short version `26.10.3`, build `2610.3.4`.
 
 ## v26.10.03.02
 - Corrected the CTRL-TS native compile error where diagnostics referenced CTRL's `g_hmiParser` instead of CTRL-TS `g_rs485Parser`.

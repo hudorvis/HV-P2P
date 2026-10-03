@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-B=(ROOT/'SRVR_GitHub_v26.10.03.03/backend.py').read_text()
-C=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.03.03/HV_P2P_CTRL_EDGEBOX_v26.10.03.03.ino').read_text()
-T=(ROOT/'HV_P2P_CTRL_TS_v26.10.03.03/HV_P2P_CTRL_TS_v26.10.03.03.ino').read_text()
+B=(ROOT/'SRVR_GitHub_v26.10.03.05/backend.py').read_text()
+C=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.03.05/HV_P2P_CTRL_EDGEBOX_v26.10.03.05.ino').read_text()
+T=(ROOT/'HV_P2P_CTRL_TS_v26.10.03.05/HV_P2P_CTRL_TS_v26.10.03.05.ino').read_text()
 
 # Cumulative HMI fault counters must retain their baseline; .03.02 accidentally
 # zeroed them after every packet and generated a 4 Hz log/UI storm forever.
@@ -24,8 +24,8 @@ assert 'def _esp_reset_reason_name' in B and 'BROWNOUT' in B and 'TASK_WDT' in B
 # Touch AUX edges are captured in the UDP listener thread and persisted in a
 # queue, rather than relying on the Qt 25 ms timer sampling a short flag pulse.
 assert 'self._ctrl_aux_events = queue.Queue(maxsize=32)' in B
-assert 'self._ctrl_aux_events.put_nowait(aux_i)' in B
-assert 'aux_i = self._ctrl_aux_events.get_nowait()' in B
+assert 'self._ctrl_aux_events.put_nowait((aux_i, float(msg[1]), now))' in B
+assert 'aux_event = self._ctrl_aux_events.get_nowait()' in B
 assert 'if self.smoke_test:' in B
 
 # Auto-save remains enabled, but expensive backup/file/directory fsync work is
@@ -44,7 +44,7 @@ assert 'buildHmiStatePacketFromSrvr' in C
 assert 'g_hmiStatePacketPending' in C
 assert 'if(g_hmiStatePacketPending && g_latestHmiStatePacket.length() && hmiNormalTxAllowed())' in C
 assert 'line.startsWith("HMS1|")' in T
-assert 'line.replace("HMS1|", "HMI1|")' in T
+assert 'const bool state_only = line.startsWith("HMS1|")' in T
 
 # SRVR presence rides every POLL, so a dead SRVR cannot remain latched "OK"
 # merely because CTRL continues to poll the touchscreen while HMI1 is starved.
@@ -59,7 +59,7 @@ assert 'boot_set_status("Waiting for SRVR")' in T
 # in the same loop iteration.
 assert 'g_lastHmiPollTxMs = millis();' in C
 assert 'bool hmiPriorityStateSent = false;' in C
-assert 'if(!hmiPriorityStateSent && (changed || keepalive_due) && hmiNormalTxAllowed())' in C
+assert 'if(!hmiPriorityStateSent && !bulk_suppressed && (changed || keepalive_due) && hmiNormalTxAllowed())' in C
 
 # Touch-originated AUX latches use the same 300 ms compatibility window as UDP
 # AUX commands; the persistent SRVR listener queue is the authoritative edge hold.

@@ -14,7 +14,7 @@
 #include <esp_system.h>
 #include <esp_attr.h>
 
-#define CTRL_TS_SEMVER "v26.10.03.03"
+#define CTRL_TS_SEMVER "v26.10.03.05"
 #define CTRL_TS_VERSION "HV P2P CTRL-TS " CTRL_TS_SEMVER
 #define CTRL_TS_HW_ID "WS-ESP32S3-7"
 #define HMI_BAUD 115200
@@ -37,6 +37,7 @@ struct HmiQueuedEvent { uint16_t id; char text[HMI_EVENT_TEXT_MAX]; };
 static HmiQueuedEvent g_event_queue[HMI_EVENT_QUEUE_SIZE];
 static uint16_t g_next_event_id = 1;
 static uint32_t g_event_queue_drops = 0;
+static uint32_t g_last_event_diag_ms = 0;
 static uint8_t g_event_head = 0, g_event_tail = 0;
 // LVGL callbacks execute in the Waveshare LVGL task. Keep them heap-free and
 // side-effect-free: a touch callback only queues an AUX index, and the Arduino
@@ -227,7 +228,7 @@ static float g_last_ramp_near_draw = -999999.0f;
 static float g_last_ramp_far_draw = -999999.0f;
 
 // -------------------- CTRL-TS Settings page --------------------
-// Safe v26.10.03.03 approach: no backlight/brightness writes. This page only
+// Safe v26.10.03.05 approach: no backlight/brightness writes. This page only
 // edits CTRL network settings over UART and therefore should preserve the known
 // Keep the proven splash/boot path; do not write to the backlight controller.
 static lv_obj_t *settings_overlay = nullptr;
@@ -275,7 +276,7 @@ static void force_screen_refresh(){
 }
 
 static void screen_keepalive(){
-  // v26.10.03.03: no periodic full-screen or left-strip invalidation or brightness writes.
+  // v26.10.03.05: no periodic full-screen or left-strip invalidation or brightness writes.
   // The Waveshare/LVGL port refreshes changed objects itself; forcing a full
   // screen refresh every second caused the visible 1-second flicker/glitch.
   if(!g_ui_ready) return;
@@ -1182,7 +1183,7 @@ static void confirm_aux_idx(int idx, bool send_command){
   selected_aux = -1;
   g_selected_aux_ms = 0;
   confirmed_aux = idx;
-  clear_confirm_at = now_ms + 2000;  // v26.10.03.03: confirmed AUX tile stays lit for 2 seconds
+  clear_confirm_at = now_ms + 2000;  // v26.10.03.05: confirmed AUX tile stays lit for 2 seconds
   g_aux_suppress_until_ms[idx] = now_ms + 400;
   style_aux(idx,false,true);
   snprintf(msg,sizeof(msg),"AUX %d Confirmed", idx+1);
@@ -1210,12 +1211,13 @@ static void apply_flags_to_aux(uint16_t flags){
   g_last_flags = flags;
 }
 static void set_touch_debug(const char *txt){
-  static String last;
-  String next = String(txt ? txt : "");
-  if(next == last) return;
-  last = next;
-  set_label_text_if_changed(lbl_touch_debug, next.c_str());
-  Serial.println(next);
+  // AUX select/confirm is a hot operator path. Keep this diagnostic heap-free.
+  static char last[64] = {0};
+  const char *next = txt ? txt : "";
+  if(strncmp(last, next, sizeof(last)-1) == 0 && strlen(next) < sizeof(last)) return;
+  strlcpy(last, next, sizeof(last));
+  set_label_text_if_changed(lbl_touch_debug, last);
+  Serial.println(last);
 }
 
 static void style_status_pill_cached(int idx, lv_obj_t *pill, lv_obj_t *lbl, const char *name, bool ok){
@@ -1245,7 +1247,7 @@ static void style_w1p_status_pill(int state){
 }
 
 static void style_estop_pill(bool active){
-  // v26.10.03.03: the middle status banner follows the SRVR-resolved state.
+  // v26.10.03.05: the middle status banner follows the SRVR-resolved state.
   // A local CTRL-TS UART/display gap must not invent "E-Stop CTRL" while SRVR
   // is still sending Status | Active. Real CTRL/W1P E-Stops are still shown
   // immediately when SRVR sends status=E-Stop... / status_level=red.
@@ -1293,7 +1295,7 @@ static void refresh_status_ui(){
   style_status_pill_cached(0,pill_ctrl,lbl_ctrl,"CTRL",g_ctrl_ok);
   if(pill_srvr && lbl_srvr) style_status_pill_cached(1,pill_srvr,lbl_srvr,"SRVR",g_srvr_ok);
   style_w1p_status_pill(g_w1p_health);
-  // v26.10.03.03: do not turn the main middle box red purely because the
+  // v26.10.03.05: do not turn the main middle box red purely because the
   // CTRL-TS local UART/display link hiccuped. The SRVR status packet is the
   // authoritative source for Active / Un-Calibrated / E-Stop display state.
   bool stopped_visual = (g_status_level >= 2) || g_estop_active;
@@ -1763,6 +1765,7 @@ static void update_preset_markers(){
 }
 
 static void apply_hmi_packet(const String &line){
+  const bool state_only = line.startsWith("HMS1|");
   bool prev_estop = g_estop_active;
   bool prev_ctrl = g_ctrl_ok;
   bool prev_srvr = g_srvr_ok;
@@ -1832,7 +1835,7 @@ static void apply_hmi_packet(const String &line){
     else g_status_level = 0;
   }
 
-  // v26.10.03.03: if SRVR sends explicit status/status_level, trust it as
+  // v26.10.03.05: if SRVR sends explicit status/status_level, trust it as
   // the authoritative display state. Do not override it locally with a CTRL
   // error just because the touchscreen/CTRL UART side saw a transient gap.
   g_estop_active = packet_estop;
@@ -1882,25 +1885,30 @@ static void apply_hmi_packet(const String &line){
 
   String s;
   if(!calibration_active_now){
-    s = String(g_to_near, 2); set_label_text_if_changed(lbl_to_near, s.c_str());
-    s = String(g_to_far, 2); set_label_text_if_changed(lbl_to_far, s.c_str());
-    s = String(g_speed_mps, 1); set_label_text_if_changed(lbl_speed_combo, s.c_str());
-    s = String(g_speed_kmh, 1); set_label_text_if_changed(lbl_current_kmh, s.c_str());
-    s = String(g_max_mps, 1); set_label_text_if_changed(lbl_max_speed, s.c_str());
-    s = String(g_max_kmh, 1); set_label_text_if_changed(lbl_max_kmh, s.c_str());
-    s = String(g_pos, 2); set_label_text_if_changed(lbl_current_pos, s.c_str());
+    // HMS1 is the priority state delta used immediately after AUX confirmation.
+    // Keep it away from the bulk motion/position formatting and redraw path.
+    if(!state_only){
+      s = String(g_to_near, 2); set_label_text_if_changed(lbl_to_near, s.c_str());
+      s = String(g_to_far, 2); set_label_text_if_changed(lbl_to_far, s.c_str());
+      s = String(g_speed_mps, 1); set_label_text_if_changed(lbl_speed_combo, s.c_str());
+      s = String(g_speed_kmh, 1); set_label_text_if_changed(lbl_current_kmh, s.c_str());
+      s = String(g_max_mps, 1); set_label_text_if_changed(lbl_max_speed, s.c_str());
+      s = String(g_max_kmh, 1); set_label_text_if_changed(lbl_max_kmh, s.c_str());
+      s = String(g_pos, 2); set_label_text_if_changed(lbl_current_pos, s.c_str());
+      s = String(g_near, 2) + " m"; set_label_text_if_changed(lbl_near_value, s.c_str());
+      s = String(g_far, 2) + " m"; set_label_text_if_changed(lbl_far_value, s.c_str());
+    }
     set_label_text_if_changed(lbl_drive_mode, g_drive_mode.c_str());
     set_label_text_if_changed(lbl_accel_mode, g_accel_mode.c_str());
     set_label_text_if_changed(lbl_battery_mode, g_battery_mode.c_str());
-    s = String(g_near, 2) + " m"; set_label_text_if_changed(lbl_near_value, s.c_str());
-    s = String(g_far, 2) + " m"; set_label_text_if_changed(lbl_far_value, s.c_str());
   }
-  // Header/footer remain live during calibration; only the covered motion region
-  // is frozen.
-  set_label_text_if_changed(lbl_srvr_time, g_srvr_time.c_str());
-  set_label_text_if_changed(lbl_uptime, g_uptime.c_str());
-  set_label_text_if_changed(lbl_ctrl_ip, g_ctrl_ip.c_str());
-  set_label_text_if_changed(lbl_w1p_ip, g_w1p_ip.c_str());
+  // Header/footer clock/network text is bulk telemetry, not priority state.
+  if(!state_only){
+    set_label_text_if_changed(lbl_srvr_time, g_srvr_time.c_str());
+    set_label_text_if_changed(lbl_uptime, g_uptime.c_str());
+    set_label_text_if_changed(lbl_ctrl_ip, g_ctrl_ip.c_str());
+    set_label_text_if_changed(lbl_w1p_ip, g_w1p_ip.c_str());
+  }
 
   String aux;
   aux = getField(line, "aux1"); if(aux.length()){ aux = display_aux_label(aux); g_aux_labels[0] = aux; refresh_aux_text(0); }
@@ -1914,7 +1922,7 @@ static void apply_hmi_packet(const String &line){
   String preset_abs_field = getField(line, "preset_abs");
   String preset_vis_field = getField(line, "preset_vis");
   bool preset_fields_changed = (preset_names_field != g_last_preset_names_field) || (preset_pos_field != g_last_preset_pos_field) || (preset_abs_field != g_last_preset_abs_field) || (preset_vis_field != g_last_preset_vis_field);
-  if(!calibration_active_now && (preset_names_field.length() || preset_pos_field.length() || preset_vis_field.length()) && preset_fields_changed){
+  if(!state_only && !calibration_active_now && (preset_names_field.length() || preset_pos_field.length() || preset_vis_field.length()) && preset_fields_changed){
     g_last_preset_names_field = preset_names_field;
     g_last_preset_pos_field = preset_pos_field;
     g_last_preset_abs_field = preset_abs_field;
@@ -1938,8 +1946,8 @@ static void apply_hmi_packet(const String &line){
   }
 
   apply_flags_to_aux(flags_now);
-  if(!calibration_active_now) update_progress_marker();
-  bool ref_changed = !calibration_active_now && ((fabsf(g_ref - g_last_ref_draw) > 0.05f) || (fabsf(g_near - g_last_near_draw) > 0.05f) || (fabsf(g_far - g_last_far_draw) > 0.05f));
+  if(!state_only && !calibration_active_now) update_progress_marker();
+  bool ref_changed = !state_only && !calibration_active_now && ((fabsf(g_ref - g_last_ref_draw) > 0.05f) || (fabsf(g_near - g_last_near_draw) > 0.05f) || (fabsf(g_far - g_last_far_draw) > 0.05f));
   if(ref_changed){
     g_last_ref_draw = g_ref;
     g_last_near_draw = g_near;
@@ -1957,7 +1965,7 @@ static void apply_hmi_packet(const String &line){
   if(mode_changed || (prev_status_text != g_status_text) || (prev_status_level != g_status_level) || (prev_estop != g_estop_active) || (prev_estop_source != g_estop_source) || (prev_ctrl != g_ctrl_ok) || (prev_srvr != g_srvr_ok) || (prev_w1p != g_w1p_ok) || (prev_w1p_health != g_w1p_health)) {
     refresh_status_ui();
   }
-  // v26.10.03.03: no left-strip/full-screen invalidation on packets; progress marker animates locally.
+  // v26.10.03.05: no left-strip/full-screen invalidation on packets; progress marker animates locally.
 }
 
 
@@ -1966,7 +1974,7 @@ static void apply_layout_packet(const String &line){
   // on CTRL cannot overwrite the screen title/version or trigger header redraws.
   String hint = getField(line, "hint");
   if(lbl_title) set_label_text_if_changed(lbl_title, "HV P2P\nCTRL-TS");
-  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.03.03");
+  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.03.05");
   if(hint.length() && hint.startsWith("ERROR")) set_touch_debug(hint.c_str());
   for(int i=0;i<AUX_COUNT;i++){
     String key = String("aux") + String(i+1);
@@ -2003,10 +2011,8 @@ static void process_text_from_ctrl(String line, bool boot_phase){
     return;
   }
   if(line.startsWith("HMS1|")) {
-    // Priority state/config delta from CTRL. Convert to the existing HMI field
-    // vocabulary so Drive/Battery/calibration/link state updates immediately
-    // without waiting for the next full telemetry packet.
-    line.replace("HMS1|", "HMI1|");
+    // Priority state/config delta from CTRL. apply_hmi_packet detects HMS1 and
+    // touches only the small state surface instead of the bulk dashboard path.
     apply_hmi_packet(line);
   } else if(line.startsWith("CFG1|")) {
     apply_cfg_packet(line);
@@ -2148,10 +2154,9 @@ static void fw_handle_begin(const HVP2PRS485::Frame &frame){
       fw_send_text(HVP2PRS485::ERROR_MSG, frame.seq, "fw_safe_handoff_failed");
       return;
     }
-    fw_set_device_status("CTRL-TS", "Restarting in safe update mode", 0, true);
-    // fw_ensure_update_screen() already performs the one required initial render.
-    // Do not force a second synchronous full refresh from inside the RS485 frame
-    // handler immediately before reboot; this keeps the handoff render one-shot.
+    // SRVR is the progress display for CTRL-TS self-programming. Keep the normal
+    // UI visible until the deliberate safe/headless blackout instead of briefly
+    // flashing a 0% update dashboard just before the panel turns off.
     Serial.printf("[FW RX] safe-update reboot requested target=%s sha=%s\n", version.c_str(), sha.c_str());
     fw_send_text(HVP2PRS485::ERROR_MSG, frame.seq, "fw_safe_reboot_retry");
     g_fw_safe_reboot_due_ms = millis() + 350;
@@ -2342,11 +2347,24 @@ static void process_rs485_frame(const HVP2PRS485::Frame &frame, bool boot_phase)
   if(frame.type == HVP2PRS485::COMPATIBLE){
     g_ctrl_fw_compatible = true;
     g_boot_ctrl_confirmed = true;
-    if(!g_boot_srvr_confirmed) boot_set_status("Waiting for SRVR");
+    if(!g_boot_srvr_confirmed){
+      if(boot_phase) boot_set_status("Waiting for SRVR");
+      else { lvgl_port_lock(-1); boot_set_status("Waiting for SRVR"); lvgl_port_unlock(); }
+    }
     return;
   }
   if(frame.type == HVP2PRS485::TEXT){
-    process_text_from_ctrl(HVP2PRS485::payloadString(frame), boot_phase);
+    // Parsing and POLL/EVENT service must not depend on the LVGL render mutex.
+    // Only the actual widget mutation is locked, and TEXT has no immediate slave
+    // response. This keeps operator EVENT responses deterministic even when the
+    // display task is busy.
+    if(boot_phase) process_text_from_ctrl(HVP2PRS485::payloadString(frame), true);
+    else {
+      const String line = HVP2PRS485::payloadString(frame);
+      lvgl_port_lock(-1);
+      process_text_from_ctrl(line, false);
+      lvgl_port_unlock();
+    }
     return;
   }
   if(frame.type == HVP2PRS485::POLL){
@@ -2364,13 +2382,26 @@ static void process_rs485_frame(const HVP2PRS485::Frame &frame, bool boot_phase)
     // Peek rather than pop: the event remains queued until CTRL explicitly ACKs
     // its event_id, making a lost/corrupt EVENT retry-safe.
     const HmiQueuedEvent *ev = peek_hmi_event();
-    char payload[HMI_EVENT_TEXT_MAX + 112];
-    snprintf(payload, sizeof(payload), "EV1|id=%u|drops=%lu|crc=%lu|resync=%lu|cmd=%s",
-             ev ? unsigned(ev->id) : 0U,
-             (unsigned long)g_event_queue_drops,
-             (unsigned long)g_rs485Parser.crcErrors(),
-             (unsigned long)g_rs485Parser.resyncs(),
-             ev ? ev->text : "");
+    char payload[HMI_EVENT_TEXT_MAX + 176];
+    const uint32_t now = millis();
+    const bool includeDiag = ev || !g_last_event_diag_ms || (now - g_last_event_diag_ms) >= 1000;
+    if(includeDiag){
+      snprintf(payload, sizeof(payload), "EV1|id=%u|drops=%lu|crc=%lu|resync=%lu|heap=%lu|minheap=%lu|psram=%lu|cmd=%s",
+               ev ? unsigned(ev->id) : 0U,
+               (unsigned long)g_event_queue_drops,
+               (unsigned long)g_rs485Parser.crcErrors(),
+               (unsigned long)g_rs485Parser.resyncs(),
+               (unsigned long)ESP.getFreeHeap(),
+               (unsigned long)ESP.getMinFreeHeap(),
+               (unsigned long)ESP.getFreePsram(),
+               ev ? ev->text : "");
+      g_last_event_diag_ms = now;
+    } else {
+      // Most idle polls need only prove that the slave responded. Diagnostics are
+      // still included on every real EVENT and at least once per second, cutting
+      // normal bus occupancy without weakening observability.
+      snprintf(payload, sizeof(payload), "EV1|id=0|cmd=");
+    }
     rs485_slave_turnaround_guard();
     HVP2PRS485::sendFrame(HMI, HVP2PRS485::EVENT, frame.seq,
                          reinterpret_cast<const uint8_t*>(payload), uint16_t(strlen(payload)));
@@ -2382,8 +2413,14 @@ static void process_rs485_frame(const HVP2PRS485::Frame &frame, bool boot_phase)
       const bool changed = (g_srvr_ok != srvrHint);
       g_boot_srvr_confirmed = srvrHint;
       g_srvr_ok = srvrHint;
-      if(changed && !boot_phase) refresh_status_ui();
-      if(!srvrHint) boot_set_status("Waiting for SRVR");
+      if(boot_phase){
+        if(!srvrHint) boot_set_status("Waiting for SRVR");
+      } else if(changed || !srvrHint){
+        lvgl_port_lock(-1);
+        if(changed) refresh_status_ui();
+        if(!srvrHint) boot_set_status("Waiting for SRVR");
+        lvgl_port_unlock();
+      }
     }
     return;
   }
@@ -2428,7 +2465,7 @@ static void create_ui(){
   lv_obj_t *brand=make_panel(frame,SX,HEADER_Y,70,HEADER_H,C_BG,0x63d84e,7);
   lbl_title=make_label(brand,"HV P2P\nCTRL-TS",0,6,&lv_font_montserrat_12,lv_color_hex(C_FG),70);
   lv_obj_set_style_text_line_space(lbl_title,-2,0);
-  lbl_subtitle=make_label(frame,"v26.10.03.03",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
+  lbl_subtitle=make_label(frame,"v26.10.03.05",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
 
   pill_ctrl=make_panel(frame,255,HEADER_Y,126,HEADER_H,C_PANEL,C_BORDER,5);
   dot_ctrl=lv_obj_create(pill_ctrl); lv_obj_set_pos(dot_ctrl,9,15); lv_obj_set_size(dot_ctrl,8,8); lv_obj_set_style_radius(dot_ctrl,LV_RADIUS_CIRCLE,0); lv_obj_set_style_border_width(dot_ctrl,0,0); lv_obj_set_style_bg_color(dot_ctrl,lv_color_hex(0xef5757),0); lv_obj_clear_flag(dot_ctrl,LV_OBJ_FLAG_SCROLLABLE);
@@ -2580,7 +2617,7 @@ static void service_link_state(){
 
   bool link_alive = last_hmi_rx && ((millis() - last_hmi_rx) <= HMI_TIMEOUT_MS);
   if(!link_alive) {
-    // v26.10.03.03: local UART/display timeout is a CTRL-TS link warning, not
+    // v26.10.03.05: local UART/display timeout is a CTRL-TS link warning, not
     // proof of a real CTRL E-Stop. Keep the last SRVR-resolved status banner so
     // the touchscreen cannot randomly show "Status | E-Stop CTRL" while SRVR
     // remains "Status | Active". The CTRL status pill can still show ERROR.
@@ -2680,18 +2717,20 @@ void setup(){
 void loop(){
   fw_service_reboot();
 
+  // Always drain and answer RS485 before entering the LVGL critical section.
+  // POLL/EVENT timing is therefore independent of display rendering. TEXT frames
+  // take the LVGL mutex internally only for the widget update they require.
+  handle_hmi_rx();
   if(fw_display_owned()){
     // External W1P/CTRL update rows may own the dashboard. CTRL-TS self-flash
     // never reaches this runtime loop: it reboots into the display-off headless
     // updater before Update.begin()/Update.write() are allowed.
-    handle_hmi_rx();
     lvgl_port_lock(-1);
     service_fw_screen_release();
     lvgl_port_unlock();
   } else {
     lvgl_port_lock(-1);
     service_aux_touch_events();
-    handle_hmi_rx();
     if(!fw_display_owned()){
       service_runtime_connection_screen();
       service_link_state();
