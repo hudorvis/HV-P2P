@@ -1,3 +1,12 @@
+# v26.10.05.02 — 2026-10-05
+
+- Corrected the macOS/PySide backend runtime regression for the canonical startup status priority.
+- Production remains fail-safe: a fresh `WinchState` still starts with `estop_active=True` until live safety evaluation completes.
+- The fresh-backend persistence test now isolates that synthetic startup safety latch before asserting `System | Uncalibrated`, so it tests non-persistent position reference state rather than external-link safety.
+- Added `test_backend_status_runtime_contract_0502.py` to the normal source gate so this PySide-only fixture mismatch is caught even when PySide6 is unavailable locally.
+- No W1P motion/watchdog, CTRL↔CTRL-TS transport, or approved UI behavior changed in this hotfix.
+- macOS bundle metadata: short version `26.10.5`, build `2610.5.2`.
+
 # v26.10.05.01 — 2026-10-05
 
 - Deep SRVR↔CTRL↔CTRL-TS alignment pass after `.04.07` bench testing exposed updater ordering/progress, status flicker, low-rate touchscreen motion and Limit Calibration rendering defects.

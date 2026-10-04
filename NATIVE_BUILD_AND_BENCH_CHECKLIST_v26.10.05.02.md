@@ -1,16 +1,16 @@
-# HV P2P v26.10.05.01 Native Build and Bench Checklist
+# HV P2P v26.10.05.02 Native Build and Bench Checklist
 
 ## Release gate order
 
 1. Require `ALL_SOURCE_CHECKS_PASS` from the repository source suite.
 2. Run GitHub Actions native firmware/desktop jobs; GitHub/native compilation is authoritative.
-3. Use only matching `.05.01` STAGED_SOURCE / firmware / desktop artifacts.
+3. Use only matching `.05.02` STAGED_SOURCE / firmware / desktop artifacts.
 4. Bench-test CTRL/CTRL-TS/W1P with the winch unable to move.
 5. Only after display/update/safety gates pass, continue to unloaded then loaded motion commissioning.
 
 ## 1. Automatic firmware convergence and update order — highest priority
 
-Start with compatible `v26.10.04.07` CTRL, W1P and CTRL-TS already running. Then launch the newer `.05.01` SRVR. Do **not** manually reboot any ESP32.
+Start with compatible `v26.10.04.07` CTRL, W1P and CTRL-TS already running. Then launch the newer `.05.02` SRVR. Do **not** manually reboot any ESP32.
 
 Expected order/behavior:
 
@@ -171,7 +171,7 @@ Archive:
 
 - successful GitHub Actions native firmware and desktop logs;
 - Complete Release/checksum manifests;
-- SRVR/CTRL/CTRL-TS logs for a no-manual-reboot `.04.07` → `.05.01` update;
+- SRVR/CTRL/CTRL-TS logs for a no-manual-reboot `.04.07` → `.05.02` update;
 - video/screenshots of aligned canonical statuses;
 - smooth CTRL-TS live marker/geometry test;
 - Limit Calibration wizard visual/function test;

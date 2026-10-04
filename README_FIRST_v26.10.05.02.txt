@@ -1,4 +1,4 @@
-HV P2P v26.10.05.01 - READ THIS FIRST
+HV P2P v26.10.05.02 - READ THIS FIRST
 
 This is the 2026-10-05 bench-follow-up release based directly on the authoritative
 HV P2P v26.10.04.07 GitHub-ready source.
