@@ -14,7 +14,7 @@
 #include <esp_system.h>
 #include <esp_attr.h>
 
-#define CTRL_TS_SEMVER "v26.10.04.02"
+#define CTRL_TS_SEMVER "v26.10.04.04"
 #define CTRL_TS_VERSION "HV P2P CTRL-TS " CTRL_TS_SEMVER
 #define CTRL_TS_HW_ID "WS-ESP32S3-7"
 #define HMI_BAUD 115200
@@ -188,6 +188,7 @@ static float g_pos_frac=0.0f, g_ref_frac=0.5f;
 static bool g_ref_visible = true;
 static float g_speed_mps=0.0f, g_speed_kmh=0.0f, g_max_mps=0.0f, g_max_kmh=0.0f;
 static float g_ramp_near=0.0f, g_ramp_far=0.0f;
+static float g_ramp_near_frac=-1.0f, g_ramp_far_frac=-1.0f;
 static String g_mode="Mode 1";
 static String g_drive_mode="Mode A";
 static String g_accel_mode="Speed";
@@ -231,7 +232,7 @@ static float g_last_ramp_near_draw = -999999.0f;
 static float g_last_ramp_far_draw = -999999.0f;
 
 // -------------------- CTRL-TS Settings page --------------------
-// Safe v26.10.04.02 approach: no backlight/brightness writes. This page only
+// Safe v26.10.04.04 approach: no backlight/brightness writes. This page only
 // edits CTRL network settings over UART and therefore should preserve the known
 // Keep the proven splash/boot path; do not write to the backlight controller.
 static lv_obj_t *settings_overlay = nullptr;
@@ -279,7 +280,7 @@ static void force_screen_refresh(){
 }
 
 static void screen_keepalive(){
-  // v26.10.04.02: no periodic full-screen or left-strip invalidation or brightness writes.
+  // v26.10.04.04: no periodic full-screen or left-strip invalidation or brightness writes.
   // The Waveshare/LVGL port refreshes changed objects itself; forcing a full
   // screen refresh every second caused the visible 1-second flicker/glitch.
   if(!g_ui_ready) return;
@@ -1186,7 +1187,7 @@ static void confirm_aux_idx(int idx, bool send_command){
   selected_aux = -1;
   g_selected_aux_ms = 0;
   confirmed_aux = idx;
-  clear_confirm_at = now_ms + 2000;  // v26.10.04.02: confirmed AUX tile stays lit for 2 seconds
+  clear_confirm_at = now_ms + 2000;  // v26.10.04.04: confirmed AUX tile stays lit for 2 seconds
   g_aux_suppress_until_ms[idx] = now_ms + 400;
   style_aux(idx,false,true);
   snprintf(msg,sizeof(msg),"AUX %d Confirmed", idx+1);
@@ -1261,7 +1262,7 @@ static void style_w1p_status_pill(int state){
 }
 
 static void style_estop_pill(bool active){
-  // v26.10.04.02: the middle status banner follows the SRVR-resolved state.
+  // v26.10.04.04: the middle status banner follows the SRVR-resolved state.
   // A local CTRL-TS UART/display gap must not invent "E-Stop CTRL" while SRVR
   // is still sending Status | Active. Real CTRL/W1P E-Stops are still shown
   // immediately when SRVR sends status=E-Stop... / status_level=red.
@@ -1309,7 +1310,7 @@ static void refresh_status_ui(){
   style_status_pill_cached(0,pill_ctrl,lbl_ctrl,"CTRL",g_ctrl_ok);
   if(pill_srvr && lbl_srvr) style_status_pill_cached(1,pill_srvr,lbl_srvr,"SRVR",g_srvr_ok);
   style_w1p_status_pill(g_w1p_health);
-  // v26.10.04.02: do not turn the main middle box red purely because the
+  // v26.10.04.04: do not turn the main middle box red purely because the
   // CTRL-TS local UART/display link hiccuped. The SRVR status packet is the
   // authoritative source for Active / Un-Calibrated / E-Stop display state.
   bool stopped_visual = (g_status_level >= 2) || g_estop_active;
@@ -1677,9 +1678,10 @@ static void update_progress_marker(){
   const int bar_right = BAR_LIMIT_RIGHT;
   const int marker_w = 5;
   float frac = constrain(g_pos_frac, 0.0f, 1.0f);
-  int x = (int)(bar_left + frac * (float)(bar_right - bar_left - marker_w));
-  if(x < bar_left) x = bar_left;
-  if(x > bar_right - marker_w) x = bar_right - marker_w;
+  const int center_x = (int)lroundf(bar_left + frac * (float)(bar_right - bar_left));
+  int x = center_x - marker_w/2;
+  if(x < bar_left - marker_w/2) x = bar_left - marker_w/2;
+  if(x > bar_right - marker_w/2) x = bar_right - marker_w/2;
   // v16: always snap to the latest verified SRVR/drive position.
   set_progress_marker_x_smooth(x);
 }
@@ -1697,10 +1699,10 @@ static void update_reference_marker(){
   const int bar_right = BAR_LIMIT_RIGHT;
   const int marker_w = 3;
   float frac = constrain(g_ref_frac, 0.0f, 1.0f);
-  int marker_x = (int)(bar_left + frac * (float)(bar_right - bar_left - marker_w));
-  if(marker_x < bar_left) marker_x = bar_left;
-  if(marker_x > bar_right - marker_w) marker_x = bar_right - marker_w;
-  int center_x = marker_x + (marker_w / 2);
+  int center_x = (int)lroundf(bar_left + frac * (float)(bar_right - bar_left));
+  int marker_x = center_x - marker_w/2;
+  if(marker_x < bar_left - marker_w/2) marker_x = bar_left - marker_w/2;
+  if(marker_x > bar_right - marker_w/2) marker_x = bar_right - marker_w/2;
   int label_x = center_x - 20;
   if(label_x < bar_left - 10) label_x = bar_left - 10;
   if(label_x > bar_right - 30) label_x = bar_right - 30;
@@ -1717,8 +1719,8 @@ static void update_ramp_markers(){
   const int ramp_top = 47;
   float span = g_far - g_near;
   if(span < 0.001f) span = 0.001f;
-  float frac_near = constrain(g_ramp_near / span, 0.0f, 1.0f);
-  float frac_far = constrain(g_ramp_far / span, 0.0f, 1.0f);
+  float frac_near = g_ramp_near_frac >= 0.0f ? constrain(g_ramp_near_frac, 0.0f, 1.0f) : constrain(g_ramp_near / span, 0.0f, 1.0f);
+  float frac_far = g_ramp_far_frac >= 0.0f ? constrain(g_ramp_far_frac, 0.0f, 1.0f) : constrain(g_ramp_far / span, 0.0f, 1.0f);
   int near_w = constrain((int)lroundf(bar_w * frac_near), 0, bar_w);
   int far_w = constrain((int)lroundf(bar_w * frac_far), 0, bar_w);
 
@@ -1768,12 +1770,12 @@ static void update_preset_markers(){
     if(g_far > g_near + 0.001f) frac = (g_preset_pos[i] - g_near) / (g_far - g_near);
     if(frac < 0.0f) frac = 0.0f;
     if(frac > 1.0f) frac = 1.0f;
-    // Use the exact same left-edge travel span as update_progress_marker(), then
-    // place the 2 px preset line on the centre of the 5 px live marker.
-    int marker_left_x = (int)(bar_left + frac * (float)(bar_right - bar_left - marker_w));
-    int x = marker_left_x + (marker_w / 2) - (line_w / 2);
-    if(x < bar_left) x = bar_left;
-    if(x > bar_right - line_w) x = bar_right - line_w;
+    // All travel markers share one canonical coordinate whose centre is exactly
+    // on the Near/Far endpoint at 0/100%, matching SRVR SpanDiagram.
+    int center_x = (int)lroundf(bar_left + frac * (float)(bar_right - bar_left));
+    int x = center_x - (line_w / 2);
+    if(x < bar_left - line_w/2) x = bar_left - line_w/2;
+    if(x > bar_right - line_w/2) x = bar_right - line_w/2;
     int lbl_y = (i % 2 == 0) ? label_y_top : label_y_bottom;
 
     lv_obj_clear_flag(preset_line[i], LV_OBJ_FLAG_HIDDEN);
@@ -1815,6 +1817,8 @@ static void apply_hmi_packet(const String &line){
   g_speed_kmh = getFieldFloat(line, "speed_kmh", g_speed_kmh);
   g_ramp_near = getFieldFloat(line, "ramp_near", g_ramp_near);
   g_ramp_far = getFieldFloat(line, "ramp_far", g_ramp_far);
+  g_ramp_near_frac = getFieldFloat(line, "ramp_near_frac", g_ramp_near_frac);
+  g_ramp_far_frac = getFieldFloat(line, "ramp_far_frac", g_ramp_far_frac);
   g_ref_visible = getFieldBool(line, "ref_vis", g_ref_visible);
   g_mode      = getField(line, "mode");
   if(g_mode == "Normal") g_mode = "Power";
@@ -1860,7 +1864,7 @@ static void apply_hmi_packet(const String &line){
     else g_status_level = 0;
   }
 
-  // v26.10.04.02: if SRVR sends explicit status/status_level, trust it as
+  // v26.10.04.04: if SRVR sends explicit status/status_level, trust it as
   // the authoritative display state. Do not override it locally with a CTRL
   // error just because the touchscreen/CTRL UART side saw a transient gap.
   g_estop_active = packet_estop;
@@ -1990,7 +1994,7 @@ static void apply_hmi_packet(const String &line){
   if(mode_changed || (prev_status_text != g_status_text) || (prev_status_level != g_status_level) || (prev_estop != g_estop_active) || (prev_estop_source != g_estop_source) || (prev_ctrl != g_ctrl_ok) || (prev_srvr != g_srvr_ok) || (prev_w1p != g_w1p_ok) || (prev_w1p_health != g_w1p_health)) {
     refresh_status_ui();
   }
-  // v26.10.04.02: no left-strip/full-screen invalidation on packets; progress marker animates locally.
+  // v26.10.04.04: no left-strip/full-screen invalidation on packets; progress marker animates locally.
 }
 
 
@@ -1999,7 +2003,7 @@ static void apply_layout_packet(const String &line){
   // on CTRL cannot overwrite the screen title/version or trigger header redraws.
   String hint = getField(line, "hint");
   if(lbl_title) set_label_text_if_changed(lbl_title, "HV P2P\nCTRL-TS");
-  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.04.02");
+  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.04.04");
   if(hint.length() && hint.startsWith("ERROR")) set_touch_debug(hint.c_str());
   for(int i=0;i<AUX_COUNT;i++){
     String key = String("aux") + String(i+1);
@@ -2498,7 +2502,7 @@ static void create_ui(){
   lv_obj_t *brand=make_panel(frame,SX,HEADER_Y,70,HEADER_H,C_BG,0x63d84e,7);
   lbl_title=make_label(brand,"HV P2P\nCTRL-TS",0,6,&lv_font_montserrat_12,lv_color_hex(C_FG),70);
   lv_obj_set_style_text_line_space(lbl_title,-2,0);
-  lbl_subtitle=make_label(frame,"v26.10.04.02",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
+  lbl_subtitle=make_label(frame,"v26.10.04.04",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
 
   pill_ctrl=make_panel(frame,255,HEADER_Y,126,HEADER_H,C_PANEL,C_BORDER,5);
   dot_ctrl=lv_obj_create(pill_ctrl); lv_obj_set_pos(dot_ctrl,9,15); lv_obj_set_size(dot_ctrl,8,8); lv_obj_set_style_radius(dot_ctrl,LV_RADIUS_CIRCLE,0); lv_obj_set_style_border_width(dot_ctrl,0,0); lv_obj_set_style_bg_color(dot_ctrl,lv_color_hex(0xef5757),0); lv_obj_clear_flag(dot_ctrl,LV_OBJ_FLAG_SCROLLABLE);
@@ -2668,7 +2672,7 @@ static void service_link_state(){
 
   bool link_alive = last_hmi_rx && ((millis() - last_hmi_rx) <= HMI_TIMEOUT_MS);
   if(!link_alive) {
-    // v26.10.04.02: local UART/display timeout is a CTRL-TS link warning, not
+    // v26.10.04.04: local UART/display timeout is a CTRL-TS link warning, not
     // proof of a real CTRL E-Stop. Keep the last SRVR-resolved status banner so
     // the touchscreen cannot randomly show "Status | E-Stop CTRL" while SRVR
     // remains "Status | Active". The CTRL status pill can still show ERROR.

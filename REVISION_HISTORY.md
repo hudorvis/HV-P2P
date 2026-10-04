@@ -1,3 +1,24 @@
+# v26.10.04.04 — 2026-10-04
+
+- Completed the missing Run-mode Near/Far/ramp audit across SRVR and CTRL-TS. SRVR is now the single authority for effective ramp distance and normalized ramp fraction, so Distance/Percentage representations map to the same physical boundary on every display.
+- Clamped effective ramp lengths to the live Near/Far span and re-synchronised metres/percentage representations after limit or ramp edits, preventing stale or impossible ramp geometry after recalibration.
+- Run Top/Side, Free-D Top/Side and CTRL-TS travel bar now consume the same canonical Near/Far ramp fractions. CTRL-TS live/reference/preset marker centres align exactly with the same 0–100% Near/Far coordinates.
+- Hardened Settings Battery Change and Acceleration ComboBoxes with persistent live bindings so CTRL-TS AUX/external state changes always update the visible dropdown after local ComboBox interaction.
+- Reconfirmed Battery Change 5 km/h service operation, signed To Near/To Far distances outside the span, version-or-progress Firmware readouts, single CTRL-TS Firmware row, and Virtual local simulation with physical W1P STOP + Servo Enable inhibit.
+- Added `test_limit_ramp_geometry_0404.py`; preserved resolved CTRL-TS AUX reboot/offline-splash behavior, W1P 500 ms watchdog and Leadshine motion architecture.
+- macOS bundle metadata: short version `26.10.4`, build `2610.4.4`.
+
+# v26.10.04.03 — 2026-10-04
+
+- Fixed Settings Battery Change/Acceleration state convergence when changed from CTRL-TS AUX: live state now refreshes the auto-save Setup mirror and the visible selectors follow live values.
+- Confirmed Battery Change as a 5 km/h service override that permits travel outside saved Near/Far limits and auto-cancels only after an outside excursion returns inside; SRVR/CTRL-TS now preserve signed `TO NEAR` / `TO FAR` values outside the span.
+- Added CTRL -> SRVR firmware progress reporting and version-or-progress Firmware readouts for CTRL and W1P.
+- Simplified CTRL-TS Setup firmware diagnostics to one `Firmware` readout using the same version-or-progress model.
+- Corrected Virtual Position Source so SRVR simulation can run with W1P/Leadshine disconnected while any physically present W1P remains positively STOPped and software Servo Enable inhibited.
+- Added `test_settings_virtual_firmware_0403.py` and updated runtime/preflight contracts.
+- Preserved resolved AUX reboot/offline-splash behavior, normal Encoder safety, W1P 500 ms watchdog and Leadshine motion architecture.
+- macOS bundle metadata: short version `26.10.4`, build `2610.4.3`.
+
 # v26.10.04.02 — 2026-10-04
 
 - Bench follow-up after `.04.01` confirmed the CTRL-TS AUX reboot and immediate SRVR-offline splash fixes.

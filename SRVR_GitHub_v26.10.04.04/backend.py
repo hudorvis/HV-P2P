@@ -248,7 +248,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.04.02", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.04.04", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -257,7 +257,7 @@ class HVP2PBackend(QObject):
         self._legacy_fw_push_last_attempt = {"ctrl": 0.0, "w1p": 0.0}
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.04.02+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.04.04+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -674,6 +674,12 @@ class HVP2PBackend(QObject):
                 line_text = ""
             if line_text.startswith("HMI_STATUS|"):
                 self._handle_ctrl_hmi_status(line_text)
+                continue
+            if line_text.startswith("FW_PROGRESS|"):
+                fields = self._parse_pipe_fields(line_text)
+                if str(fields.get("device", "CTRL")).strip().upper() == "CTRL":
+                    active = str(fields.get("active", "1")).strip().lower() in ("1", "true", "on")
+                    self._set_fw_progress("ctrl", active, fields.get("phase", "Updating"), fields.get("pct", 0))
                 continue
             msg = self._parse_control_packet(data)
             if not msg: continue
@@ -1481,6 +1487,7 @@ class HVP2PBackend(QObject):
                 self._battery_change_went_outside_limits = False
                 self._sync_service_mode_to_winch(force=True)
                 self._save_config()
+                self._refresh_setup_mirror()
                 self.configChanged.emit()
                 self._log("[SRVR] Battery Change auto-cancelled: skate returned inside limits")
         except Exception:
@@ -1532,7 +1539,34 @@ class HVP2PBackend(QObject):
 
     @staticmethod
     def _ramp_distance(lp, span):
-        return max(0.0, span*(lp.ramp_percentage/100.0)) if lp.ramp_mode == "Percentage" else max(0.0, lp.ramp_distance_m)
+        """Return the effective physical ramp length inside the current span.
+
+        Distance and Percentage are only two representations of the same physical
+        ramp boundary. Clamp the effective result to the live Near/Far span so
+        motion limiting and every progress-bar renderer share one valid geometry.
+        """
+        span = max(0.0, float(span))
+        raw = span * (float(lp.ramp_percentage) / 100.0) if lp.ramp_mode == "Percentage" else float(lp.ramp_distance_m)
+        return max(0.0, min(span, raw))
+
+    def _span_length_m(self) -> float:
+        return max(0.0, abs(float(self.farLimit) - float(self.nearLimit)))
+
+    def _sync_ramp_representations_for_span(self) -> None:
+        """Keep metres/percentage representations equivalent after limit edits."""
+        span = self._span_length_m()
+        if span <= 1e-9:
+            for lp in (self.state.near_limit, self.state.far_limit):
+                lp.ramp_distance_m = 0.0
+                lp.ramp_percentage = 0.0
+            return
+        for lp in (self.state.near_limit, self.state.far_limit):
+            if lp.ramp_mode == "Percentage":
+                lp.ramp_percentage = max(0.0, min(100.0, float(lp.ramp_percentage)))
+                lp.ramp_distance_m = span * lp.ramp_percentage / 100.0
+            else:
+                lp.ramp_distance_m = max(0.0, min(span, float(lp.ramp_distance_m)))
+                lp.ramp_percentage = 100.0 * lp.ramp_distance_m / span
 
     def _clamp_goto_target_inside_limits(self, target: float) -> float:
         if self._service_override_active():
@@ -1937,8 +1971,11 @@ class HVP2PBackend(QObject):
         ref_set = self.state.ref_point.position_m is not None
         ref_abs = float(self.state.ref_point.position_m if self.state.ref_point.position_m is not None else near_abs)
         ref_rel = ref_abs - near_abs
-        to_near = max(0.0, pos_abs - near_abs)
-        to_far = max(0.0, far_abs - pos_abs)
+        # Keep the signed distances outside the calibrated safe span. In Battery
+        # Change/service mode this makes an excursion past Near read negative To
+        # Near while To Far continues increasing (and vice-versa past Far).
+        to_near = pos_abs - near_abs
+        to_far = far_abs - pos_abs
         ramp_near = self._ramp_distance(self.state.near_limit, max(0.001, far_rel))
         ramp_far = self._ramp_distance(self.state.far_limit, max(0.001, far_rel))
         ctrl_ok = self._ctrl_connected()
@@ -2014,7 +2051,8 @@ class HVP2PBackend(QObject):
             f"speed_mps={speed:.2f}", f"speed_kmh={speed*3.6:.2f}",
             "near=0.00", f"ref={ref_rel:.2f}", f"far={far_rel:.2f}",
             f"pos_frac={self._span_fraction(pos_abs):.6f}", f"ref_frac={self._span_fraction(ref_abs):.6f}",
-            f"ramp_near={ramp_near:.2f}", f"ramp_far={ramp_far:.2f}",
+            f"ramp_near={ramp_near:.3f}", f"ramp_far={ramp_far:.3f}",
+            f"ramp_near_frac={self.nearRampFraction:.6f}", f"ramp_far_frac={self.farRampFraction:.6f}",
             f"ref_vis={1 if ref_set else 0}", f"estop={estop}",
             f"estop_src={self._display_field(source)}", f"status={self._display_field(status)}",
             f"status_level={level}", f"ctrl={1 if ctrl_ok else 0}", "srvr=1",
@@ -2224,13 +2262,26 @@ class HVP2PBackend(QObject):
         flags = self._ctrl_flags
         self._ctrl_estop = bool(flags & FLAG_ESTOP_PRESSED)
 
-        # Fail-safe sources include physical/link/RS485 faults plus W1P local command/service watchdogs.
-        # W1P is a required system node for readiness even when SRVR's Virtual
-        # position source is selected; Virtual must never disguise missing hardware
-        # as a ready production system. Not-calibrated remains a yellow service state.
+        # Encoder mode fail-safe sources include physical/link/RS485 faults plus
+        # W1P local command/service watchdogs. Virtual is a deliberately local
+        # SRVR simulation and does not require W1P/Leadshine presence.
+        # Not-calibrated remains a yellow service state.
         ctrl_fw_ok = bool(self._ctrl_fw_match and self._ctrl_authority_fresh())
         w1p_fw_ok = bool(self._w1p_fw_match and self._w1p_status_fresh())
         ctrl_interface_fault = bool(flags & (FLAG_CTRL_HMI_FAULT | FLAG_CTRL_FW_FAULT))
+        # Virtual is an SRVR-local motion simulation. It must remain usable with
+        # no W1P/Leadshine hardware connected, while CTRL/SRVR input and safety
+        # remain authoritative. Any W1P that is physically present is still held
+        # stopped/inhibited by _virtual_output_inhibit().
+        virtual_demo = (self.position_source == "Virtual")
+        w1p_safety = bool(
+            self._w1p_estop
+            or self._w1p_internal_safety
+            or (not self.w1p.connected)
+            or (not self._w1p_status_fresh())
+            or (not w1p_fw_ok)
+            or (self.winch_rs_status != "Connected")
+        )
         safety = bool(
             self._srvr_estop
             or self._ctrl_estop
@@ -2238,12 +2289,7 @@ class HVP2PBackend(QObject):
             or ctrl_interface_fault
             or (not connected)
             or (not ctrl_fw_ok)
-            or self._w1p_estop
-            or self._w1p_internal_safety
-            or (not self.w1p.connected)
-            or (not self._w1p_status_fresh())
-            or (not w1p_fw_ok)
-            or (self.winch_rs_status != "Connected")
+            or ((not virtual_demo) and w1p_safety)
         )
         self.state.estop_active = safety
 
@@ -3164,7 +3210,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.04.02 moves the installed joystick polarity correction into CTRL,
+        # v26.10.04.04 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same
@@ -3581,10 +3627,24 @@ class HVP2PBackend(QObject):
     def freeDActive(self): return bool(self.freed_input_last_rx and time.time()-self.freed_input_last_rx<2.0)
     @Property(float, notify=stateChanged)
     def freeDFps(self): return float(self.freed_in_fps)
+    def _firmware_display_value(self, role: str, version: str) -> str:
+        key = "w1p" if str(role).lower().startswith("w1p") else "ctrl"
+        state = self._fw_progress.get(key, {})
+        if bool(state.get("active", False)):
+            phase = str(state.get("phase", "Updating") or "Updating")
+            try: pct = max(0, min(100, int(float(state.get("pct", 0)))))
+            except Exception: pct = 0
+            return f"{phase} {pct}%"
+        return str(version or "—")
+
     @Property(str, notify=stateChanged)
     def ctrlFirmwareVersion(self): return str(self._ctrl_fw_version or "—")
     @Property(str, notify=stateChanged)
+    def ctrlFirmwareDisplay(self): return self._firmware_display_value("ctrl", self._ctrl_fw_version)
+    @Property(str, notify=stateChanged)
     def w1pFirmwareVersion(self): return str(self._w1p_fw_version or "—")
+    @Property(str, notify=stateChanged)
+    def w1pFirmwareDisplay(self): return self._firmware_display_value("w1p", self._w1p_fw_version)
     @Property(bool, notify=stateChanged)
     def ctrlEStopActive(self): return bool(self._ctrl_estop)
     @Property(bool, notify=stateChanged)
@@ -3621,6 +3681,12 @@ class HVP2PBackend(QObject):
         return states.get(raw, raw)
     @Property(int, notify=stateChanged)
     def ctrlTsFirmwareProgress(self): return int(max(0, min(100, self._ctrl_ts_fw_pct)))
+    @Property(str, notify=stateChanged)
+    def ctrlTsFirmwareDisplay(self):
+        raw = str(self._ctrl_ts_fw_state or "idle")
+        if raw in ("starting", "transferring", "verifying", "rebooting", "safe_reboot"):
+            return f"{self.ctrlTsFirmwareState} {self.ctrlTsFirmwareProgress}%"
+        return str(self._ctrl_ts_version or "—")
     @Property(str, notify=stateChanged)
     def ctrlTsBootId(self): return str(self._ctrl_ts_boot_id or "—")
     @Property(int, notify=stateChanged)
@@ -3722,9 +3788,9 @@ class HVP2PBackend(QObject):
     @Property(float, notify=stateChanged)
     def maxSpeed(self): return float(self.max_speed_mps)
     @Property(float, notify=stateChanged)
-    def toNear(self): return max(0.0,self.position-float(self.state.near_limit.position_m or 0.0))
+    def toNear(self): return self.position-float(self.state.near_limit.position_m or 0.0)
     @Property(float, notify=stateChanged)
-    def toFar(self): return max(0.0,float(self.state.far_limit.position_m or 100.0)-self.position)
+    def toFar(self): return float(self.state.far_limit.position_m or 100.0)-self.position
     @Property(float, notify=stateChanged)
     def nearLimit(self): return float(self.state.near_limit.position_m or 0.0)
     @Property(float, notify=stateChanged)
@@ -3732,23 +3798,31 @@ class HVP2PBackend(QObject):
     @Property(float, notify=stateChanged)
     def refPoint(self): return float(self.state.ref_point.position_m or 0.0)
     @Property(float, notify=stateChanged)
+    def spanLength(self): return float(self._span_length_m())
+    @Property(float, notify=stateChanged)
     def nearRampDistance(self):
-        span = abs(float(self.farLimit) - float(self.nearLimit))
-        return float(self._ramp_distance(self.state.near_limit, span))
+        return float(self._ramp_distance(self.state.near_limit, self._span_length_m()))
     @Property(float, notify=stateChanged)
     def farRampDistance(self):
-        span = abs(float(self.farLimit) - float(self.nearLimit))
-        return float(self._ramp_distance(self.state.far_limit, span))
+        return float(self._ramp_distance(self.state.far_limit, self._span_length_m()))
+    @Property(float, notify=stateChanged)
+    def nearRampFraction(self):
+        span = self._span_length_m()
+        return 0.0 if span <= 1e-9 else float(self.nearRampDistance / span)
+    @Property(float, notify=stateChanged)
+    def farRampFraction(self):
+        span = self._span_length_m()
+        return 0.0 if span <= 1e-9 else float(self.farRampDistance / span)
     @Property(str, notify=configChanged)
     def nearRampMode(self): return str(self.state.near_limit.ramp_mode)
     @Property(str, notify=configChanged)
     def farRampMode(self): return str(self.state.far_limit.ramp_mode)
     @Property(float, notify=configChanged)
     def nearRampValue(self):
-        return float(self.state.near_limit.ramp_percentage if self.state.near_limit.ramp_mode == "Percentage" else self.state.near_limit.ramp_distance_m)
+        return float(self.state.near_limit.ramp_percentage if self.state.near_limit.ramp_mode == "Percentage" else self.nearRampDistance)
     @Property(float, notify=configChanged)
     def farRampValue(self):
-        return float(self.state.far_limit.ramp_percentage if self.state.far_limit.ramp_mode == "Percentage" else self.state.far_limit.ramp_distance_m)
+        return float(self.state.far_limit.ramp_percentage if self.state.far_limit.ramp_mode == "Percentage" else self.farRampDistance)
     @Property(str, notify=configChanged)
     def driveModeName(self): return str(self.drive_modes[self.active_drive_mode].get("name",f"Mode {self.active_drive_mode+1}"))
     @Property(int, notify=configChanged)
@@ -4131,6 +4205,8 @@ class HVP2PBackend(QObject):
         key = "near" if lp is self.state.near_limit else "far" if lp is self.state.far_limit else "ref"
         raw = getattr(self, "_last_raw_pos", None)
         self._limit_raw[key] = None if raw is None else int(raw)
+        if key in ("near", "far"):
+            self._sync_ramp_representations_for_span()
         self._save_config(); self._sync_w1p_settings(); self._notify_config()
 
     @Slot(str)
@@ -4178,6 +4254,7 @@ class HVP2PBackend(QObject):
             lp.ramp_distance_m = dist
             lp.ramp_percentage = max(0.0, min(100.0, dist * 100.0 / span))
         lp.ramp_mode = new_mode
+        self._sync_ramp_representations_for_span()
         self._save_config(); self._notify_config()
 
     @Slot(str,str)
@@ -4192,6 +4269,7 @@ class HVP2PBackend(QObject):
         lp.ramp_distance_m = max(0.0, min(span, physical_distance))
         lp.ramp_percentage = max(0.0, min(100.0, lp.ramp_distance_m * 100.0 / span))
         lp.ramp_mode = new_mode
+        self._sync_ramp_representations_for_span()
         self._save_config(); self._notify_config()
 
     @Slot(int)
@@ -4209,14 +4287,14 @@ class HVP2PBackend(QObject):
     @Slot(str)
     def setAccelerationMode(self,mode):
         self.acceleration_mode = "Power" if str(mode).lower().startswith("power") else "Speed"
-        self._sync_w1p_settings(); self._save_config(); self._notify_config()
+        self._sync_w1p_settings(); self._save_config(); self._refresh_setup_mirror(); self._notify_config()
 
     @Slot(bool)
     def setBatteryChange(self,on):
         self.battery_change_mode = bool(on)
         self._battery_change_went_outside_limits = False
         self._sync_service_mode_to_winch(force=True)
-        self._save_config(); self._notify_config()
+        self._save_config(); self._refresh_setup_mirror(); self._notify_config()
 
     @Slot()
     def toggleSrvrEStop(self):
@@ -4311,6 +4389,7 @@ class HVP2PBackend(QObject):
                 raw = getattr(self, "_last_raw_pos", None)
                 self._limit_raw["far"] = None if raw is None else int(raw)
                 self.state.total_length_m = self.state.far_limit.position_m
+                self._sync_ramp_representations_for_span()
                 self._sync_position(self.state.far_limit.position_m)
                 if signed_far < -0.05:
                     # Persist the corrected physical winch orientation even if

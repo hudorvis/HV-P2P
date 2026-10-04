@@ -30,6 +30,9 @@ Item {
     property real farLimit: 100
     property real nearRamp: 0
     property real farRamp: 0
+    // Canonical normalized ramp boundaries from SRVR. -1 falls back to distance.
+    property real nearRampFraction: -1
+    property real farRampFraction: -1
     property color accent: "#72ed21"
     property color headingColor: "#26d5ff"
     property color subheadingColor: headingColor
@@ -53,6 +56,8 @@ Item {
     onFarLimitChanged: canvas.requestPaint()
     onNearRampChanged: canvas.requestPaint()
     onFarRampChanged: canvas.requestPaint()
+    onNearRampFractionChanged: canvas.requestPaint()
+    onFarRampFractionChanged: canvas.requestPaint()
     onSideViewChanged: canvas.requestPaint()
 
     Text {
@@ -238,8 +243,10 @@ Item {
             var nearY=yy(lo), farY=yy(hi)
 
             // Unlabelled ramping zones: same geometry on Run and Free-D.
-            var nrX=xFor(lo+Math.max(0,Math.min(span,root.nearRamp)),left,right)
-            var frX=xFor(hi-Math.max(0,Math.min(span,root.farRamp)),left,right)
+            var nrFrac=root.nearRampFraction>=0 ? Math.max(0,Math.min(1,root.nearRampFraction)) : Math.max(0,Math.min(1,root.nearRamp/span))
+            var frFrac=root.farRampFraction>=0 ? Math.max(0,Math.min(1,root.farRampFraction)) : Math.max(0,Math.min(1,root.farRamp/span))
+            var nrX=left+nrFrac*(right-left)
+            var frX=right-frFrac*(right-left)
             rampWedge(c,left,nrX,nearY,true,graphBottom)
             rampWedge(c,right,frX,farY,false,graphBottom)
 

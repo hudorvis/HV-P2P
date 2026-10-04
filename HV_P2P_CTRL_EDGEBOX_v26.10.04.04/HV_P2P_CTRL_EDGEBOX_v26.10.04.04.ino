@@ -16,7 +16,7 @@
 static bool g_ads_inited = false;
 static uint8_t ADS_ADDR = 0x48;
 
-#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.10.04.02"
+#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.10.04.04"
 #define CTRL_HMI_ARCH "EdgeBox ESP-100 + isolated RS485 Waveshare thin HMI"
 
 IPAddress local_IP(172,20,1,101);
@@ -235,7 +235,7 @@ static uint32_t lastHmiLayoutForward = 0;
 #define HMI_LAYOUT_MAX_LEN 2200
 static const char* HMI_LAYOUT_NVS_NS = "hmiui";
 static const char* HMI_LAYOUT_NVS_KEY = "layout";
-static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.10.04.02|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
+static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.10.04.04|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
 
 
 
@@ -260,10 +260,10 @@ static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_CTRL";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL_TS,W1P,W1P_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_CTRL_v*.ino.bin firmware. CTRL-TS and W1P files are rejected.";
 static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=CTRL;";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.04.02;";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.04.04;";
 static const char* HV_AUTH_ROLE = "CTRL";
 static const char* HV_AUTH_TARGET = "EDGEBOX_ESP100";
-static const char* HV_AUTH_VERSION = "v26.10.04.02";
+static const char* HV_AUTH_VERSION = "v26.10.04.04";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
@@ -522,7 +522,7 @@ static void hvLoadHmiLayoutConfig() {
     int nl = stored.indexOf('\n');
     if(nl >= 0) stored = stored.substring(0, nl);
     stored.trim();
-    // v26.10.04.02 migration: older CTRL NVS layouts were main4/aux1-aux4.
+    // v26.10.04.04 migration: older CTRL NVS layouts were main4/aux1-aux4.
     // Preserve the operator's stored labels/settings but expose the new AUX5 tile.
     if(stored.indexOf("|layout=main4") >= 0) stored.replace("|layout=main4", "|layout=main5");
     if(stored.indexOf("|aux5=") < 0) stored += "|aux5=AUX 5";
@@ -994,7 +994,7 @@ static void sendHmiStatusToSrvr()
   uint32_t age = g_lastHmiRxMs ? (now - g_lastHmiRxMs) : 999999;
   String line = "HMI_STATUS";
   line += "|ctrl_ts=" + String(hmiLinkConnected() ? 1 : 0);
-  line += "|ctrl_version=v26.10.04.02";
+  line += "|ctrl_version=v26.10.04.04";
   line += "|fw_match=" + String(g_srvrFirmwareMatched ? 1 : 0);
   line += "|fw_authority=" + g_srvrFirmwareState;
   line += "|fw_required=" + (g_srvrRequiredVersion.length() ? g_srvrRequiredVersion : String("unknown"));
@@ -1490,7 +1490,7 @@ static bool hmiFwHandleFrame(const HVP2PRS485::Frame &frame){
     return true;
   }
   if(frame.type == HVP2PRS485::ERROR_MSG){
-    // v26.10.04.02 safe self-update handoff: the displayed CTRL-TS deliberately
+    // v26.10.04.04 safe self-update handoff: the displayed CTRL-TS deliberately
     // refuses to program flash, stages the exact target for a safe reboot, and asks CTRL to retry
     // after it has rebooted into its display-off updater. Treat this one response
     // as an expected transport transition, not as a failed firmware update.
@@ -1828,6 +1828,17 @@ static void reportCtrlAuthorityUpdateProgress(size_t received, size_t total, con
   // Never pre-empt an outstanding POLL/EVENT transaction merely to show progress.
   // A skipped progress sample is preferable to driving both ends of the bus.
   (void)hmiSendFirmwareStatusText(msg);
+  // SRVR's Settings/Firmware field must show the same live CTRL update progress,
+  // not only the version reported before/after the reboot. Use the existing UDP
+  // control socket; this is update-only diagnostic traffic and does not affect
+  // the normal high-rate A7 control packet cadence.
+  const bool active = !(phase && strcmp(phase, "Complete") == 0);
+  String srvrMsg = String("FW_PROGRESS|device=CTRL|active=") + (active ? "1" : "0") +
+                   "|phase=" + String(phase ? phase : "Updating") +
+                   "|pct=" + String(constrain(pct, 0, 100));
+  udp.beginPacket(server_IP, UDP_PORT);
+  udp.print(srvrMsg);
+  udp.endPacket();
   Serial.printf("[FW AUTH] CTRL progress %s %d%%\n", phase ? phase : "Updating", pct);
 }
 
@@ -2014,7 +2025,7 @@ void loop()
     }
   }
 
-  // v26.10.04.02: do not resend UIL1 layout on a timer.
+  // v26.10.04.04: do not resend UIL1 layout on a timer.
   // Some Waveshare/LVGL builds visibly flicker when the layout header/config
   // is resent periodically. Layout is now sent only at boot, upload/reset,
   // and in response to a CTRL-TS PING/reconnect request.

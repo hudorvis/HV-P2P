@@ -1,4 +1,4 @@
-HV P2P v26.10.04.02 - READ THIS FIRST
+HV P2P v26.10.04.04 - READ THIS FIRST
 
 This is the 2026-10-03 whole-project communications audit successor to v26.10.03.04.
 

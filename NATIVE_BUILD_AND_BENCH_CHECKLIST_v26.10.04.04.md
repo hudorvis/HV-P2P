@@ -1,4 +1,4 @@
-# HV P2P v26.10.04.02 Native Build and Bench Checklist
+# HV P2P v26.10.04.04 Native Build and Bench Checklist
 
 ## Release gate order
 
@@ -11,7 +11,7 @@
    motion commissioning.
 
 
-## v26.10.04.02 communications/settings gates
+## v26.10.04.04 communications/settings gates
 
 - Change Drive Mode, Acceleration Mode and Battery Change Mode repeatedly from SRVR. Each selection should close without a 1–2 s UI stall and CTRL-TS should converge to the selected state promptly.
 - Repeat the same actions from CTRL-TS. Verify SRVR changes exactly once per confirmed press; no accepted command may be silently lost or executed twice.
@@ -183,12 +183,22 @@ Archive:
 - E-stop/watchdog/limit commissioning records;
 - Leadshine and loaded-motion acceptance results.
 
-## v26.10.04.02 focused bench regression
+## v26.10.04.04 focused bench regression
 
-1. Run a complete SRVR-driven matched firmware update with all three ESP32 nodes on the bench. While CTRL updates, the CTRL row on CTRL-TS must advance in phase/percentage rather than remaining stale.
-2. While W1P updates, the W1P row on CTRL-TS must advance from SRVR-relayed progress. CTRL-TS must remain in normal display mode while either CTRL or W1P update is active.
-3. CTRL-TS self-update must start only after CTRL and W1P are no longer active. The touchscreen should show `Preparing safe updater` for roughly 900 ms, then deliberately go black for its own headless flash. Verify SRVR continues to show the exact CTRL-TS percentage during this black phase and the normal UI returns after reboot.
-4. Assign Drive Mode to an AUX tile, select Practice Mode and verify the state line reads the complete `Practice Mode` text without wrapping/cropping and without changing the approved card dimensions.
-5. Set clearly distinguishable Near/Far ramp distances (for example 10 m and 20 m on a known span). Compare SRVR and CTRL-TS: both ramp regions must start at their respective hard-limit endpoint and terminate at the same normalized ramp boundary.
-6. Change Near/Far ramp settings while CTRL-TS is connected and verify the touchscreen wedge updates promptly from compact state without waiting for a long/bulk refresh.
-7. Regression-check the already resolved paths: Drive Mode, Battery Change and the final Joystick Calibration confirmation must not reboot CTRL-TS; closing SRVR must return CTRL-TS to the splash/waiting state immediately.
+1. Assign Battery Change Mode to a CTRL-TS AUX tile. Toggle it On from CTRL-TS while SRVR Settings is visible; the Settings dropdown must change to On without reopening the page. Toggle it Off and repeat for Acceleration Mode.
+2. Enable Battery Change while calibrated. Confirm commanded speed is capped at approximately 5 km/h, move past Near and verify `TO NEAR` becomes negative while `TO FAR` grows beyond the normal span. Return at least 2 cm inside the safe span and verify Battery Change automatically turns Off on SRVR and CTRL-TS. Repeat past Far and verify `TO FAR` becomes negative.
+3. During a matched CTRL firmware update, SRVR Setup `Firmware` must switch from the running version to the live phase/percentage and return to the new running version after reboot. Repeat for W1P.
+4. CTRL-TS Setup panel must contain only `CTRL-TS Link` and one `Firmware` readout (plus divider), with no separate Detected / Required / Update rows. During CTRL-TS update that field must show the existing update phase/percentage; during normal operation it must show the detected running version.
+5. Select W1P Position Source = Virtual with W1P completely disconnected. With CTRL healthy and the system otherwise safe, use the real joystick/CTRL-TS input and verify the simulated skate position moves and normal Near/Far/ramp behavior can be tested. Confirm no non-zero physical W1P `VEL` packet is sent.
+6. If a W1P is connected while Virtual is active, verify it remains STOPped with software Servo Enable inhibited. Change back to Encoder and verify physical motion remains inhibited until the existing joystick-neutral re-arm sequence completes.
+7. Regression-check the already resolved paths: Drive Mode, Battery Change and Joystick Calibration AUX actions must not reboot CTRL-TS; closing SRVR must return CTRL-TS to the splash/waiting state immediately.
+
+## v26.10.04.04 focused bench checks
+
+- Change Battery Change Mode from CTRL-TS while SRVR Settings is visible. Confirm the SRVR dropdown changes immediately in both directions, then confirms Off automatically after an outside-and-return Battery Change cycle.
+- With a known Near/Far span, set Near and Far ramps in Distance mode and record the displayed boundaries on SRVR Top/Side and CTRL-TS. Convert each setting to Percentage without changing the physical value; confirm none of the displayed boundaries move.
+- Example: on a 100.00 m span, 10.00 m and 10.00 % must produce the same 10% wedge; on an 80.00 m span, 10.00 % must produce an 8.00 m wedge.
+- At Near, Mid-span and Far, confirm SRVR and CTRL-TS position markers align to 0%, 50% and 100%. Confirm Reference/preset markers use the same coordinate.
+- In Battery Change, cross Near and confirm To Near becomes negative while To Far exceeds the normal span; repeat symmetrically at Far. Return inside and confirm Battery Change auto-cancels.
+- In Virtual mode with W1P disconnected, fly the simulated skate toward both limits and confirm ramp/predictive stopping is visible. Enable Battery Change and confirm the virtual skate can move outside the saved span without any physical W1P motion.
+- During CTRL/W1P/CTRL-TS updates, confirm each Settings Firmware row shows phase/percentage while active and returns to the running version afterward.
