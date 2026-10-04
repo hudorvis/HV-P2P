@@ -1,4 +1,4 @@
-# HV P2P v26.10.04.04 initial / recovery bootstrap
+# HV P2P v26.10.04.05 initial / recovery bootstrap
 
 ## Required recovery from v26.10.02.03 CTRL-TS
 
@@ -8,7 +8,7 @@ starvation race in the level-1 handoff.
 
 Recommended recovery order:
 
-1. Build v26.10.04.04 in GitHub Actions.
+1. Build v26.10.04.05 in GitHub Actions.
 2. Update CTRL to the GitHub-produced `.04` firmware/staged source.
 3. CTRL `.04` may report the `.03` touchscreen as **manual bootstrap required**;
    this is intentional and fail-safe.
@@ -25,9 +25,9 @@ CTRL-TS updater.
 
 ## Expected safe self-update sequence after .04 bootstrap
 
-- dashboard shows CTRL-TS preparing safe update;
+- dashboard shows `Preparing safe updater - SRVR shows self-flash progress` for about 1.8 s;
 - receiver acknowledges once and keeps the original 350 ms reboot deadline;
-- CTRL suppresses HMI rediscovery for 1.2 s;
+- CTRL suppresses HMI rediscovery for about 3.0 s;
 - display is blanked/reset and the touchscreen software-restarts;
 - headless boot does not initialize RGB/LVGL/PSRAM/touch/second CH422G path;
 - CTRL resumes HELLO after the hold, sees `safe_ota=2`, and starts the real block

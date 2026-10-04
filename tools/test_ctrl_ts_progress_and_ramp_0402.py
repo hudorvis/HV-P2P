@@ -3,8 +3,8 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-ctrl = next((ROOT / 'HV_P2P_CTRL_EDGEBOX_v26.10.04.04').glob('*.ino')).read_text()
-ts = next((ROOT / 'HV_P2P_CTRL_TS_v26.10.04.04').glob('*.ino')).read_text()
+ctrl = next((ROOT / 'HV_P2P_CTRL_EDGEBOX_v26.10.04.05').glob('*.ino')).read_text()
+ts = next((ROOT / 'HV_P2P_CTRL_TS_v26.10.04.05').glob('*.ino')).read_text()
 
 # CTRL firmware progress must bypass only the *compatibility* gate, not bus serialization.
 assert 'static bool hmiSendFirmwareStatusText' in ctrl
@@ -31,7 +31,7 @@ headless_pos = setup.find('if(safeHeadlessBoot)')
 lcd_pos = setup.find('lcd_init();')
 assert 0 <= headless_pos < lcd_pos, 'headless updater no longer exits before LCD/LVGL init'
 assert 'fw_headless_blackout()' in setup
-assert 'fw_set_device_status("CTRL-TS", "Preparing safe updater", 0, true);' in ts
+assert 'fw_set_device_status("CTRL-TS", "Preparing safe updater - SRVR shows self-flash progress", 0, true);' in ts
 m = re.search(r'g_fw_safe_reboot_due_ms\s*=\s*millis\(\)\s*\+\s*(\d+)', ts)
 assert m and int(m.group(1)) >= 800, 'pre-handoff dashboard is not held long enough to render intentionally'
 

@@ -16,7 +16,7 @@
 static bool g_ads_inited = false;
 static uint8_t ADS_ADDR = 0x48;
 
-#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.10.04.04"
+#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.10.04.05"
 #define CTRL_HMI_ARCH "EdgeBox ESP-100 + isolated RS485 Waveshare thin HMI"
 
 IPAddress local_IP(172,20,1,101);
@@ -235,7 +235,7 @@ static uint32_t lastHmiLayoutForward = 0;
 #define HMI_LAYOUT_MAX_LEN 2200
 static const char* HMI_LAYOUT_NVS_NS = "hmiui";
 static const char* HMI_LAYOUT_NVS_KEY = "layout";
-static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.10.04.04|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
+static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.10.04.05|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
 
 
 
@@ -260,10 +260,10 @@ static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_CTRL";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL_TS,W1P,W1P_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_CTRL_v*.ino.bin firmware. CTRL-TS and W1P files are rejected.";
 static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=CTRL;";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.04.04;";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.04.05;";
 static const char* HV_AUTH_ROLE = "CTRL";
 static const char* HV_AUTH_TARGET = "EDGEBOX_ESP100";
-static const char* HV_AUTH_VERSION = "v26.10.04.04";
+static const char* HV_AUTH_VERSION = "v26.10.04.05";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
@@ -522,7 +522,7 @@ static void hvLoadHmiLayoutConfig() {
     int nl = stored.indexOf('\n');
     if(nl >= 0) stored = stored.substring(0, nl);
     stored.trim();
-    // v26.10.04.04 migration: older CTRL NVS layouts were main4/aux1-aux4.
+    // v26.10.04.05 migration: older CTRL NVS layouts were main4/aux1-aux4.
     // Preserve the operator's stored labels/settings but expose the new AUX5 tile.
     if(stored.indexOf("|layout=main4") >= 0) stored.replace("|layout=main4", "|layout=main5");
     if(stored.indexOf("|aux5=") < 0) stored += "|aux5=AUX 5";
@@ -649,6 +649,8 @@ static uint32_t g_virtualAuxUntil[5] = {0,0,0,0,0};
 static String g_latestDisplayPacket;
 static String g_latestHmiStatePacket;
 static bool g_hmiStatePacketPending = false;
+static String g_latestHmiGeometryPacket;
+static bool g_hmiGeometryPacketPending = false;
 static uint32_t g_lastSrvrDisplayMs = 0;
 static uint32_t g_lastSrvrRxMs = 0;
 static bool g_srvrExplicitOffline = false;
@@ -994,7 +996,7 @@ static void sendHmiStatusToSrvr()
   uint32_t age = g_lastHmiRxMs ? (now - g_lastHmiRxMs) : 999999;
   String line = "HMI_STATUS";
   line += "|ctrl_ts=" + String(hmiLinkConnected() ? 1 : 0);
-  line += "|ctrl_version=v26.10.04.04";
+  line += "|ctrl_version=v26.10.04.05";
   line += "|fw_match=" + String(g_srvrFirmwareMatched ? 1 : 0);
   line += "|fw_authority=" + g_srvrFirmwareState;
   line += "|fw_required=" + (g_srvrRequiredVersion.length() ? g_srvrRequiredVersion : String("unknown"));
@@ -1093,10 +1095,13 @@ static String buildFallbackDisplayPacket(uint16_t flags_now)
   line += "|ctrl=1";
   line += "|srvr=" + String(srvrOnline ? 1 : 0);
   line += "|w1p=0";
-  line += "|aux1=Battery Change";
-  line += "|aux2=Drive Mode";
-  line += "|aux3=Accel Type";
-  line += "|aux4=Goto Ref";
+  // SRVR is the sole authority for AUX assignment semantics. Fallback packets
+  // use neutral names so a stale CTRL NVS layout can never masquerade as the
+  // current operator configuration while SRVR is absent/reconnecting.
+  line += "|aux1=AUX 1";
+  line += "|aux2=AUX 2";
+  line += "|aux3=AUX 3";
+  line += "|aux4=AUX 4";
   line += "|aux5=AUX 5";
   line += "|max_mps=0.00";
   line += "|max_kmh=0.00";
@@ -1140,19 +1145,42 @@ static String buildHmiStatePacketFromSrvr(const String &line)
     "ctrl", "srvr", "w1p", "w1p_state", "estop", "estop_src",
     "status", "status_level", "mode", "drive_mode", "accel_mode",
     "battery_change", "service", "flags", "cal_active", "cal_kind",
-    "cal_step", "cal_title", "cal_instruction", "aux1", "aux2", "aux3",
-    "aux4", "aux5", "max_mps", "max_kmh",
-    // Limit/ramp settings are operator-visible state too. Carry them in the
-    // compact packet so CTRL-TS ramp geometry converges immediately after a
-    // Settings edit rather than waiting for the next ~900-byte HMI1 frame.
-    "near", "ref", "far", "pos_frac", "ref_frac", "ref_vis",
-    "ramp_near", "ramp_far",
-    // Firmware progress is also compact/high-priority. This keeps the update
+    "cal_step", "cal_title", "cal_instruction",
+    "aux1", "aux2", "aux3", "aux4", "aux5", "max_mps", "max_kmh",
+    // Firmware progress is compact/high-priority. This keeps the update
     // dashboard responsive even while bulk telemetry is deliberately throttled.
     "fw_ctrl_active", "fw_ctrl_phase", "fw_ctrl_pct",
     "fw_w1p_active", "fw_w1p_phase", "fw_w1p_pct"
   };
   String out = "HMS1";
+  for(size_t i=0; i<(sizeof(keys)/sizeof(keys[0])); ++i){
+    String v = hvGetPipeField(line, keys[i]);
+    if(v.length()) out += String("|") + keys[i] + "=" + v;
+  }
+  // Live calibration position is useful at ~10 Hz while the wizard is open,
+  // but must not turn HMS1 into continuous telemetry during ordinary motion.
+  if(hvGetPipeField(line, "cal_active") == "1"){
+    static const char *calKeys[] = {"cal_pos", "cal_near", "cal_ref", "cal_far"};
+    for(size_t i=0; i<(sizeof(calKeys)/sizeof(calKeys[0])); ++i){
+      String v = hvGetPipeField(line, calKeys[i]);
+      if(v.length()) out += String("|") + calKeys[i] + "=" + v;
+    }
+  }
+  return out;
+}
+
+static String buildHmiGeometryPacketFromSrvr(const String &line)
+{
+  // Geometry changes are sparse but operator-visible. Keep them independent of
+  // both the high-rate HMS1 state delta and the ~900-byte bulk telemetry frame
+  // so Ref/ramp/preset markers converge immediately without consuming event
+  // bandwidth on every position update.
+  static const char *keys[] = {
+    "near", "ref", "far", "ref_frac", "ref_vis",
+    "ramp_near", "ramp_far", "ramp_near_frac", "ramp_far_frac",
+    "preset_names", "preset_pos", "preset_abs", "preset_vis"
+  };
+  String out = "HMG1";
   for(size_t i=0; i<(sizeof(keys)/sizeof(keys[0])); ++i){
     String v = hvGetPipeField(line, keys[i]);
     if(v.length()) out += String("|") + keys[i] + "=" + v;
@@ -1248,6 +1276,11 @@ static void handleUdpRx()
     if(nextState != g_latestHmiStatePacket){
       g_latestHmiStatePacket = nextState;
       g_hmiStatePacketPending = true;
+    }
+    String nextGeometry = buildHmiGeometryPacketFromSrvr(line);
+    if(nextGeometry != g_latestHmiGeometryPacket){
+      g_latestHmiGeometryPacket = nextGeometry;
+      g_hmiGeometryPacketPending = true;
     }
     // Store latest SRVR display packet only. The UART forward is rate-limited
     // in loop() so CTRL-TS is not flooded with repeated redraw pressure.
@@ -1490,7 +1523,7 @@ static bool hmiFwHandleFrame(const HVP2PRS485::Frame &frame){
     return true;
   }
   if(frame.type == HVP2PRS485::ERROR_MSG){
-    // v26.10.04.04 safe self-update handoff: the displayed CTRL-TS deliberately
+    // v26.10.04.05 safe self-update handoff: the displayed CTRL-TS deliberately
     // refuses to program flash, stages the exact target for a safe reboot, and asks CTRL to retry
     // after it has rebooted into its display-off updater. Treat this one response
     // as an expected transport transition, not as a failed firmware update.
@@ -1500,7 +1533,7 @@ static bool hmiFwHandleFrame(const HVP2PRS485::Frame &frame){
       // CTRL-TS schedules its software restart 350 ms after this response. Give
       // it a generous non-blocking 1.8 s quiet window. The main CTRL control loop
       // continues normally; only HMI discovery/firmware traffic is held.
-      g_hmiSafeRebootHoldUntilMs = millis() + 1800;
+      g_hmiSafeRebootHoldUntilMs = millis() + 3000;
       g_lastHmiHelloTxMs = millis();
       return true;
     }
@@ -1639,7 +1672,12 @@ static void handleHmiFrame(const HVP2PRS485::Frame &frame)
       lastDisplayForward = 0;
       g_hmiBusQuietUntilMs = 0;
       if(g_latestHmiStatePacket.length()) g_hmiStatePacketPending = true;
+      if(g_latestHmiGeometryPacket.length()) g_hmiGeometryPacketPending = true;
       sendHmiLayout();
+      // Layout is presentation-only. Re-assert live SRVR-owned state/geometry
+      // after it so old persisted UIL1 content can never win a reconnect race.
+      if(g_latestHmiStatePacket.length()) g_hmiStatePacketPending = true;
+      if(g_latestHmiGeometryPacket.length()) g_hmiGeometryPacketPending = true;
       sendNetworkConfigToHmi();
     } else if(match && !g_srvrFirmwareMatched) {
       g_hmiCompatible = false;
@@ -2017,15 +2055,21 @@ void loop()
   // Priority state/config delta: this is intentionally sent before the bulk HMI
   // telemetry packet so operator state changes cannot be hidden behind an
   // ~900-byte transfer. It uses the same single-flight bus gate as all TEXT.
-  bool hmiPriorityStateSent = false;
+  bool hmiPriorityPacketSent = false;
   if(g_hmiStatePacketPending && g_latestHmiStatePacket.length() && hmiNormalTxAllowed()) {
     if(hmiSendText(g_latestHmiStatePacket)) {
       g_hmiStatePacketPending = false;
-      hmiPriorityStateSent = true;
+      hmiPriorityPacketSent = true;
+    }
+  }
+  if(!hmiPriorityPacketSent && g_hmiGeometryPacketPending && g_latestHmiGeometryPacket.length() && hmiNormalTxAllowed()) {
+    if(hmiSendText(g_latestHmiGeometryPacket)) {
+      g_hmiGeometryPacketPending = false;
+      hmiPriorityPacketSent = true;
     }
   }
 
-  // v26.10.04.04: do not resend UIL1 layout on a timer.
+  // v26.10.04.05: do not resend UIL1 layout on a timer.
   // Some Waveshare/LVGL builds visibly flicker when the layout header/config
   // is resent periodically. Layout is now sent only at boot, upload/reset,
   // and in response to a CTRL-TS PING/reconnect request.
@@ -2043,7 +2087,7 @@ void loop()
     const bool changed = (nextDisplay != g_lastForwardedDisplayPacket);
     const bool keepalive_due = ((now - g_lastHmiDisplayKeepaliveMs) >= DISPLAY_KEEPALIVE_MS);
     const bool bulk_suppressed = g_hmiBulkSuppressUntilMs && ((int32_t)(now - g_hmiBulkSuppressUntilMs) < 0);
-    if(!hmiPriorityStateSent && !bulk_suppressed && (changed || keepalive_due) && hmiNormalTxAllowed()) {
+    if(!hmiPriorityPacketSent && !bulk_suppressed && (changed || keepalive_due) && hmiNormalTxAllowed()) {
       lastDisplayForward = now;
       if(forwardDisplayPacketToHmi(nextDisplay)) {
         g_hmiDisplayFramesTx++;

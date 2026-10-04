@@ -1,4 +1,4 @@
-# HV P2P v26.10.04.04 Native Build and Bench Checklist
+# HV P2P v26.10.04.05 Native Build and Bench Checklist
 
 ## Release gate order
 
@@ -11,7 +11,7 @@
    motion commissioning.
 
 
-## v26.10.04.04 communications/settings gates
+## v26.10.04.05 communications/settings gates
 
 - Change Drive Mode, Acceleration Mode and Battery Change Mode repeatedly from SRVR. Each selection should close without a 1–2 s UI stall and CTRL-TS should converge to the selected state promptly.
 - Repeat the same actions from CTRL-TS. Verify SRVR changes exactly once per confirmed press; no accepted command may be silently lost or executed twice.
@@ -83,8 +83,9 @@ headless updater.
 
 1. Start a controlled automatic CTRL-TS update from a matched `.04+` safe-OTA
    baseline.
-2. The touchscreen should remain on its normal UI until the deliberate safe
-   reboot; it should no longer briefly flash a local update-progress dashboard.
+2. The touchscreen should remain available for CTRL/W1P progress. Immediately before
+   its own deliberate safe reboot it should show `Preparing safe updater - SRVR shows
+   self-flash progress` for about 1.8 s.
 3. It must then deliberately go dark. There must be no green/blue/white/black
    cycling, duplicated rows or partial UI during flash programming.
 4. While the physical screen is dark, open SRVR Setup and verify the CTRL-TS
@@ -122,7 +123,7 @@ its percentage in SRVR and allow it to finish.
 
 - Confirm red status appears as plain text such as **E-Stop | W1P** or
   **E-Stop | CTRL & W1P** with no leading diamond/unknown character.
-- Confirm yellow `System Un-Calibrated` and green `System Ready` also contain no
+- Confirm yellow `System | Uncalibrated` and green `System Ready` also contain no
   decorative unknown glyph.
 
 ## Automatic SRVR release convergence
@@ -157,7 +158,7 @@ its percentage in SRVR and allow it to finish.
 - Verify CTRL physical E-stop, W1P E-stop/internal safety, CTRL-TS link fault and
   firmware-authority mismatch all fail safe with correct source reporting.
 - After every new SRVR/W1P power session, system must remain yellow
-  `System Un-Calibrated` until Limit Calibration or a known Slip/re-reference is
+  `System | Uncalibrated` until Limit Calibration or a known Slip/re-reference is
   deliberately completed.
 
 ## Predictive limits / Leadshine / loaded-motion commissioning
@@ -183,22 +184,17 @@ Archive:
 - E-stop/watchdog/limit commissioning records;
 - Leadshine and loaded-motion acceptance results.
 
-## v26.10.04.04 focused bench regression
+## v26.10.04.05 focused bench regression
 
-1. Assign Battery Change Mode to a CTRL-TS AUX tile. Toggle it On from CTRL-TS while SRVR Settings is visible; the Settings dropdown must change to On without reopening the page. Toggle it Off and repeat for Acceleration Mode.
-2. Enable Battery Change while calibrated. Confirm commanded speed is capped at approximately 5 km/h, move past Near and verify `TO NEAR` becomes negative while `TO FAR` grows beyond the normal span. Return at least 2 cm inside the safe span and verify Battery Change automatically turns Off on SRVR and CTRL-TS. Repeat past Far and verify `TO FAR` becomes negative.
-3. During a matched CTRL firmware update, SRVR Setup `Firmware` must switch from the running version to the live phase/percentage and return to the new running version after reboot. Repeat for W1P.
-4. CTRL-TS Setup panel must contain only `CTRL-TS Link` and one `Firmware` readout (plus divider), with no separate Detected / Required / Update rows. During CTRL-TS update that field must show the existing update phase/percentage; during normal operation it must show the detected running version.
-5. Select W1P Position Source = Virtual with W1P completely disconnected. With CTRL healthy and the system otherwise safe, use the real joystick/CTRL-TS input and verify the simulated skate position moves and normal Near/Far/ramp behavior can be tested. Confirm no non-zero physical W1P `VEL` packet is sent.
-6. If a W1P is connected while Virtual is active, verify it remains STOPped with software Servo Enable inhibited. Change back to Encoder and verify physical motion remains inhibited until the existing joystick-neutral re-arm sequence completes.
-7. Regression-check the already resolved paths: Drive Mode, Battery Change and Joystick Calibration AUX actions must not reboot CTRL-TS; closing SRVR must return CTRL-TS to the splash/waiting state immediately.
+1. **Automatic firmware convergence:** leave an older compatible CTRL running, then launch the matching newer SRVR without manually rebooting CTRL/CTRL-TS. A fresh CTRL `HMI_STATUS` must be enough to schedule the update. Verify no motion enable is granted by update activity.
+2. **CTRL-TS self-update handoff:** CTRL/W1P progress may remain visible on CTRL-TS. Immediately before CTRL-TS self-flash it must show `Preparing safe updater - SRVR shows self-flash progress` for about 1.8 s, then deliberately go black. During that black phase SRVR must show the increasing CTRL-TS percentage. Do not reject the release merely because the panel is black during its own safe flash.
+3. **Status wording:** with limits uncalibrated, SRVR must show exactly `System | Uncalibrated`.
+4. **Joystick centre readout:** complete Joystick Calibration and release the stick. Small raw/calibrated centre noise inside the configured neutral/deadband window must display as exactly `0.0%`; full travel and motion response must remain unchanged.
+5. **Limit Calibration readout:** the wizard on both SRVR and CTRL-TS must show live `CURRENT POSITION` plus captured `NEAR`, `REF` and `FAR`. Each captured value must persist as the wizard advances.
+6. **Virtual Limit Calibration:** with Position Source = Virtual and W1P disconnected, open Limit Calibration and use the joystick. `CURRENT POSITION` must visibly change while moving. Capture distinct Near/Far/Ref points, verify the displayed span matches the captures, and confirm no physical W1P motion command is possible.
+7. **CTRL-TS geometry sync:** after calibration/settings changes, CTRL-TS must show the same Near/Far ramp boundaries as SRVR, a visible REF marker when configured, and every visible preset marker at the same normalized position. Geometry changes must appear without waiting for unrelated bulk telemetry.
+8. **AUX assignment authority:** configure SRVR AUX3 = Joystick Calibration, AUX4 = Limit Calibration, AUX5 = Ref Point Slip. Reboot/reconnect CTRL and CTRL-TS. CTRL-TS must retain those live SRVR assignments and must not revert to legacy `Accel Type / Goto Ref / AUX 5` labels from persisted UIL1 layout.
+9. **RS485 margin:** while normal position telemetry is changing, monitor POLL timeout/CRC/resync counters. HMG1 must be change-driven; normal live position must remain bulk-rate rather than creating continuous priority traffic.
+10. Regression-check resolved behavior: confirmed AUX actions must not reboot CTRL-TS, and normal SRVR exit must return CTRL-TS immediately to the Waiting/Splash state.
 
-## v26.10.04.04 focused bench checks
-
-- Change Battery Change Mode from CTRL-TS while SRVR Settings is visible. Confirm the SRVR dropdown changes immediately in both directions, then confirms Off automatically after an outside-and-return Battery Change cycle.
-- With a known Near/Far span, set Near and Far ramps in Distance mode and record the displayed boundaries on SRVR Top/Side and CTRL-TS. Convert each setting to Percentage without changing the physical value; confirm none of the displayed boundaries move.
-- Example: on a 100.00 m span, 10.00 m and 10.00 % must produce the same 10% wedge; on an 80.00 m span, 10.00 % must produce an 8.00 m wedge.
-- At Near, Mid-span and Far, confirm SRVR and CTRL-TS position markers align to 0%, 50% and 100%. Confirm Reference/preset markers use the same coordinate.
-- In Battery Change, cross Near and confirm To Near becomes negative while To Far exceeds the normal span; repeat symmetrically at Far. Return inside and confirm Battery Change auto-cancels.
-- In Virtual mode with W1P disconnected, fly the simulated skate toward both limits and confirm ramp/predictive stopping is visible. Enable Battery Change and confirm the virtual skate can move outside the saved span without any physical W1P motion.
-- During CTRL/W1P/CTRL-TS updates, confirm each Settings Firmware row shows phase/percentage while active and returns to the running version afterward.
+- Confirm the normal green CTRL-TS status reads exactly `System | Active`, and the yellow uncalibrated status reads exactly `System | Uncalibrated`.

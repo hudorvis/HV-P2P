@@ -614,7 +614,20 @@ ApplicationWindow {
                     width:parent.width;height:f(190);spacing:f(24)
                     Item { width:parent.width*.42;height:parent.height;Canvas{anchors.fill:parent;onPaint:{var c=getContext("2d");c.reset();c.strokeStyle="#d8ddda";c.lineWidth=1;c.beginPath();c.moveTo(52,120);c.lineTo(65,48);c.lineTo(78,120);c.moveTo(45,120);c.lineTo(85,120);c.moveTo(52,90);c.lineTo(78,90);c.stroke();c.strokeRect(width-76,82,38,30);c.strokeRect(width-82,89,6,14);c.strokeRect(width-38,89,6,14);c.strokeStyle=green;c.setLineDash([5,4]);c.beginPath();c.moveTo(90,98);c.lineTo(width-90,98);c.stroke()}}Text{anchors.left:parent.left;anchors.bottom:parent.bottom;text:backend.calibrationStep===0?"NEAR\nLIMIT":backend.calibrationStep===1?"FAR\nLIMIT":"REF\nPOINT";color:fg;font.pixelSize:f(14);horizontalAlignment:Text.AlignHCenter}Text{anchors.right:parent.right;anchors.bottom:parent.bottom;text:"SKATE";color:fg;font.pixelSize:f(14)} }
                     Rectangle { width:1;height:parent.height;color:"#3a4144" }
-                    Column { width:parent.width*.53;height:parent.height;spacing:f(14);Text{text:backend.calibrationTitle;color:blue;font.pixelSize:f(22)}Text{width:parent.width;text:backend.calibrationStep===0?"Move the skate to the near limit position,\nthen press Save Near & Continue.":backend.calibrationStep===1?"Move the skate to the far limit position,\nthen press Save Far & Continue.":backend.calibrationStep===2?"Move the skate to the reference position,\nthen press Save Ref & Continue.":"Calibration points have been saved.";color:fg;font.pixelSize:f(15);lineHeight:1.45}Rectangle{width:parent.width;height:f(64);radius:f(5);color:"#1b2024";border.color:"#3f4649";Text{anchors.centerIn:parent;width:parent.width-f(24);text:"ⓘ   Ensure the skate is stable at the selected position before saving.";color:muted;font.pixelSize:f(13);wrapMode:Text.WordWrap}} }
+                    Column { width:parent.width*.53;height:parent.height;spacing:f(14);Text{text:backend.calibrationTitle;color:blue;font.pixelSize:f(22)}Text{width:parent.width;text:backend.calibrationStep===0?"Move the skate to the near limit position,\nthen press Save Near & Continue.":backend.calibrationStep===1?"Move the skate to the far limit position,\nthen press Save Far & Continue.":backend.calibrationStep===2?"Move the skate to the reference position,\nthen press Save Ref & Continue.":"Calibration points have been saved.";color:fg;font.pixelSize:f(15);lineHeight:1.45}Rectangle{
+                            width:parent.width;height:f(64);radius:f(5);color:"#1b2024";border.color:"#3f4649"
+                            Text{
+                                anchors.centerIn:parent;width:parent.width-f(20)
+                                text:backend.calibrationType==="Limit"
+                                     ? ("NEAR  " + String(backend.limitCalibrationCaptures.near) +
+                                        "     REF  " + String(backend.limitCalibrationCaptures.ref) +
+                                        "     FAR  " + String(backend.limitCalibrationCaptures.far) +
+                                        "\nCURRENT POSITION  " + String(backend.limitCalibrationCaptures.current))
+                                     : "ⓘ   Ensure the skate is stable at the selected position before saving."
+                                color:backend.calibrationType==="Limit"?fg:muted;font.pixelSize:f(12)
+                                horizontalAlignment:Text.AlignHCenter;wrapMode:Text.WordWrap
+                            }
+                        } }
                 }
                 Item {
                     width:parent.width;height:f(40)

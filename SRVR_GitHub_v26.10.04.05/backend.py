@@ -248,7 +248,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.04.04", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.04.05", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -257,7 +257,7 @@ class HVP2PBackend(QObject):
         self._legacy_fw_push_last_attempt = {"ctrl": 0.0, "w1p": 0.0}
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.04.04+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.04.05+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -510,6 +510,12 @@ class HVP2PBackend(QObject):
         self.calibration_type = "Limit"
         self.calibration_step = 0
         self.calibration_title = "Set Near Limit"
+        # Live/pending values shown by the Limit Calibration wizard. Near is
+        # canonicalised to 0.00 m when captured; Far establishes the span and
+        # Ref is captured inside that span. Keeping these separate from the
+        # applied calibration makes the in-progress wizard observable without
+        # pretending an unfinished calibration is already authoritative.
+        self._limit_cal_pending = {"near": None, "ref": None, "far": None}
 
         # Three-step joystick calibration wizard. Temporary captures are kept
         # separate until Right is accepted, so Cancel never alters calibration.
@@ -876,6 +882,15 @@ class HVP2PBackend(QObject):
         self._ads1115_status_last_seen = now
         self._ads1115_connected_reported = str(fields.get("ads", fields.get("ads1115", "0"))).strip() == "1"
 
+        # A legacy CTRL can be alive and reporting its old version before the
+        # normal UI timer has had a chance to service the compatibility bridge.
+        # Start the asynchronous push immediately from this proven status packet
+        # instead of depending on a device reboot to create a new update session.
+        if self._firmware_version_is_older(self._ctrl_fw_version):
+            self._try_start_legacy_firmware_push(
+                "ctrl", str(self.ctrl_ip or "").strip(), self._ctrl_fw_version, True
+            )
+
     def _joystick_min_cal_span(self) -> float:
         try:
             left = float(self.joystick_cal_left)
@@ -1003,6 +1018,19 @@ class HVP2PBackend(QObject):
         except Exception:
             left, centre, right = self.joystick_cal_left, self.joystick_cal_centre, self.joystick_cal_right
         return self._normalise_joystick_calibration(self._ctrl_axis, left, centre, right)
+
+    def _operator_joystick_axis(self, value: float) -> float:
+        """Return a stable operator readout without altering motion math.
+
+        The calibrated axis can legitimately wander a few tenths of a percent
+        around zero because the analogue stick and ADC are real devices. Motion
+        already applies the configured deadband. Mirror that neutral semantics in
+        operator readouts, with a small 0.5% floor, so a healthy centred stick
+        displays 0.0% instead of distracting +/-0.1..0.3% noise.
+        """
+        value = max(-1.0, min(1.0, float(value)))
+        neutral_pct = max(0.5, float(self.joystick_deadband_pct or 0.0))
+        return 0.0 if abs(value * 100.0) <= neutral_pct else value
 
     def _ctrl_connected(self):
         now = time.time()
@@ -2003,7 +2031,7 @@ class HVP2PBackend(QObject):
             status = "Winch Calibration" if self.calibration_type == "Winch" else "Limit Calibration"
             level, source, estop = "yellow", "", 0
         elif self._not_calibrated:
-            status, level, source, estop = "System Un-Calibrated", "yellow", "", 0
+            status, level, source, estop = "System | Uncalibrated", "yellow", "", 0
         else:
             status, level, source, estop = "Active", "green", "", 0
 
@@ -2031,6 +2059,14 @@ class HVP2PBackend(QObject):
                 )
         else:
             cal_kind, cal_step, cal_title, cal_instruction = "", 0, "", ""
+
+        # Limit-calibration telemetry is intentionally small and is also carried
+        # through CTRL's priority HMI state. It makes Virtual calibration visibly
+        # live on both UIs and keeps captured Near/Ref/Far points on screen.
+        cal_pos = float(self.state.pos_m or 0.0)
+        def _cal_value(name):
+            value = self._limit_cal_pending.get(name)
+            return "" if value is None else f"{float(value):.2f}"
 
         mode = self.drive_modes[self.active_drive_mode]
         max_mps = float(mode.get("max_speed_mps", self.max_speed_mps))
@@ -2068,6 +2104,8 @@ class HVP2PBackend(QObject):
             f"cal_active={1 if cal_active else 0}", f"cal_kind={self._display_field(cal_kind, 16)}",
             f"cal_step={cal_step}", f"cal_title={self._display_field(cal_title, 32)}",
             f"cal_instruction={self._display_field(cal_instruction, 64, replace_comma=False)}",
+            f"cal_pos={cal_pos:.2f}", f"cal_near={_cal_value('near')}",
+            f"cal_ref={_cal_value('ref')}", f"cal_far={_cal_value('far')}",
             f"aux1={labels[0]}", f"aux2={labels[1]}", f"aux3={labels[2]}", f"aux4={labels[3]}", f"aux5={labels[4]}",
             f"max_mps={max_mps:.2f}", f"max_kmh={max_mps*3.6:.2f}", f"mode={mode_name}",
             f"drive_mode={mode_name}", f"accel_mode={self._display_field(self.acceleration_mode)}",
@@ -2214,6 +2252,39 @@ class HVP2PBackend(QObject):
         finally:
             self._legacy_fw_push_active[role] = False
 
+    def _try_start_legacy_firmware_push(self, role: str, host: str, reported: str, connected: bool) -> bool:
+        """Start one background legacy OTA attempt as soon as old firmware is proven.
+
+        This is safe to call from receiver or UI threads. The worker itself owns
+        all HTTP/file I/O; the caller only atomically reserves the role and starts
+        the daemon thread. A short retry interval makes startup convergence robust
+        without blocking telemetry or motion processing.
+        """
+        role = "w1p" if str(role).lower().startswith("w1p") else "ctrl"
+        host = str(host or "").strip()
+        reported = str(reported or "").strip()
+        if self.smoke_test or self._firmware_bundle is None or not host or not connected:
+            return False
+        if not reported or not self._firmware_version_is_older(reported):
+            return False
+        now = time.monotonic()
+        with self._lock:
+            if self._legacy_fw_push_active.get(role):
+                return False
+            if now - float(self._legacy_fw_push_last_attempt.get(role, 0.0)) < 3.0:
+                return False
+            self._legacy_fw_push_last_attempt[role] = now
+            self._legacy_fw_push_active[role] = True
+        self._log(
+            f"[FW AUTO] {role.upper()} {reported} != {self._current_firmware_version()}; "
+            "starting legacy-compatible push"
+        )
+        threading.Thread(
+            target=self._legacy_firmware_push_worker, args=(role, host),
+            name=f"HVP2P-{role.upper()}-LegacyOTA", daemon=True,
+        ).start()
+        return True
+
     def _service_legacy_firmware_push(self) -> None:
         """Bridge old matched firmware directly to the current SRVR release.
 
@@ -2224,36 +2295,21 @@ class HVP2PBackend(QObject):
         """
         if self.smoke_test or self._firmware_bundle is None:
             return
-        now = time.monotonic()
         # A fresh HMI_STATUS proves CTRL is alive even if the high-rate control
-        # datagram stream has just rolled across its timeout boundary.  Treat either
-        # signal as sufficient presence for the legacy firmware bridge; version
-        # mismatch already holds motion fail-safe and the HTTP upload runs off-loop.
+        # datagram stream has just rolled across its timeout boundary. Treat either
+        # signal as sufficient presence for the legacy firmware bridge.
         ctrl_present = bool(self._ctrl_connected() or self._ctrl_authority_fresh())
         targets = (
             ("ctrl", str(self.ctrl_ip or "").strip(), str(self._ctrl_fw_version or "").strip(), ctrl_present),
             ("w1p", str(self.w1p_ip or "").strip(), str(self._w1p_fw_version or "").strip(), bool(self.w1p.connected)),
         )
         for role, host, reported, connected in targets:
-            if not host or not connected or not reported or not self._firmware_version_is_older(reported):
-                continue
-            if self._legacy_fw_push_active.get(role):
-                continue
-            if now - float(self._legacy_fw_push_last_attempt.get(role, 0.0)) < 12.0:
-                continue
-            # The version mismatch already makes _motion_tick fail safe. Reinforce
-            # the zero command before starting the asynchronous upload.
-            self._send_velocity(0.0, force=True)
-            self._legacy_fw_push_last_attempt[role] = now
-            self._legacy_fw_push_active[role] = True
-            self._log(
-                f"[FW AUTO] {role.upper()} {reported} != {self._current_firmware_version()}; "
-                "starting legacy-compatible push"
-            )
-            threading.Thread(
-                target=self._legacy_firmware_push_worker, args=(role, host),
-                name=f"HVP2P-{role.upper()}-LegacyOTA", daemon=True,
-            ).start()
+            if self._firmware_version_is_older(reported):
+                # The version mismatch already makes _motion_tick fail safe.
+                # Reinforce zero before the asynchronous upload when this call
+                # originates from the normal UI/safety service path.
+                self._send_velocity(0.0, force=True)
+            self._try_start_legacy_firmware_push(role, host, reported, connected)
 
     def _motion_tick(self):
         self._virtual_motion_step()
@@ -3210,7 +3266,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.04.04 moves the installed joystick polarity correction into CTRL,
+        # v26.10.04.05 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same
@@ -3722,19 +3778,20 @@ class HVP2PBackend(QObject):
     @Property(bool, notify=stateChanged)
     def rs485Connected(self): return bool(self.w1p.connected and self._w1p_status_fresh() and self._w1p_fw_match and self.winch_rs_status == "Connected")
     @Property(float, notify=stateChanged)
-    def joystickValue(self): return float(self._calibrated_joystick(self._ctrl_axis))
+    def joystickValue(self): return float(self._operator_joystick_axis(self._calibrated_joystick(self._ctrl_axis)))
     @Property(float, notify=stateChanged)
     def joystickPercentage(self):
         # Calibrated physical stick position: Left=-100%, Centre=0%, Right=+100%.
         # Direction inversion is a downstream motion-command setting and deliberately
-        # does not change this calibration readout.
-        return float(self._calibrated_joystick(self._ctrl_axis) * 100.0)
+        # does not change this calibration readout. Neutral display uses the same
+        # deadband semantics as operation; raw calibration data remains untouched.
+        return float(self._operator_joystick_axis(self._calibrated_joystick(self._ctrl_axis)) * 100.0)
     @Property(float, notify=stateChanged)
     def joystickRawValue(self): return float(self._ctrl_axis)
     @Property(float, notify=stateChanged)
-    def setupJoystickValue(self): return float(self._setup_preview_joystick())
+    def setupJoystickValue(self): return float(self._operator_joystick_axis(self._setup_preview_joystick()))
     @Property(float, notify=stateChanged)
-    def setupJoystickPercentage(self): return float(self._setup_preview_joystick() * 100.0)
+    def setupJoystickPercentage(self): return float(self._operator_joystick_axis(self._setup_preview_joystick()) * 100.0)
     @Property(float, notify=stateChanged)
     def joystickCentreTrimPercentage(self):
         span = self._joystick_min_cal_span()
@@ -3752,7 +3809,7 @@ class HVP2PBackend(QObject):
     @Property(str, notify=stateChanged)
     def bannerText(self):
         if not self.state.estop_active:
-            return "System Un-Calibrated" if self._not_calibrated else "System Ready"
+            return "System | Uncalibrated" if self._not_calibrated else "System Ready"
 
         # Operator-facing source names are intentionally limited to SRVR/CTRL/W1P.
         # The physical AI0 E-stop bit is no longer overloaded with CTRL-TS/firmware
@@ -4101,6 +4158,17 @@ class HVP2PBackend(QObject):
     def calibrationOpen(self): return self.calibration_open
     @Property(str, notify=calibrationChanged)
     def calibrationTitle(self): return self.calibration_title
+    @Property('QVariantMap', notify=stateChanged)
+    def limitCalibrationCaptures(self):
+        def shown(name):
+            value = self._limit_cal_pending.get(name)
+            return "—" if value is None else f"{float(value):.2f} m"
+        return {
+            "near": shown("near"),
+            "ref": shown("ref"),
+            "far": shown("far"),
+            "current": f"{float(self.state.pos_m or 0.0):.2f} m",
+        }
     @Property(bool, notify=joystickCalibrationChanged)
     def joystickCalibrationOpen(self): return bool(self.joystick_calibration_open)
     @Property(int, notify=joystickCalibrationChanged)
@@ -4325,6 +4393,9 @@ class HVP2PBackend(QObject):
         self.calibration_open = True
         self.calibration_step = 0
         self.calibration_title = "Set Near Limit"
+        self._limit_cal_pending = {"near": None, "ref": None, "far": None}
+        if self.position_source == "Virtual" and self.state.pos_m is None:
+            self.state.pos_m = 0.0
         self._cancel_goto()
         self._sync_service_mode_to_winch(force=True)
         self.calibrationChanged.emit(); self.stateChanged.emit()
@@ -4363,6 +4434,7 @@ class HVP2PBackend(QObject):
                 self.state.near_limit.position_m = 0.0
                 raw = getattr(self, "_last_raw_pos", None)
                 self._limit_raw["near"] = None if raw is None else int(raw)
+                self._limit_cal_pending["near"] = 0.0
                 self._sync_position(0.0)
                 self.calibration_step = 1
                 self.calibration_title = "Set Far Limit"
@@ -4386,6 +4458,7 @@ class HVP2PBackend(QObject):
                         self._service_w1p_setting_sync()
                 far = abs(signed_far)
                 self.state.far_limit.position_m = max(0.01, far)
+                self._limit_cal_pending["far"] = float(self.state.far_limit.position_m)
                 raw = getattr(self, "_last_raw_pos", None)
                 self._limit_raw["far"] = None if raw is None else int(raw)
                 self.state.total_length_m = self.state.far_limit.position_m
@@ -4401,6 +4474,7 @@ class HVP2PBackend(QObject):
             elif self.calibration_step == 2:
                 ref = abs(float(self.state.pos_m or 0.0))
                 self.state.ref_point.position_m = min(max(0.0, ref), float(self.state.far_limit.position_m or ref))
+                self._limit_cal_pending["ref"] = float(self.state.ref_point.position_m)
                 raw = getattr(self, "_last_raw_pos", None)
                 self._limit_raw["ref"] = None if raw is None else int(raw)
                 self._sync_position(self.state.ref_point.position_m)

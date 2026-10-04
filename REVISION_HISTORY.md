@@ -1,3 +1,16 @@
+# v26.10.04.05 — 2026-10-04
+
+- Fixed automatic release convergence for an already-running older CTRL: fresh CTRL `HMI_STATUS` can now schedule the background firmware push without requiring a manual CTRL/CTRL-TS reboot.
+- Preserved the safe headless CTRL-TS self-updater; added a ~1.8 s `Preparing safe updater - SRVR shows self-flash progress` handoff and ~3.0 s CTRL rediscovery hold. The physical panel intentionally remains black during its own actual flash while SRVR shows exact progress.
+- Standardised CTRL-TS system-state wording as `System | Active` / `System | Uncalibrated` and made operator joystick Value/Percentage display 0.0 inside the configured neutral/deadband window without changing raw calibration/motion math.
+- Added live Limit Calibration feedback on SRVR and CTRL-TS: Current Position plus captured Near / Ref / Far, including observable Virtual-mode movement/capture.
+- Removed AUX assignment authority from persisted CTRL `UIL1`; live SRVR AUX assignments are now authoritative across reconnect/reboot, eliminating stale `Accel Type / Goto Ref / AUX 5` labels.
+- Added change-driven `HMG1` geometry transport for Near/Far/Ref, ramp fractions and preset geometry/visibility, prioritised ahead of bulk HMI telemetry while retaining the single-flight RS485 arbiter.
+- Kept normal live position in the 4 Hz bulk packet; faster position/capture fields are included in priority state only while calibration is active.
+- Added `test_bench_regression_0405.py` and extended runtime/static contracts for updater startup, safe handoff, status wording, joystick neutral display, Limit/Virtual calibration, AUX ownership and geometry transport.
+- Preserved W1P 500 ms VEL watchdog, SRVR ~150 ms non-zero VEL refresh, E-stop/limit/Leadshine architecture and the resolved CTRL-TS AUX reboot/offline-splash behavior.
+- macOS bundle metadata: short version `26.10.4`, build `2610.4.5`.
+
 # v26.10.04.04 — 2026-10-04
 
 - Completed the missing Run-mode Near/Far/ramp audit across SRVR and CTRL-TS. SRVR is now the single authority for effective ramp distance and normalized ramp fraction, so Distance/Percentage representations map to the same physical boundary on every display.

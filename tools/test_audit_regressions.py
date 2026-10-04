@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER="26.10.04.04"
+VER="26.10.04.05"
 W=(ROOT/f"HV_P2P_W1P_EDGEBOX_v{VER}/HV_P2P_W1P_EDGEBOX_v{VER}.ino").read_text()
 C=(ROOT/f"HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino").read_text()
 T=(ROOT/f"HV_P2P_CTRL_TS_v{VER}/HV_P2P_CTRL_TS_v{VER}.ino").read_text()
@@ -23,7 +23,7 @@ edgebox_fqbn = N[N.index('EDGEBOX_FQBN'):N.index('HMI_FQBN')]
 assert 'PartitionScheme=app3M_fat9M_16MB' in edgebox_fqbn
 assert 'PartitionScheme=custom' not in edgebox_fqbn
 
-# v26.10.04.04 operator input / safety refinements.
+# v26.10.04.05 operator input / safety refinements.
 assert 'self.reverse_joystick = False' in B
 assert 'VEL_KEEPALIVE_S = 0.15' in B
 assert 'def joystickPercentage' in B
@@ -36,9 +36,9 @@ assert 'sgmSelectChannelVerified(SGM_CONFIG_AI0_CONT_800SPS_6V144, "AI0 E-stop")
 assert 'sgmEnsureChannelVerified(SGM_CONFIG_AI1_CONT_800SPS_6V144, "AI1 joystick")' in C
 assert 'Always restore and verify AI1' in C
 assert 'CTRL_ESTOP_HEALTHY_MIN_V = 3.5f' in C and 'CTRL_ESTOP_HEALTHY_CONFIRM_SAMPLES = 3' in C
-# v26.10.04.04 direction-regression guard: CTRL normalises physical Left/Right
+# v26.10.04.05 direction-regression guard: CTRL normalises physical Left/Right
 # before SRVR, so the default backend direction is Normal and sign is preserved.
-BT=(ROOT/'SRVR_GitHub_v26.10.04.04/tools/test_backend_logic.py').read_text()
+BT=(ROOT/'SRVR_GitHub_v26.10.04.05/tools/test_backend_logic.py').read_text()
 assert 'assert b.reverse_joystick is False' in BT
 assert 'physical Left=-1' in B
 assert 'b.requested_speed_mps < 0.0' in BT
@@ -49,11 +49,11 @@ assert 'FLAG_CTRL_HMI_FAULT' in C and 'FLAG_CTRL_FW_FAULT' in C
 assert 'if(estop_active) flags_out |= FLAG_ESTOP_PRESSED;' in C
 assert 'if(hmi_safety) flags_out |= FLAG_CTRL_HMI_FAULT;' in C
 assert 'position_reference_persistent' in B and 'self._not_calibrated = True' in B
-assert 'def systemStatusLevel' in B and 'System Un-Calibrated' in B
+assert 'def systemStatusLevel' in B and 'System | Uncalibrated' in B
 assert 'g_boot_session_id' in W and 'BOOT_ID=' in W
 assert 'fw_ensure_update_screen' in T and 'fw_display_owned' in T
 assert 'if(fw_display_owned())' in T and 'CTRL-TS self-flash' in T
-# v26.10.04.04 safe CTRL-TS self-update architecture.  The .02.01/.02.02
+# v26.10.04.05 safe CTRL-TS self-update architecture.  The .02.01/.02.02
 # experiment that changed RGB PCLK/bounce buffers and restarted RGB DMA while
 # flash was being written is intentionally prohibited.  A displayed FW_BEGIN
 # stages the exact target in retained internal RAM then reboots into a
@@ -80,7 +80,7 @@ begin=T[T.index('static void fw_handle_begin'):T.index('static void fw_handle_bl
 assert begin.index('if(!g_fw_headless_mode)') < begin.index('Update.begin(imageSize, U_FLASH)')
 normal_branch=begin[begin.index('if(!g_fw_headless_mode)'):begin.index('Update.begin(imageSize, U_FLASH)')]
 assert 'fw_stage_safe_update_handoff(version, sha)' in normal_branch
-assert 'g_fw_safe_reboot_due_ms = millis() + 900' in normal_branch
+assert 'g_fw_safe_reboot_due_ms = millis() + 1800' in normal_branch
 for forbidden in ('g_fw_prefs', 'Preferences', 'Update.begin', 'Update.write'):
     assert forbidden not in normal_branch
 assert 'return;' in normal_branch
@@ -90,7 +90,7 @@ assert 'return;' in normal_branch
 assert 'if(g_fw_safe_reboot_due_ms)' in begin
 dup=begin[begin.index('if(g_fw_safe_reboot_due_ms)'):begin.index('if(g_fw_finalized)')]
 assert 'g_fw_safe_reboot_due_ms =' not in dup and 'fw_stage_safe_update_handoff' not in dup
-assert 'g_hmiSafeRebootHoldUntilMs = millis() + 1800;' in C
+assert 'g_hmiSafeRebootHoldUntilMs = millis() + 3000;' in C
 assert 'safeRebootHold' in C
 blackout=T[T.index('static bool fw_headless_blackout'):T.index('static void fw_service_headless_idle_return')]
 assert 'new ESP_IOExpander_CH422G' not in blackout and 'expander->init()' not in blackout and 'expander->begin()' not in blackout
@@ -107,7 +107,7 @@ assert 'lcd_init()' not in headless_branch and 'psramFound()' not in headless_br
 reboot_start=T.index('static void fw_handle_reboot')
 assert 'fw_clear_headless_update_state();' in T[reboot_start:T.index('static void fw_service_reboot', reboot_start)]
 
-# v26.10.04.04 field-feedback regressions: a newer SRVR must be noticed without
+# v26.10.04.05 field-feedback regressions: a newer SRVR must be noticed without
 # power-cycling field nodes *and without periodic HTTP in the healthy real-time
 # loops*. SRVR's normal UDP beacons invalidate an old match; only the already
 # fail-closed unmatched/update path may perform HTTP/SHA/OTA work.
@@ -168,9 +168,9 @@ assert 'lv_obj_move_foreground(g_cal_overlay)' not in T
 assert 'if(!g_calibration_overlay_active)' in T and 'calibration overlay shown' in T
 assert 'g_last_cal_overlay_kind' in T and 'g_last_cal_overlay_step' in T
 assert 'kind != g_last_cal_overlay_kind || step != g_last_cal_overlay_step' in T
-assert 'const bool calibration_active_now = apply_calibration_overlay_fields(line);' in T
+assert 'const bool calibration_active_now = geometry_only ? g_calibration_overlay_active : apply_calibration_overlay_fields(line);' in T
 assert 'if(!calibration_active_now){' in T
-assert 'if(!state_only && !calibration_active_now) update_progress_marker();' in T
+assert 'if(bulk_packet && !calibration_active_now) update_progress_marker();' in T
 assert 'lv_obj_invalidate(lbl);' not in T[T.index('static void set_label_text_if_changed'):T.index('static String display_aux_label')]
 assert '#include <esp_system.h>' in T and 'esp_reset_reason()' in T
 
@@ -181,7 +181,7 @@ M=(ROOT/f'SRVR_GitHub_v{VER}/main.py').read_text()
 assert 'firmware_bundle=authority.bundle' in M
 assert 'def _legacy_firmware_push_worker' in B and 'HTTPConnection' in B and '"/update/app"' in B
 assert 'multipart/form-data' in B and 'daemon=True' in B and 'def _service_legacy_firmware_push' in B
-assert 'def _firmware_version_is_older' in B and 'not self._firmware_version_is_older(reported)' in B
+assert 'def _firmware_version_is_older' in B and 'def _try_start_legacy_firmware_push' in B
 assert 'self._motion_tick(); self._service_w1p_setting_sync(); self._service_legacy_firmware_push();' in B
 assert 'ctrl_present = bool(self._ctrl_connected() or self._ctrl_authority_fresh())' in B
 
@@ -196,10 +196,10 @@ assert 'def _commit_setup_draft' in B and 'def _commit_freed_draft' in B
 joy=B[B.index('def _joystick_calibration_next'):B.index('@Slot(str,bool)', B.index('def _joystick_calibration_next'))]
 assert 'self._commit_setup_draft(notify=False)' in joy
 assert 'Joystick calibration saved' in joy
-assert 'def joystickPercentage' in B and 'self._calibrated_joystick(self._ctrl_axis) * 100.0' in B
+assert 'def joystickPercentage' in B and '_operator_joystick_axis(self._calibrated_joystick(self._ctrl_axis)) * 100.0' in B
 assert 'freed_snap = self._freed_snapshot()' in B
 
-# v26.10.04.04 bench-hardening regressions: ordinary AUX confirmation must never
+# v26.10.04.05 bench-hardening regressions: ordinary AUX confirmation must never
 # execute UI/protocol/String work in the LVGL callback or reboot CTRL-TS. Reset
 # identity is relayed through CTRL so a future hardware reset is diagnosable.
 aux_cb=T[T.index('static void aux_event_cb'):T.index('static void service_aux_touch_events', T.index('static void aux_event_cb'))]

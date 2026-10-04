@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-B=(ROOT/'SRVR_GitHub_v26.10.04.04/backend.py').read_text()
-C=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.04.04/HV_P2P_CTRL_EDGEBOX_v26.10.04.04.ino').read_text()
-T=(ROOT/'HV_P2P_CTRL_TS_v26.10.04.04/HV_P2P_CTRL_TS_v26.10.04.04.ino').read_text()
+B=(ROOT/'SRVR_GitHub_v26.10.04.05/backend.py').read_text()
+C=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.04.05/HV_P2P_CTRL_EDGEBOX_v26.10.04.05.ino').read_text()
+T=(ROOT/'HV_P2P_CTRL_TS_v26.10.04.05/HV_P2P_CTRL_TS_v26.10.04.05.ino').read_text()
 
 # Cumulative HMI fault counters must retain their baseline; .03.02 accidentally
 # zeroed them after every packet and generated a 4 Hz log/UI storm forever.
@@ -58,8 +58,8 @@ assert 'boot_set_status("Waiting for SRVR")' in T
 # immediate next POLL, and priority HMS1 must not be followed by a 900-byte HMI1
 # in the same loop iteration.
 assert 'g_lastHmiPollTxMs = millis();' in C
-assert 'bool hmiPriorityStateSent = false;' in C
-assert 'if(!hmiPriorityStateSent && !bulk_suppressed && (changed || keepalive_due) && hmiNormalTxAllowed())' in C
+assert 'bool hmiPriorityPacketSent = false;' in C
+assert 'if(!hmiPriorityPacketSent && !bulk_suppressed && (changed || keepalive_due) && hmiNormalTxAllowed())' in C
 
 # Touch-originated AUX latches use the same 300 ms compatibility window as UDP
 # AUX commands; the persistent SRVR listener queue is the authoritative edge hold.
