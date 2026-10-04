@@ -1,3 +1,10 @@
+# v26.10.04.07 — 2026-10-04
+
+- Corrected the macOS/PySide6 backend regression to match the intentional three-step Limit Calibration contract: Near, Far, then Ref & Done. The previous test still expected an obsolete fourth Done step and caused GitHub Actions to fail after a correct Ref capture.
+- Hardened `calibrationNext()` so delayed/duplicate Confirm events are ignored after a calibration wizard has already closed, preventing a late CTRL-TS/SRVR event from re-entering the terminal Ref capture branch.
+- No motion, RS485 scheduling, W1P watchdog, Leadshine, UI-layout, or calibration-geometry behaviour changed beyond the post-close confirmation guard.
+- macOS bundle metadata: short version `26.10.4`, build `2610.4.7`.
+
 # v26.10.04.06 — 2026-10-04
 
 - Fixed CTRL-TS post-update state convergence: live HMI, AUX assignments, geometry, REF and presets are cached while firmware UI owns the panel and replayed immediately when normal UI returns.

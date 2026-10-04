@@ -1,4 +1,4 @@
-# HV P2P v26.10.04.06 Native Build and Bench Checklist
+# HV P2P v26.10.04.07 Native Build and Bench Checklist
 
 ## Release gate order
 
@@ -11,7 +11,7 @@
    motion commissioning.
 
 
-## v26.10.04.06 communications/settings gates
+## v26.10.04.07 communications/settings gates
 
 - Change Drive Mode, Acceleration Mode and Battery Change Mode repeatedly from SRVR. Each selection should close without a 1–2 s UI stall and CTRL-TS should converge to the selected state promptly.
 - Repeat the same actions from CTRL-TS. Verify SRVR changes exactly once per confirmed press; no accepted command may be silently lost or executed twice.
@@ -184,7 +184,7 @@ Archive:
 - E-stop/watchdog/limit commissioning records;
 - Leadshine and loaded-motion acceptance results.
 
-## v26.10.04.06 focused bench regression
+## v26.10.04.07 focused bench regression
 
 1. **Automatic firmware convergence:** leave an older compatible CTRL running, then launch the matching newer SRVR without manually rebooting CTRL/CTRL-TS. A fresh CTRL `HMI_STATUS` must be enough to schedule the update. Verify no motion enable is granted by update activity.
 2. **CTRL-TS self-update handoff:** CTRL/W1P progress may remain visible on CTRL-TS. Immediately before CTRL-TS self-flash it must show `Preparing safe updater - SRVR shows self-flash progress` for about 1.8 s, then deliberately go black. During that black phase SRVR must show the increasing CTRL-TS percentage. Do not reject the release merely because the panel is black during its own safe flash.
@@ -199,7 +199,7 @@ Archive:
 
 - Confirm the normal green CTRL-TS status reads exactly `System | Active`, and the yellow uncalibrated status reads exactly `System | Uncalibrated`.
 
-## v26.10.04.06 focused bench checks
+## v26.10.04.07 focused bench checks
 
 - Start a newer SRVR while v26.10.04.05 CTRL/CTRL-TS are already running. Confirm firmware convergence begins without manually rebooting CTRL or CTRL-TS.
 - During CTRL/W1P updates, confirm CTRL-TS shows the firmware dashboard. During CTRL-TS self-flash, confirm SRVR continues reporting the exact percentage while the panel is intentionally black.

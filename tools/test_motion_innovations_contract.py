@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""v26.10.04.06 contracts for joystick drift, preset naming and predictive stops."""
+"""v26.10.04.07 contracts for joystick drift, preset naming and predictive stops."""
 from __future__ import annotations
 from pathlib import Path
 import math
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-SR = ROOT / 'SRVR_GitHub_v26.10.04.06'
+SR = ROOT / 'SRVR_GitHub_v26.10.04.07'
 BACKEND = (SR / 'backend.py').read_text(encoding='utf-8')
 MAIN = (SR / 'qml' / 'Main.qml').read_text(encoding='utf-8')
 SETUP = (SR / 'qml' / 'pages' / 'SetupPage.qml').read_text(encoding='utf-8')
 SPAN = (SR / 'qml' / 'components' / 'SpanDiagram.qml').read_text(encoding='utf-8')
-W1P = (ROOT / 'HV_P2P_W1P_EDGEBOX_v26.10.04.06' / 'HV_P2P_W1P_EDGEBOX_v26.10.04.06.ino').read_text(encoding='utf-8')
+W1P = (ROOT / 'HV_P2P_W1P_EDGEBOX_v26.10.04.07' / 'HV_P2P_W1P_EDGEBOX_v26.10.04.07.ino').read_text(encoding='utf-8')
 
 
 def py_const(name: str) -> float:
