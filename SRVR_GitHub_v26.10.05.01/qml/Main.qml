@@ -630,7 +630,7 @@ ApplicationWindow {
                 Rectangle { width:parent.width;height:1;color:"#3b4245" }
 
                 Column {
-                    width:parent.width; height:f(225); spacing:f(10)
+                    width:parent.width; height:f(225); spacing:f(8)
                     Text { width:parent.width;text:backend.calibrationTitle;color:blue;font.pixelSize:f(22);font.weight:Font.Medium;horizontalAlignment:Text.AlignHCenter }
                     Text {
                         width:parent.width
@@ -638,9 +638,10 @@ ApplicationWindow {
                         color:fg;font.pixelSize:f(14);horizontalAlignment:Text.AlignHCenter;wrapMode:Text.WordWrap
                     }
                     Item {
-                        width:parent.width; height:f(105)
+                        width:parent.width; height:f(84)
                         SpanDiagram {
                             anchors.fill:parent
+                            compactMode:true
                             title:"Cable Position"; subtitle:"Side View"; sideView:true
                             cableProfile:backend.cableProfile
                             currentPosition:backend.position-backend.nearLimit

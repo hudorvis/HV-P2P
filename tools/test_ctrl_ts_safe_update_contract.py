@@ -9,7 +9,7 @@ Native compilation and real-hardware timing remain GitHub/bench gates.
 """
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
-VER = "26.10.04.07"
+VER = "26.10.05.01"
 T = (ROOT/f"HV_P2P_CTRL_TS_v{VER}"/f"HV_P2P_CTRL_TS_v{VER}.ino").read_text()
 C = (ROOT/f"HV_P2P_CTRL_EDGEBOX_v{VER}"/f"HV_P2P_CTRL_EDGEBOX_v{VER}.ino").read_text()
 P = (ROOT/'tools'/'prepare_waveshare_library.py').read_text()
@@ -80,7 +80,7 @@ for token in ('g_hmiSafeRebootHoldUntilMs', 'millis() + 3000',
 safe_reply = C[C.index('text == "fw_safe_reboot_retry"'):C.index('Serial.printf("[HMI FW] CTRL-TS updater error')]
 assert 'g_hmiSafeRebootHoldUntilMs = millis() + 3000;' in safe_reply
 hello_service = C[C.index('static void handleHmiRx'):C.index('static bool initEthernetStatic')]
-assert 'if(!safeRebootHold && (now - g_lastHmiHelloTxMs) >= 500)' in hello_service
+assert 'if(!g_ctrlAuthorityUpdatePending && !safeRebootHold && (now - g_lastHmiHelloTxMs) >= 500)' in hello_service
 
 # Handoff acceptance is constrained to the deliberate software restart and its
 # RAM payload is magic/checksum/format validated before headless entry.

@@ -36,6 +36,7 @@ Item {
     property color accent: "#72ed21"
     property color headingColor: "#26d5ff"
     property color subheadingColor: headingColor
+    property bool compactMode: false
 
     // Repaint from the component's own bound properties instead of reaching
     // out to the Python context property from inside this reusable component.
@@ -61,6 +62,7 @@ Item {
     onSideViewChanged: canvas.requestPaint()
 
     Text {
+        visible: !root.compactMode
         x: 26; y: 14
         text: root.title
         color: root.headingColor
@@ -69,6 +71,7 @@ Item {
         font.weight: Font.Medium
     }
     Text {
+        visible: !root.compactMode
         x: 137; y: 18
         text: root.subtitle
         color: root.subheadingColor
@@ -82,10 +85,10 @@ Item {
         anchors.right: parent.right
         anchors.top: parent.top
         anchors.bottom: parent.bottom
-        anchors.leftMargin: 22
-        anchors.rightMargin: 22
-        anchors.topMargin: 48
-        anchors.bottomMargin: 12
+        anchors.leftMargin: root.compactMode ? 6 : 22
+        anchors.rightMargin: root.compactMode ? 6 : 22
+        anchors.topMargin: root.compactMode ? 2 : 48
+        anchors.bottomMargin: root.compactMode ? 2 : 12
 
         onWidthChanged: requestPaint()
         onHeightChanged: requestPaint()
@@ -203,16 +206,19 @@ Item {
         function yFor(value, vr, top, bottom) {
             return bottom - (Number(value)-vr.lo)/Math.max(0.000001,vr.hi-vr.lo)*(bottom-top)
         }
-        function tower(c, x, baseY) {
+        function tower(c, x, baseY, topY) {
             c.strokeStyle="#d7dad8"; c.lineWidth=1.1; c.setLineDash([])
+            var h=Math.max(18,Math.min(55,baseY-topY-2))
+            var half=Math.max(7,Math.min(14,h*0.25))
+            function yy(frac){ return baseY-h*frac }
             c.beginPath()
-            c.moveTo(x-14,baseY); c.lineTo(x,baseY-55); c.lineTo(x+14,baseY)
-            c.moveTo(x-20,baseY); c.lineTo(x+20,baseY)
-            c.moveTo(x-10,baseY-14); c.lineTo(x+10,baseY-14)
-            c.moveTo(x-7,baseY-29); c.lineTo(x+7,baseY-29)
-            c.moveTo(x-3,baseY-44); c.lineTo(x+3,baseY-44)
-            c.moveTo(x-11,baseY-14); c.lineTo(x+5,baseY-29)
-            c.moveTo(x+11,baseY-14); c.lineTo(x-5,baseY-29)
+            c.moveTo(x-half,baseY); c.lineTo(x,baseY-h); c.lineTo(x+half,baseY)
+            c.moveTo(x-half-6,baseY); c.lineTo(x+half+6,baseY)
+            c.moveTo(x-half*0.72,yy(0.25)); c.lineTo(x+half*0.72,yy(0.25))
+            c.moveTo(x-half*0.50,yy(0.53)); c.lineTo(x+half*0.50,yy(0.53))
+            c.moveTo(x-half*0.25,yy(0.80)); c.lineTo(x+half*0.25,yy(0.80))
+            c.moveTo(x-half*0.78,yy(0.25)); c.lineTo(x+half*0.36,yy(0.53))
+            c.moveTo(x+half*0.78,yy(0.25)); c.lineTo(x-half*0.36,yy(0.53))
             c.stroke()
         }
         function rampWedge(c, endpointX, boundaryX, endpointY, leftSide, bottom) {
@@ -233,13 +239,15 @@ Item {
             var c=getContext("2d")
             c.reset(); c.clearRect(0,0,width,height)
 
-            var left=76, right=width-76
-            var graphTop=30, graphBottom=height-16
+            var edge=root.compactMode ? 42 : 76
+            var left=edge, right=width-edge
+            var graphTop=root.compactMode ? 16 : 30
+            var graphBottom=height-(root.compactMode ? 4 : 16)
             var key=root.sideView ? "y" : "z"
             var vr=verticalRange(key)
             var lo=domainMin(), hi=domainMax(), span=Math.max(0.001,hi-lo)
 
-            function yy(xv) { return yFor(profileValue(xv,key),vr,graphTop+20,graphBottom-18) }
+            function yy(xv) { return yFor(profileValue(xv,key),vr,graphTop+(root.compactMode?4:20),graphBottom-(root.compactMode?4:18)) }
             var nearY=yy(lo), farY=yy(hi)
 
             // Unlabelled ramping zones: same geometry on Run and Free-D.
@@ -252,11 +260,17 @@ Item {
 
             // Limits and towers.
             c.strokeStyle="#9aa1a0"; c.lineWidth=1; c.setLineDash([5,5])
-            c.beginPath(); c.moveTo(left,18); c.lineTo(left,graphBottom); c.moveTo(right,18); c.lineTo(right,graphBottom); c.stroke(); c.setLineDash([])
-            c.fillStyle="#e7e9e8"; c.font="12px Helvetica Neue"; c.textAlign="center"
-            c.fillText("NEAR LIMIT",left,14); c.fillText("FAR LIMIT",right,14)
-            c.font="11px Helvetica Neue"; c.fillText("NEAR",20,46); c.fillText("FAR",width-20,46)
-            tower(c,20,graphBottom); tower(c,width-20,graphBottom)
+            var limitTop=root.compactMode ? graphTop : 18
+            c.beginPath(); c.moveTo(left,limitTop); c.lineTo(left,graphBottom); c.moveTo(right,limitTop); c.lineTo(right,graphBottom); c.stroke(); c.setLineDash([])
+            c.fillStyle="#e7e9e8"; c.textAlign="center"
+            if(!root.compactMode){
+                c.font="12px Helvetica Neue"
+                c.fillText("NEAR LIMIT",left,14); c.fillText("FAR LIMIT",right,14)
+                c.font="11px Helvetica Neue"; c.fillText("NEAR",20,46); c.fillText("FAR",width-20,46)
+            } else {
+                c.font="10px Helvetica Neue"; c.fillText("NEAR",20,11); c.fillText("FAR",width-20,11)
+            }
+            tower(c,20,graphBottom,graphTop); tower(c,width-20,graphBottom,graphTop)
 
             // Canonical calculated cable line. No camera guide lines.
             c.strokeStyle="#c4c8c6"; c.lineWidth=1.25; c.setLineDash([])
@@ -265,7 +279,7 @@ Item {
                 for(var i=0;i<root.cableProfile.length;i++) {
                     var cp=root.cableProfile[i]
                     var cx=xFor(Number(cp.x),left,right)
-                    var cy=yFor(Number(cp[key]),vr,graphTop+20,graphBottom-18)
+                    var cy=yFor(Number(cp[key]),vr,graphTop+(root.compactMode?4:20),graphBottom-(root.compactMode?4:18))
                     if(i===0)c.moveTo(cx,cy);else c.lineTo(cx,cy)
                 }
             } else {
@@ -285,7 +299,7 @@ Item {
                     // Raw P1..P5 Y/Z values remain engineering inputs for the solver/table,
                     // but the visual marker cannot drift above/below the displayed cable.
                     var gv=profileValue(Number(gp.x), key)
-                    var gy=yFor(gv,vr,graphTop+20,graphBottom-18)
+                    var gy=yFor(gv,vr,graphTop+(root.compactMode?4:20),graphBottom-(root.compactMode?4:18))
                     c.fillStyle="#f1f3f2"; c.strokeStyle="#f1f3f2"
                     c.beginPath(); c.arc(gx,gy,4,0,Math.PI*2); c.fill()
                     c.font="11px Helvetica Neue"; c.textAlign="center"

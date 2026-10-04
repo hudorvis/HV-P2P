@@ -3,8 +3,8 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-ctrl = next((ROOT / 'HV_P2P_CTRL_EDGEBOX_v26.10.04.07').glob('*.ino')).read_text()
-ts = next((ROOT / 'HV_P2P_CTRL_TS_v26.10.04.07').glob('*.ino')).read_text()
+ctrl = next((ROOT / 'HV_P2P_CTRL_EDGEBOX_v26.10.05.01').glob('*.ino')).read_text()
+ts = next((ROOT / 'HV_P2P_CTRL_TS_v26.10.05.01').glob('*.ino')).read_text()
 
 # CTRL firmware progress must bypass only the *compatibility* gate, not bus serialization.
 assert 'static bool hmiSendFirmwareStatusText' in ctrl
@@ -16,14 +16,18 @@ assert '(void)hmiSendText(msg);' not in ctrl.split('static void reportCtrlAuthor
 
 # CTRL-TS must remain the progress display for CTRL/W1P before its own safe update.
 start = ctrl.split('static void hmiFwStart()',1)[1].split('static bool hmiFwHandleFrame',1)[0]
-assert 'fw_ctrl_active' in start and 'fw_w1p_active' in start
-assert 'CTRL-TS update deferred while external firmware update is active' in start
+assert 'fw_ts_allowed' in start and 'const bool tsAllowed' in start
+assert 'CTRL-TS update deferred until SRVR coordinator grants final-stage update' in start
 
-# Firmware/ramp state belongs in compact HMS1 so it cannot wait behind bulk telemetry.
-state = ctrl.split('static String buildHmiStatePacketFromSrvr',1)[1].split('static void handleUdpRx',1)[0]
-for key in ('ramp_near','ramp_far','near','far','fw_ctrl_active','fw_ctrl_pct','fw_w1p_active','fw_w1p_pct'):
+# Firmware state belongs in compact HMS1; sparse ramp/Ref geometry belongs in HMG1.
+state = ctrl.split('static String buildHmiStatePacketFromSrvr',1)[1].split('static String buildHmiGeometryPacketFromSrvr',1)[0]
+for key in ('fw_ctrl_active','fw_ctrl_pct','fw_w1p_active','fw_w1p_pct'):
     assert f'"{key}"' in state, f'HMS1 missing {key}'
+geometry = ctrl.split('static String buildHmiGeometryPacketFromSrvr',1)[1].split('static String buildHmiMotionPacketFromSrvr',1)[0]
+for key in ('ramp_near','ramp_far','near','far','ramp_near_frac','ramp_far_frac'):
+    assert f'"{key}"' in geometry, f'HMG1 missing {key}'
 assert 'else if(line.startsWith("HMS1|"))' in ts and 'apply_external_fw_fields(line);' in ts
+assert 'line.startsWith("HMG1|")' in ts
 
 # Preserve the safe display-off self updater; do not reintroduce flash writes under RGB/LVGL.
 setup = ts.split('void setup()',1)[1].split('void loop()',1)[0]

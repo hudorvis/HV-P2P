@@ -14,7 +14,7 @@
 #include <esp_system.h>
 #include <esp_attr.h>
 
-#define CTRL_TS_SEMVER "v26.10.04.07"
+#define CTRL_TS_SEMVER "v26.10.05.01"
 #define CTRL_TS_VERSION "HV P2P CTRL-TS " CTRL_TS_SEMVER
 #define CTRL_TS_HW_ID "WS-ESP32S3-7"
 #define HMI_BAUD 115200
@@ -140,6 +140,7 @@ static String g_boot_status_cache;
 static String g_pending_boot_hmi_line;
 static String g_pending_runtime_state_line;
 static String g_pending_runtime_geometry_line;
+static String g_pending_runtime_motion_line;
 static String g_pending_runtime_bulk_line;
 
 
@@ -235,7 +236,7 @@ static float g_last_ramp_near_draw = -999999.0f;
 static float g_last_ramp_far_draw = -999999.0f;
 
 // -------------------- CTRL-TS Settings page --------------------
-// Safe v26.10.04.07 approach: no backlight/brightness writes. This page only
+// Safe v26.10.05.01 approach: no backlight/brightness writes. This page only
 // edits CTRL network settings over UART and therefore should preserve the known
 // Keep the proven splash/boot path; do not write to the backlight controller.
 static lv_obj_t *settings_overlay = nullptr;
@@ -283,7 +284,7 @@ static void force_screen_refresh(){
 }
 
 static void screen_keepalive(){
-  // v26.10.04.07: no periodic full-screen or left-strip invalidation or brightness writes.
+  // v26.10.05.01: no periodic full-screen or left-strip invalidation or brightness writes.
   // The Waveshare/LVGL port refreshes changed objects itself; forcing a full
   // screen refresh every second caused the visible 1-second flicker/glitch.
   if(!g_ui_ready) return;
@@ -1195,7 +1196,7 @@ static void confirm_aux_idx(int idx, bool send_command){
   selected_aux = -1;
   g_selected_aux_ms = 0;
   confirmed_aux = idx;
-  clear_confirm_at = now_ms + 2000;  // v26.10.04.07: confirmed AUX tile stays lit for 2 seconds
+  clear_confirm_at = now_ms + 2000;  // v26.10.05.01: confirmed AUX tile stays lit for 2 seconds
   g_aux_suppress_until_ms[idx] = now_ms + 400;
   style_aux(idx,false,true);
   snprintf(msg,sizeof(msg),"AUX %d Confirmed", idx+1);
@@ -1270,7 +1271,7 @@ static void style_w1p_status_pill(int state){
 }
 
 static void style_estop_pill(bool active){
-  // v26.10.04.07: the middle status banner follows the SRVR-resolved state.
+  // v26.10.05.01: the middle status banner follows the SRVR-resolved state.
   // A local CTRL-TS UART/display gap must not invent "E-Stop CTRL" while SRVR
   // is still sending Status | Active. Real CTRL/W1P E-Stops are still shown
   // immediately when SRVR sends status=E-Stop... / status_level=red.
@@ -1280,7 +1281,7 @@ static void style_estop_pill(bool active){
   if(g_estop_active && !text.startsWith("E-Stop") && !explicit_fault){
     String src = g_estop_source.length() ? g_estop_source : "CTRL";
     src.replace("+", " & ");
-    text = "E-Stop " + src;
+    text = "E-Stop | " + src;
     level = 2;
   }
   if(g_last_estop_visual == level && g_last_status_text == text) return;
@@ -1307,13 +1308,12 @@ static void style_estop_pill(bool active){
     else if(detail.startsWith("E-Stop ")) detail = detail.substring(7);
     detail.trim();
     while(detail.startsWith("/")){ detail = detail.substring(1); detail.trim(); }
-    shown = "E-STOP | " + detail;
-  } else if(text == "Active") {
-    shown = "System | Active";
-  } else if(text.startsWith("System | ")) {
-    shown = text;
+    shown = "E-Stop | " + detail;
   } else {
-    shown = "STATE | " + text;
+    if(text == "Active" || text == "System Ready") shown = "System | Active";
+    else if(text == "Battery Change" || text == "Battery Change Mode") shown = "System | Battery Change Mode";
+    else if(text.startsWith("System | ")) shown = text;
+    else shown = "System | " + text;
   }
   set_label_text_if_changed(lbl_estop, shown.c_str());
 }
@@ -1322,7 +1322,7 @@ static void refresh_status_ui(){
   style_status_pill_cached(0,pill_ctrl,lbl_ctrl,"CTRL",g_ctrl_ok);
   if(pill_srvr && lbl_srvr) style_status_pill_cached(1,pill_srvr,lbl_srvr,"SRVR",g_srvr_ok);
   style_w1p_status_pill(g_w1p_health);
-  // v26.10.04.07: do not turn the main middle box red purely because the
+  // v26.10.05.01: do not turn the main middle box red purely because the
   // CTRL-TS local UART/display link hiccuped. The SRVR status packet is the
   // authoritative source for Active / Un-Calibrated / E-Stop display state.
   bool stopped_visual = (g_status_level >= 2) || g_estop_active;
@@ -1690,12 +1690,23 @@ static void progress_marker_anim_exec(void * obj, int32_t v){
 
 static void set_progress_marker_x_smooth(int target_x){
   if(!current_marker) return;
-  // v16: no local animation tail. SRVR now sends finer/faster verified position
-  // packets, so the marker can snap to each verified point. This is more
-  // faithful when the motor physically stops and prevents the progress bar from
-  // coasting for another second.
+  // HMM1 provides verified motion at about 10 Hz. Interpolate only between
+  // those verified samples; do not extrapolate beyond the latest SRVR position.
+  if(g_current_marker_x < -1000) g_current_marker_x = lv_obj_get_x(current_marker);
+  if(abs(target_x - g_current_marker_x) <= 1){
+    lv_anim_del(current_marker, NULL);
+    lv_obj_set_x(current_marker, target_x);
+    g_current_marker_x = target_x;
+    return;
+  }
   lv_anim_del(current_marker, NULL);
-  lv_obj_set_x(current_marker, target_x);
+  lv_anim_t a; lv_anim_init(&a);
+  lv_anim_set_var(&a, current_marker);
+  lv_anim_set_exec_cb(&a, progress_marker_anim_exec);
+  lv_anim_set_values(&a, lv_obj_get_x(current_marker), target_x);
+  lv_anim_set_time(&a, 90);
+  lv_anim_set_path_cb(&a, lv_anim_path_linear);
+  lv_anim_start(&a);
   g_current_marker_x = target_x;
 }
 
@@ -1779,7 +1790,7 @@ static void update_preset_markers(){
   const int line_w = 2;
   const int line_top_y = 38;
   const int line_h = 11;
-  const int label_w = 42;
+  const int label_w = 64;
   const int label_y_top = 27;
   const int label_y_bottom = 58;
 
@@ -1820,7 +1831,9 @@ static void update_preset_markers(){
 static void apply_hmi_packet(const String &line){
   const bool state_only = line.startsWith("HMS1|");
   const bool geometry_only = line.startsWith("HMG1|");
-  const bool bulk_packet = !state_only && !geometry_only;
+  const bool motion_only = line.startsWith("HMM1|");
+  const bool bulk_packet = !state_only && !geometry_only && !motion_only;
+  const bool status_packet = state_only || bulk_packet;
   bool prev_estop = g_estop_active;
   bool prev_ctrl = g_ctrl_ok;
   bool prev_srvr = g_srvr_ok;
@@ -1868,6 +1881,10 @@ static void apply_hmi_packet(const String &line){
   bool packet_estop = getFieldBool(line, "estop", g_estop_active);
   String srcField = getField(line, "estop_src");
   String statusField = getField(line, "status");
+  // The HMI wire format is pipe-delimited, so SRVR safely serializes the human
+  // separator as " / ". Restore the canonical operator spelling locally.
+  if(statusField.startsWith("System / ")) statusField = "System | " + statusField.substring(9);
+  if(statusField.startsWith("E-Stop / ")) statusField = "E-Stop | " + statusField.substring(9);
   String levelField = getField(line, "status_level");
   g_ctrl_ok      = getFieldBool(line, "ctrl", g_ctrl_ok);
   g_srvr_ok      = getFieldBool(line, "srvr", g_srvr_ok);
@@ -1882,55 +1899,57 @@ static void apply_hmi_packet(const String &line){
     g_w1p_health = g_w1p_ok ? 1 : 0;
   }
 
-  if(statusField.length()) g_status_text = statusField;
-  if(levelField.length()){
+  if(status_packet && statusField.length()) g_status_text = statusField;
+  if(status_packet && levelField.length()){
     levelField.toLowerCase();
     if(levelField.indexOf("red") >= 0 || levelField.indexOf("stop") >= 0) g_status_level = 2;
     else if(levelField.indexOf("yellow") >= 0 || levelField.indexOf("service") >= 0) g_status_level = 1;
     else g_status_level = 0;
-  } else if(statusField.length()){
+  } else if(status_packet && statusField.length()){
     String sf = statusField; sf.toLowerCase();
     if(sf.indexOf("e-stop") >= 0 || sf.indexOf("link loss") >= 0) g_status_level = 2;
     else if(sf.indexOf("calibr") >= 0 || sf.indexOf("battery") >= 0) g_status_level = 1;
     else g_status_level = 0;
   }
 
-  // v26.10.04.07: if SRVR sends explicit status/status_level, trust it as
+  // v26.10.05.01: if SRVR sends explicit status/status_level, trust it as
   // the authoritative display state. Do not override it locally with a CTRL
   // error just because the touchscreen/CTRL UART side saw a transient gap.
-  g_estop_active = packet_estop;
-  if(srcField.length()) g_estop_source = srcField;
-  else if(g_estop_active) g_estop_source = "CTRL";
-  else g_estop_source = "";
-  if(g_estop_active && g_estop_source.length()){
-    String src = g_estop_source;
-    src.replace("+", " & ");
-    g_estop_source = src;
-    g_status_text = "E-Stop " + src;
-    g_status_level = 2;
+  if(status_packet){
+    g_estop_active = packet_estop;
+    if(srcField.length()) g_estop_source = srcField;
+    else if(g_estop_active) g_estop_source = "CTRL";
+    else g_estop_source = "";
+    if(g_estop_active && g_estop_source.length()){
+      String src = g_estop_source;
+      src.replace("+", " & ");
+      g_estop_source = src;
+      g_status_text = "E-Stop | " + src;
+      g_status_level = 2;
+    }
   }
 
-  if(!statusField.length()){
+  if(status_packet && !statusField.length()){
     if(!g_ctrl_ok){
       // Do not invent a red E-Stop CTRL state from a transient display/config gap.
       // SRVR sends the authoritative status/status_level fields for real E-stops.
-      g_status_text = g_status_text.length() ? g_status_text : "Active";
-      if(g_status_text == "E-Stop CTRL") { g_status_text = "Active"; g_status_level = 0; g_estop_active = false; g_estop_source = ""; }
+      g_status_text = g_status_text.length() ? g_status_text : "System | Active";
+      if(g_status_text == "E-Stop CTRL") { g_status_text = "System | Active"; g_status_level = 0; g_estop_active = false; g_estop_source = ""; }
     } else if(!g_srvr_ok){
       g_estop_active = true;
       g_estop_source = "SRVR";
-      g_status_text = "E-Stop SRVR";
+      g_status_text = "E-Stop | SRVR";
       g_status_level = 2;
     } else if(g_estop_active){
       String src = g_estop_source.length() ? g_estop_source : "CTRL";
       src.replace("+", " & ");
-      g_status_text = "E-Stop " + src;
+      g_status_text = "E-Stop | " + src;
       g_status_level = 2;
     } else if(mode_is_service()){
-      g_status_text = g_mode;
+      g_status_text = "System | " + g_mode;
       g_status_level = 1;
     } else {
-      g_status_text = "Active";
+      g_status_text = "System | Active";
       g_status_level = 0;
     }
   }
@@ -1942,21 +1961,23 @@ static void apply_hmi_packet(const String &line){
   // stream of invalidations underneath the overlay. The first packet after the
   // wizard closes redraws them from the latest cached values.
   const bool calibration_was_active = g_calibration_overlay_active;
-  const bool calibration_active_now = geometry_only ? g_calibration_overlay_active : apply_calibration_overlay_fields(line);
+  const bool calibration_active_now = (geometry_only || motion_only) ? g_calibration_overlay_active : apply_calibration_overlay_fields(line);
   const bool calibration_just_closed = calibration_was_active && !calibration_active_now;
 
   String s;
   if(!calibration_active_now){
     // HMS1 is the priority state delta used immediately after AUX confirmation.
     // Keep it away from the bulk motion/position formatting and redraw path.
-    if(bulk_packet){
+    if(bulk_packet || motion_only){
       s = String(g_to_near, 2); set_label_text_if_changed(lbl_to_near, s.c_str());
       s = String(g_to_far, 2); set_label_text_if_changed(lbl_to_far, s.c_str());
       s = String(g_speed_mps, 1); set_label_text_if_changed(lbl_speed_combo, s.c_str());
       s = String(g_speed_kmh, 1); set_label_text_if_changed(lbl_current_kmh, s.c_str());
+      s = String(g_pos, 2); set_label_text_if_changed(lbl_current_pos, s.c_str());
+    }
+    if(bulk_packet){
       s = String(g_max_mps, 1); set_label_text_if_changed(lbl_max_speed, s.c_str());
       s = String(g_max_kmh, 1); set_label_text_if_changed(lbl_max_kmh, s.c_str());
-      s = String(g_pos, 2); set_label_text_if_changed(lbl_current_pos, s.c_str());
       s = String(g_near, 2) + " m"; set_label_text_if_changed(lbl_near_value, s.c_str());
       s = String(g_far, 2) + " m"; set_label_text_if_changed(lbl_far_value, s.c_str());
     }
@@ -2008,7 +2029,7 @@ static void apply_hmi_packet(const String &line){
   }
 
   apply_flags_to_aux(flags_now);
-  if(bulk_packet && !calibration_active_now) update_progress_marker();
+  if((bulk_packet || motion_only) && !calibration_active_now) update_progress_marker();
 
   // HMG1 is emitted only when geometry/presets change, so it is the explicit
   // redraw trigger for REF/ramp/preset markers. This avoids relying on the slow
@@ -2048,7 +2069,7 @@ static void apply_hmi_packet(const String &line){
   if(mode_changed || (prev_status_text != g_status_text) || (prev_status_level != g_status_level) || (prev_estop != g_estop_active) || (prev_estop_source != g_estop_source) || (prev_ctrl != g_ctrl_ok) || (prev_srvr != g_srvr_ok) || (prev_w1p != g_w1p_ok) || (prev_w1p_health != g_w1p_health)) {
     refresh_status_ui();
   }
-  // v26.10.04.07: no left-strip/full-screen invalidation on packets; progress marker animates locally.
+  // v26.10.05.01: no left-strip/full-screen invalidation on packets; progress marker animates locally.
 }
 
 
@@ -2057,7 +2078,7 @@ static void apply_layout_packet(const String &line){
   // on CTRL cannot overwrite the screen title/version or trigger header redraws.
   String hint = getField(line, "hint");
   if(lbl_title) set_label_text_if_changed(lbl_title, "HV P2P\nCTRL-TS");
-  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.04.07");
+  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.05.01");
   if(hint.length() && hint.startsWith("ERROR")) set_touch_debug(hint.c_str());
   // UIL1 is presentation-only. AUX assignment/value ownership belongs solely to
   // live SRVR HMI state, so an old layout persisted in CTRL NVS cannot overwrite
@@ -2085,6 +2106,8 @@ static void process_text_from_ctrl(String line, bool boot_phase){
     apply_external_fw_fields(line);
   } else if(line.startsWith("HMG1|")) {
     // Change-driven geometry/preset delta; no connection or firmware semantics.
+  } else if(line.startsWith("HMM1|")) {
+    // Live-motion delta; display data only and never a status authority.
   }
   if(boot_phase){
     // Cache compact deltas that arrive before the main UI exists. HMI1 still
@@ -2092,6 +2115,7 @@ static void process_text_from_ctrl(String line, bool boot_phase){
     // soon as create_ui() has constructed their widgets.
     if(line.startsWith("HMS1|")) g_pending_runtime_state_line = line;
     else if(line.startsWith("HMG1|")) g_pending_runtime_geometry_line = line;
+    else if(line.startsWith("HMM1|")) g_pending_runtime_motion_line = line;
     boot_process_line(line);
     return;
   }
@@ -2101,6 +2125,7 @@ static void process_text_from_ctrl(String line, bool boot_phase){
     // immediately when the update dashboard releases.
     if(line.startsWith("HMS1|")) g_pending_runtime_state_line = line;
     else if(line.startsWith("HMG1|")) g_pending_runtime_geometry_line = line;
+    else if(line.startsWith("HMM1|")) g_pending_runtime_motion_line = line;
     else if(is_valid_hmi_packet(line)) g_pending_runtime_bulk_line = line;
     return;
   }
@@ -2109,6 +2134,8 @@ static void process_text_from_ctrl(String line, bool boot_phase){
     // touches only the small state surface instead of the bulk dashboard path.
     apply_hmi_packet(line);
   } else if(line.startsWith("HMG1|")) {
+    apply_hmi_packet(line);
+  } else if(line.startsWith("HMM1|")) {
     apply_hmi_packet(line);
   } else if(line.startsWith("CFG1|")) {
     apply_cfg_packet(line);
@@ -2564,7 +2591,7 @@ static void create_ui(){
   lv_obj_t *brand=make_panel(frame,SX,HEADER_Y,70,HEADER_H,C_BG,0x63d84e,7);
   lbl_title=make_label(brand,"HV P2P\nCTRL-TS",0,6,&lv_font_montserrat_12,lv_color_hex(C_FG),70);
   lv_obj_set_style_text_line_space(lbl_title,-2,0);
-  lbl_subtitle=make_label(frame,"v26.10.04.07",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
+  lbl_subtitle=make_label(frame,"v26.10.05.01",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
 
   pill_ctrl=make_panel(frame,255,HEADER_Y,126,HEADER_H,C_PANEL,C_BORDER,5);
   dot_ctrl=lv_obj_create(pill_ctrl); lv_obj_set_pos(dot_ctrl,9,15); lv_obj_set_size(dot_ctrl,8,8); lv_obj_set_style_radius(dot_ctrl,LV_RADIUS_CIRCLE,0); lv_obj_set_style_border_width(dot_ctrl,0,0); lv_obj_set_style_bg_color(dot_ctrl,lv_color_hex(0xef5757),0); lv_obj_clear_flag(dot_ctrl,LV_OBJ_FLAG_SCROLLABLE);
@@ -2629,7 +2656,7 @@ static void create_ui(){
   for(int i=0;i<12;i++){
     preset_line[i]=lv_obj_create(travel_panel); lv_obj_set_size(preset_line[i],1,9); lv_obj_set_style_bg_color(preset_line[i],lv_color_hex(C_GREEN),0); lv_obj_set_style_border_width(preset_line[i],0,0); lv_obj_clear_flag(preset_line[i],LV_OBJ_FLAG_SCROLLABLE); lv_obj_add_flag(preset_line[i],LV_OBJ_FLAG_HIDDEN);
     preset_tri[i]=lv_obj_create(travel_panel); lv_obj_set_size(preset_tri[i],1,1); lv_obj_set_style_bg_opa(preset_tri[i],LV_OPA_TRANSP,0); lv_obj_set_style_border_width(preset_tri[i],0,0); lv_obj_add_flag(preset_tri[i],LV_OBJ_FLAG_HIDDEN);
-    preset_lbl[i]=make_label(travel_panel,"",0,28,&lv_font_montserrat_8,lv_color_hex(C_MUTED),42); lv_obj_add_flag(preset_lbl[i],LV_OBJ_FLAG_HIDDEN);
+    preset_lbl[i]=make_label(travel_panel,"",0,28,&lv_font_montserrat_10,lv_color_hex(C_MUTED),64); lv_obj_add_flag(preset_lbl[i],LV_OBJ_FLAG_HIDDEN);
   }
 
   // Bottom row: Drive / Speed / Position.
@@ -2726,9 +2753,11 @@ static void service_fw_screen_release(){
     if(g_pending_runtime_bulk_line.length()) apply_hmi_packet(g_pending_runtime_bulk_line);
     if(g_pending_runtime_state_line.length()) apply_hmi_packet(g_pending_runtime_state_line);
     if(g_pending_runtime_geometry_line.length()) apply_hmi_packet(g_pending_runtime_geometry_line);
+    if(g_pending_runtime_motion_line.length()) apply_hmi_packet(g_pending_runtime_motion_line);
     g_pending_runtime_bulk_line = "";
     g_pending_runtime_state_line = "";
     g_pending_runtime_geometry_line = "";
+    g_pending_runtime_motion_line = "";
     update_progress_marker();
     update_reference_marker();
     update_ramp_markers();
@@ -2753,7 +2782,7 @@ static void service_link_state(){
 
   bool link_alive = last_hmi_rx && ((millis() - last_hmi_rx) <= HMI_TIMEOUT_MS);
   if(!link_alive) {
-    // v26.10.04.07: local UART/display timeout is a CTRL-TS link warning, not
+    // v26.10.05.01: local UART/display timeout is a CTRL-TS link warning, not
     // proof of a real CTRL E-Stop. Keep the last SRVR-resolved status banner so
     // the touchscreen cannot randomly show "Status | E-Stop CTRL" while SRVR
     // remains "Status | Active". The CTRL status pill can still show ERROR.
@@ -2846,8 +2875,10 @@ void setup(){
   }
   if(g_pending_runtime_state_line.length()) apply_hmi_packet(g_pending_runtime_state_line);
   if(g_pending_runtime_geometry_line.length()) apply_hmi_packet(g_pending_runtime_geometry_line);
+  if(g_pending_runtime_motion_line.length()) apply_hmi_packet(g_pending_runtime_motion_line);
   g_pending_runtime_state_line = "";
   g_pending_runtime_geometry_line = "";
+  g_pending_runtime_motion_line = "";
   lvgl_port_unlock();
   delay(50);
   Serial.println("[WS-HMI] boot: UI ready after CTRL and SRVR confirmed");

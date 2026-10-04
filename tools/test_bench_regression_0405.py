@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.10.04.07'
+VER='26.10.05.01'
 B=(ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 Q=(ROOT/f'SRVR_GitHub_v{VER}/qml/Main.qml').read_text()
 C=(ROOT/f'HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino').read_text()
@@ -11,7 +11,7 @@ T=(ROOT/f'HV_P2P_CTRL_TS_v{VER}/HV_P2P_CTRL_TS_v{VER}.ino').read_text()
 assert 'System | Uncalibrated' in B
 assert 'System Un-Calibrated' not in B
 assert 'shown = "System | Active";' in T
-assert 'shown = "STATE | " + text;' in T  # service/calibration states remain explicitly labelled
+assert 'shown = "STATE | " + text;' not in T  # SRVR owns canonical System | ... status wording
 assert 'def _operator_joystick_axis' in B
 assert 'neutral_pct = max(0.5' in B
 assert 'setupJoystickPercentage' in B and '_operator_joystick_axis(self._setup_preview_joystick())' in B
@@ -47,10 +47,11 @@ assert 'if(!hmiPriorityPacketSent && g_hmiGeometryPacketPending' in C
 assert 'line.startsWith("HMG1|")' in T and 'geometry_only' in T
 assert 'update_reference_marker();' in T and 'update_ramp_markers();' in T and 'update_preset_markers();' in T
 
-# Old field nodes start compatibility OTA as soon as their older version is proven.
+# Only genuinely pre-authority field nodes use the blocking legacy browser bridge.
 assert 'def _try_start_legacy_firmware_push' in B
+assert 'def _legacy_firmware_push_required' in B and 'parts <= (26, 10, 1, 1)' in B
 hmi=B[B.index('def _handle_ctrl_hmi_status'):B.index('def _joystick_min_cal_span')]
-assert '_try_start_legacy_firmware_push(' in hmi
+assert '_legacy_firmware_push_required(self._ctrl_fw_version)' in hmi
 assert '< 3.0' in B
 
 # Safe self-flash remains headless. Give the operator a longer explicit handoff,

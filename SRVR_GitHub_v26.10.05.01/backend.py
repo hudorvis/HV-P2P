@@ -248,7 +248,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.04.07", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.05.01", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -257,7 +257,7 @@ class HVP2PBackend(QObject):
         self._legacy_fw_push_last_attempt = {"ctrl": 0.0, "w1p": 0.0}
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.04.07+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.05.01+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -413,6 +413,7 @@ class HVP2PBackend(QObject):
         # Defaults are deliberately fail-closed until a fresh status explicitly
         # reports an exact SRVR image match.
         self._ctrl_fw_match = False
+        self._ctrl_fw_match_since = 0.0
         self._ctrl_fw_authority = "unknown"
         self._ctrl_fw_required = ""
         self._w1p_fw_match = False
@@ -755,6 +756,17 @@ class HVP2PBackend(QObject):
         current_parts = self._firmware_version_parts(self._current_firmware_version())
         return bool(reported_parts is not None and current_parts is not None and reported_parts < current_parts)
 
+    def _legacy_firmware_push_required(self, reported) -> bool:
+        """Use the browser-upload bridge only for pre-authority field firmware.
+
+        Modern CTRL/W1P releases understand SRVR_FW and must pull/verify their
+        immutable authority image themselves. Pushing those releases through the
+        blocking browser updater hides CTRL progress from CTRL-TS and races the
+        ordered CTRL -> W1P -> CTRL-TS update coordinator.
+        """
+        parts = self._firmware_version_parts(reported)
+        return bool(parts is not None and parts <= (26, 10, 1, 1))
+
     @staticmethod
     def _esp_reset_reason_name(reason: int) -> str:
         # Arduino-ESP32 esp_reset_reason() values. Keep the numeric value in the
@@ -793,7 +805,12 @@ class HVP2PBackend(QObject):
         reported_match = str(fields.get("fw_match", "0")).strip() == "1"
         version_current = self._firmware_version_matches_current(self._ctrl_fw_version)
         authority_current = self._firmware_version_matches_current(self._ctrl_fw_required)
+        prev_ctrl_fw_match = bool(self._ctrl_fw_match)
         self._ctrl_fw_match = bool(reported_match and version_current and authority_current)
+        if self._ctrl_fw_match and not prev_ctrl_fw_match:
+            self._ctrl_fw_match_since = now
+        elif not self._ctrl_fw_match:
+            self._ctrl_fw_match_since = 0.0
         if reported_match and not self._ctrl_fw_match:
             self._ctrl_fw_authority = "stale_release_report"
         self._ctrl_ts_version = str(fields.get("version", ""))
@@ -886,7 +903,7 @@ class HVP2PBackend(QObject):
         # normal UI timer has had a chance to service the compatibility bridge.
         # Start the asynchronous push immediately from this proven status packet
         # instead of depending on a device reboot to create a new update session.
-        if self._firmware_version_is_older(self._ctrl_fw_version):
+        if self._legacy_firmware_push_required(self._ctrl_fw_version):
             self._try_start_legacy_firmware_push(
                 "ctrl", str(self.ctrl_ip or "").strip(), self._ctrl_fw_version, True
             )
@@ -1041,6 +1058,7 @@ class HVP2PBackend(QObject):
     def _set_fw_progress(self, role: str, active: bool, phase: str = "Updating", pct: int = 0) -> None:
         key = "w1p" if str(role).lower().startswith("w1p") else "ctrl"
         state = self._fw_progress.setdefault(key, {"active": False, "phase": "Idle", "pct": 0})
+        before = (bool(state.get("active", False)), str(state.get("phase", "Idle")), int(state.get("pct", 0) or 0))
         state["active"] = bool(active)
         state["phase"] = str(phase or ("Updating" if active else "Idle"))[:32]
         try:
@@ -1049,6 +1067,12 @@ class HVP2PBackend(QObject):
             state["pct"] = 0
         if not active and state["pct"] >= 100:
             state["phase"] = "Complete"
+        after = (bool(state["active"]), str(state["phase"]), int(state["pct"]))
+        if after != before:
+            # Progress may arrive from a UDP/background OTA thread. Qt signal
+            # delivery is queued safely to the UI thread and keeps the single
+            # Firmware value live without forcing synchronous UI work here.
+            self.stateChanged.emit()
 
     # --- W1P parsing / motion ---
     def _invalidate_position_reference(self, reason: str) -> None:
@@ -1983,6 +2007,66 @@ class HVP2PBackend(QObject):
             text = text.replace(",", "/")
         return text[:max(1, int(limit))]
 
+    def _estop_status_text(self) -> str:
+        # Operator-facing source names are intentionally limited to SRVR/CTRL/W1P.
+        ctrl_fault = bool(
+            self._ctrl_estop
+            or (self._ctrl_flags & (FLAG_ADS1115_FAULT | FLAG_CTRL_HMI_FAULT | FLAG_CTRL_FW_FAULT))
+            or (not self._ctrl_connected())
+            or (not self._ctrl_fw_match)
+            or (not self._ctrl_authority_fresh())
+        )
+        w1p_fault = bool(
+            self._w1p_estop
+            or self._w1p_internal_safety
+            or (not self.w1p.connected)
+            or (not self._w1p_status_fresh())
+            or (not self._w1p_fw_match)
+            or (self.winch_rs_status != "Connected")
+        )
+        parts = []
+        if self._srvr_estop:
+            parts.append("SRVR")
+        if ctrl_fault:
+            parts.append("CTRL")
+        if w1p_fault and self.position_source != "Virtual":
+            parts.append("W1P")
+        return "E-Stop | " + (" & ".join(parts) if parts else "SRVR")
+
+    def _resolved_system_status(self):
+        """One canonical status description for SRVR and CTRL-TS."""
+        if self.state.estop_active:
+            text = self._estop_status_text()
+            source = text.split("|", 1)[1].strip() if "|" in text else ""
+            return text, "red", source, 1
+        if self.joystick_calibration_open:
+            return "System | Joystick Calibration", "yellow", "", 0
+        if self.calibration_open:
+            kind = "Winch Calibration" if self.calibration_type == "Winch" else "Limit Calibration"
+            return f"System | {kind}", "yellow", "", 0
+        if self.battery_change_mode:
+            return "System | Battery Change Mode", "yellow", "", 0
+        if self._not_calibrated:
+            return "System | Uncalibrated", "yellow", "", 0
+        return "System | Active", "green", "", 0
+
+    def _ctrl_ts_update_allowed(self) -> bool:
+        """Grant CTRL-TS update only after CTRL is current and W1P had discovery time.
+
+        A fresh SRVR can hear CTRL before the first W1P STATUS packet. Waiting a
+        short discovery window prevents the touchscreen from jumping ahead of a
+        physically-present W1P merely because W1P had not announced itself yet.
+        """
+        now = time.time()
+        if not (self._ctrl_fw_match and self._ctrl_authority_fresh()):
+            return False
+        if self._w1p_fw_match and self._w1p_status_fresh():
+            return True
+        if self.w1p.connected:
+            return False
+        matched_since = float(self._ctrl_fw_match_since or 0.0)
+        return bool(matched_since and (now - matched_since) >= 2.0)
+
     def _build_controller_display_packet(self) -> str:
         """Build the proven DSP1 SRVR->CTRL display/status packet.
 
@@ -2017,23 +2101,7 @@ class HVP2PBackend(QObject):
         else:
             w1p_state = "ok"
 
-        if self.state.estop_active:
-            status = self.bannerText
-            level = "red"
-            source = status.split("|", 1)[1].strip() if "|" in status else ""
-            estop = 1
-        elif self.battery_change_mode:
-            status, level, source, estop = "Battery Change", "yellow", "", 0
-        elif self.joystick_calibration_open:
-            status = "Joystick Calibration"
-            level, source, estop = "yellow", "", 0
-        elif self.calibration_open:
-            status = "Winch Calibration" if self.calibration_type == "Winch" else "Limit Calibration"
-            level, source, estop = "yellow", "", 0
-        elif self._not_calibrated:
-            status, level, source, estop = "System | Uncalibrated", "yellow", "", 0
-        else:
-            status, level, source, estop = "Active", "green", "", 0
+        status, level, source, estop = self._resolved_system_status()
 
         cal_active = bool(self.joystick_calibration_open or self.calibration_open)
         if self.joystick_calibration_open:
@@ -2090,7 +2158,7 @@ class HVP2PBackend(QObject):
             f"ramp_near={ramp_near:.3f}", f"ramp_far={ramp_far:.3f}",
             f"ramp_near_frac={self.nearRampFraction:.6f}", f"ramp_far_frac={self.farRampFraction:.6f}",
             f"ref_vis={1 if ref_set else 0}", f"estop={estop}",
-            f"estop_src={self._display_field(source)}", f"status={self._display_field(status)}",
+            f"estop_src={self._display_field(source)}", f"status={self._display_field(status, 40)}",
             f"status_level={level}", f"ctrl={1 if ctrl_ok else 0}", "srvr=1",
             f"srvr_fw={self._current_firmware_version()}", f"fw_session={self._firmware_authority_session}",
             f"fw_ctrl_active={1 if self._fw_progress['ctrl']['active'] else 0}",
@@ -2099,6 +2167,10 @@ class HVP2PBackend(QObject):
             f"fw_w1p_active={1 if self._fw_progress['w1p']['active'] else 0}",
             f"fw_w1p_phase={self._display_field(self._fw_progress['w1p']['phase'], 32)}",
             f"fw_w1p_pct={int(self._fw_progress['w1p']['pct'])}",
+            # CTRL-TS is deliberately last. If W1P is physically absent it does
+            # not block the display update; if present, it must first report the
+            # current SRVR firmware release.
+            f"fw_ts_allowed={1 if self._ctrl_ts_update_allowed() else 0}",
             f"w1p={1 if w1p_ok else 0}", f"w1p_state={w1p_state}",
             f"service={1 if self._service_override_active() else 0}", f"flags={int(self._ctrl_flags)}",
             f"cal_active={1 if cal_active else 0}", f"cal_kind={self._display_field(cal_kind, 16)}",
@@ -2173,8 +2245,14 @@ class HVP2PBackend(QObject):
             pass
 
     def _send_w1p_firmware_beacon(self) -> None:
-        """Advertise SRVR authority identity over W1P's existing non-blocking UDP path."""
+        """Advertise W1P authority only after CTRL is on this SRVR release.
+
+        This makes the coordinated update order deterministic: CTRL first, W1P
+        second, CTRL-TS last. A disconnected W1P does not block CTRL-TS later.
+        """
         if self.smoke_test:
+            return
+        if not (self._ctrl_fw_match and self._ctrl_authority_fresh()):
             return
         now = time.time()
         if now - float(self._last_w1p_fw_beacon or 0.0) < 0.50:
@@ -2265,7 +2343,7 @@ class HVP2PBackend(QObject):
         reported = str(reported or "").strip()
         if self.smoke_test or self._firmware_bundle is None or not host or not connected:
             return False
-        if not reported or not self._firmware_version_is_older(reported):
+        if not reported or not self._legacy_firmware_push_required(reported):
             return False
         now = time.monotonic()
         with self._lock:
@@ -2299,17 +2377,21 @@ class HVP2PBackend(QObject):
         # datagram stream has just rolled across its timeout boundary. Treat either
         # signal as sufficient presence for the legacy firmware bridge.
         ctrl_present = bool(self._ctrl_connected() or self._ctrl_authority_fresh())
-        targets = (
-            ("ctrl", str(self.ctrl_ip or "").strip(), str(self._ctrl_fw_version or "").strip(), ctrl_present),
-            ("w1p", str(self.w1p_ip or "").strip(), str(self._w1p_fw_version or "").strip(), bool(self.w1p.connected)),
-        )
-        for role, host, reported, connected in targets:
-            if self._firmware_version_is_older(reported):
-                # The version mismatch already makes _motion_tick fail safe.
-                # Reinforce zero before the asynchronous upload when this call
-                # originates from the normal UI/safety service path.
-                self._send_velocity(0.0, force=True)
-            self._try_start_legacy_firmware_push(role, host, reported, connected)
+        ctrl_target = ("ctrl", str(self.ctrl_ip or "").strip(), str(self._ctrl_fw_version or "").strip(), ctrl_present)
+        if self._legacy_firmware_push_required(ctrl_target[2]):
+            self._send_velocity(0.0, force=True)
+            self._try_start_legacy_firmware_push(*ctrl_target)
+            return
+
+        # Never start a W1P legacy bridge while CTRL is still converging. Modern
+        # W1P firmware uses the normal pull/verify authority path after the same
+        # CTRL-current gate in _send_w1p_firmware_beacon().
+        if not (self._ctrl_fw_match and self._ctrl_authority_fresh()):
+            return
+        w1p_target = ("w1p", str(self.w1p_ip or "").strip(), str(self._w1p_fw_version or "").strip(), bool(self.w1p.connected))
+        if self._legacy_firmware_push_required(w1p_target[2]):
+            self._send_velocity(0.0, force=True)
+            self._try_start_legacy_firmware_push(*w1p_target)
 
     def _motion_tick(self):
         self._virtual_motion_step()
@@ -3266,7 +3348,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.04.07 moves the installed joystick polarity correction into CTRL,
+        # v26.10.05.01 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same
@@ -3799,45 +3881,14 @@ class HVP2PBackend(QObject):
     @Property(int, notify=stateChanged)
     def systemStatusLevel(self):
         # 2=red safety/fault, 1=yellow service/unreferenced, 0=green ready.
-        if self.state.estop_active:
-            return 2
-        if self._not_calibrated:
-            return 1
-        return 0
+        _text, level, _source, _estop = self._resolved_system_status()
+        return 2 if level == "red" else (1 if level == "yellow" else 0)
     @Property(bool, notify=stateChanged)
     def systemReady(self): return self.systemStatusLevel == 0
     @Property(str, notify=stateChanged)
     def bannerText(self):
-        if not self.state.estop_active:
-            return "System | Uncalibrated" if self._not_calibrated else "System Ready"
-
-        # Operator-facing source names are intentionally limited to SRVR/CTRL/W1P.
-        # The physical AI0 E-stop bit is no longer overloaded with CTRL-TS/firmware
-        # faults, but all CTRL safety faults still aggregate under the CTRL source.
-        ctrl_fault = bool(
-            self._ctrl_estop
-            or (self._ctrl_flags & (FLAG_ADS1115_FAULT | FLAG_CTRL_HMI_FAULT | FLAG_CTRL_FW_FAULT))
-            or (not self._ctrl_connected())
-            or (not self._ctrl_fw_match)
-            or (not self._ctrl_authority_fresh())
-        )
-        w1p_fault = bool(
-            self._w1p_estop
-            or self._w1p_internal_safety
-            or (not self.w1p.connected)
-            or (not self._w1p_status_fresh())
-            or (not self._w1p_fw_match)
-            or (self.winch_rs_status != "Connected")
-        )
-
-        parts = []
-        if self._srvr_estop:
-            parts.append("SRVR")
-        if ctrl_fault:
-            parts.append("CTRL")
-        if w1p_fault:
-            parts.append("W1P")
-        return "E-Stop | " + (" & ".join(parts) if parts else "SRVR")
+        text, _level, _source, _estop = self._resolved_system_status()
+        return text
     @Property(float, notify=stateChanged)
     def position(self): return float(self.state.pos_m or 0.0)
     @Property(float, notify=stateChanged)

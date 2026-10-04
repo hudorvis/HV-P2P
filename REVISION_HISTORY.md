@@ -1,3 +1,15 @@
+# v26.10.05.01 — 2026-10-05
+
+- Deep SRVR↔CTRL↔CTRL-TS alignment pass after `.04.07` bench testing exposed updater ordering/progress, status flicker, low-rate touchscreen motion and Limit Calibration rendering defects.
+- Added CTRL authority-update quiescing so a blocking CTRL OTA cannot begin with an outstanding touchscreen POLL/EVENT transaction; CTRL progress can now be relayed to CTRL-TS and SRVR during the transfer.
+- Coordinated firmware order so CTRL must be current/fresh before W1P authority and CTRL-TS update permission; modern firmware uses SRVR authority while legacy browser-push is restricted to `<= 26.10.01.01`.
+- Centralized canonical status vocabulary in SRVR (`System | Active`, `System | Uncalibrated`, `System | Battery Change Mode`, calibration states and `E-Stop | ...`) and made HMG1/HMM1 status-neutral, eliminating false Active/Uncalibrated flicker.
+- Added compact HMM1 verified motion updates at ~10 Hz with 90 ms touchscreen interpolation while retaining the 4 Hz ~900-byte bulk HMI cap and single-flight RS485 arbiter.
+- Increased CTRL-TS small preset/position typography to the approved Montserrat 10 minimum.
+- Reworked the compact Limit Calibration Side View to an 84 px bounded viewport with fully visible tower/cable geometry while retaining the three-step Joystick-style wizard layout.
+- Preserved safe headless CTRL-TS self-flash, W1P 500 ms VEL watchdog, ~150 ms SRVR non-zero VEL refresh, AI0/AI1 mapping, E-stop/hard-limit protections, predictive stopping/dynamic soft limits and Leadshine velocity architecture.
+- macOS bundle metadata: short version `26.10.5`, build `2610.5.1`.
+
 # v26.10.04.07 — 2026-10-04
 
 - Corrected the macOS/PySide6 backend regression to match the intentional three-step Limit Calibration contract: Near, Far, then Ref & Done. The previous test still expected an obsolete fourth Done step and caused GitHub Actions to fail after a correct Ref capture.
