@@ -1,4 +1,4 @@
-# HV P2P v26.10.04.01 Native Build and Bench Checklist
+# HV P2P v26.10.04.02 Native Build and Bench Checklist
 
 ## Release gate order
 
@@ -11,7 +11,7 @@
    motion commissioning.
 
 
-## v26.10.04.01 communications/settings gates
+## v26.10.04.02 communications/settings gates
 
 - Change Drive Mode, Acceleration Mode and Battery Change Mode repeatedly from SRVR. Each selection should close without a 1–2 s UI stall and CTRL-TS should converge to the selected state promptly.
 - Repeat the same actions from CTRL-TS. Verify SRVR changes exactly once per confirmed press; no accepted command may be silently lost or executed twice.
@@ -183,11 +183,12 @@ Archive:
 - E-stop/watchdog/limit commissioning records;
 - Leadshine and loaded-motion acceptance results.
 
-## v26.10.04.01 focused bench regression
+## v26.10.04.02 focused bench regression
 
-1. Confirm one CTRL-TS AUX action and leave the screen untouched for at least 5 seconds. The Confirmed state must clear without text/line corruption and without boot ID changing.
-2. Repeat for Drive Mode, Battery Change Mode and the final step of Joystick Calibration.
-3. For every touchscreen action, check SRVR Log for `[CTRL-TS EVENT] CTRL accepted ... cmd=AUXn` followed by `[AUX] CTRL AUXn: ... -> <result>`.
-4. If Battery Change still does not toggle, record those two log lines plus the current CTRL AUX assignment list. Do not infer an RS485 failure if CTRL already reports the event accepted.
-5. If CTRL-TS still reboots, record the new boot ID/reset reason and pre-reset heap/min-heap/PSRAM values. A post-confirm PANIC should no longer be possible from the removed null debug-label write.
-6. During CTRL-TS self-update, black panel after the deliberate handoff remains expected. A preceding firmware dashboard may correspond to CTRL/W1P `FWSTAT`; verify the device label before treating it as a CTRL-TS display regression.
+1. Run a complete SRVR-driven matched firmware update with all three ESP32 nodes on the bench. While CTRL updates, the CTRL row on CTRL-TS must advance in phase/percentage rather than remaining stale.
+2. While W1P updates, the W1P row on CTRL-TS must advance from SRVR-relayed progress. CTRL-TS must remain in normal display mode while either CTRL or W1P update is active.
+3. CTRL-TS self-update must start only after CTRL and W1P are no longer active. The touchscreen should show `Preparing safe updater` for roughly 900 ms, then deliberately go black for its own headless flash. Verify SRVR continues to show the exact CTRL-TS percentage during this black phase and the normal UI returns after reboot.
+4. Assign Drive Mode to an AUX tile, select Practice Mode and verify the state line reads the complete `Practice Mode` text without wrapping/cropping and without changing the approved card dimensions.
+5. Set clearly distinguishable Near/Far ramp distances (for example 10 m and 20 m on a known span). Compare SRVR and CTRL-TS: both ramp regions must start at their respective hard-limit endpoint and terminate at the same normalized ramp boundary.
+6. Change Near/Far ramp settings while CTRL-TS is connected and verify the touchscreen wedge updates promptly from compact state without waiting for a long/bulk refresh.
+7. Regression-check the already resolved paths: Drive Mode, Battery Change and the final Joystick Calibration confirmation must not reboot CTRL-TS; closing SRVR must return CTRL-TS to the splash/waiting state immediately.

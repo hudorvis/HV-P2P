@@ -9,7 +9,7 @@ Native compilation and real-hardware timing remain GitHub/bench gates.
 """
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
-VER = "26.10.04.01"
+VER = "26.10.04.02"
 T = (ROOT/f"HV_P2P_CTRL_TS_v{VER}"/f"HV_P2P_CTRL_TS_v{VER}.ino").read_text()
 C = (ROOT/f"HV_P2P_CTRL_EDGEBOX_v{VER}"/f"HV_P2P_CTRL_EDGEBOX_v{VER}.ino").read_text()
 P = (ROOT/'tools'/'prepare_waveshare_library.py').read_text()
@@ -53,9 +53,9 @@ update_begin = begin.index('Update.begin(imageSize, U_FLASH)')
 assert headless_gate < update_begin
 handoff = begin[headless_gate:update_begin]
 for token in ('fw_stage_safe_update_handoff(version, sha)',
-              'SRVR is the progress display for CTRL-TS self-programming',
+              'Make the transition explicit',
               'fw_safe_reboot_retry',
-              'g_fw_safe_reboot_due_ms = millis() + 350',
+              'g_fw_safe_reboot_due_ms = millis() + 900',
               'return;'):
     assert token in handoff, token
 for forbidden in ('g_fw_prefs', 'Preferences', '.put', '.remove', 'Update.begin', 'Update.write', 'lv_refr_now'):
@@ -71,14 +71,14 @@ for forbidden in ('fw_stage_safe_update_handoff', 'g_fw_safe_reboot_due_ms =', '
     assert forbidden not in dup_guard, forbidden
 assert begin.index('if(g_fw_safe_reboot_due_ms)') < begin.index('fw_stage_safe_update_handoff(version, sha)')
 
-# CTRL must also stay quiet long enough for the 350 ms touchscreen restart to
+# CTRL must also stay quiet long enough for the 900 ms touchscreen restart to
 # actually happen. This is non-blocking: it suppresses only HMI discovery/OTA,
 # not the real-time CTRL control loop.
-for token in ('g_hmiSafeRebootHoldUntilMs', 'millis() + 1200',
+for token in ('g_hmiSafeRebootHoldUntilMs', 'millis() + 1800',
               'holding discovery until reboot completes', 'safeRebootHold'):
     assert token in C, token
 safe_reply = C[C.index('text == "fw_safe_reboot_retry"'):C.index('Serial.printf("[HMI FW] CTRL-TS updater error')]
-assert 'g_hmiSafeRebootHoldUntilMs = millis() + 1200;' in safe_reply
+assert 'g_hmiSafeRebootHoldUntilMs = millis() + 1800;' in safe_reply
 hello_service = C[C.index('static void handleHmiRx'):C.index('static bool initEthernetStatic')]
 assert 'if(!safeRebootHold && (now - g_lastHmiHelloTxMs) >= 500)' in hello_service
 
@@ -139,19 +139,19 @@ assert 'fw_downgrade_blocked' in T
 assert 'if(releaseRelation < 0)' in T
 
 # Tiny timing model of the observed race: a 100 ms rediscovery cadence can push a
-# 350 ms reboot forever if every duplicate resets the deadline. Fixed receiver
+# 900 ms reboot forever if every duplicate resets the deadline. Fixed receiver
 # leaves the original deadline untouched, and fixed CTRL additionally stays quiet
-# for 1200 ms.
-old_due = 350
+# for 1800 ms.
+old_due = 900
 for t in range(100, 2000, 100):
     if t < old_due:
-        old_due = t + 350
+        old_due = t + 900
 assert old_due > 2000  # demonstrates the old starvation mechanism
-fixed_due = 350
+fixed_due = 900
 for t in range(100, 2000, 100):
     if t < fixed_due:
         pass  # duplicate is acknowledged but deadline is NOT moved
-assert fixed_due == 350
-assert 1200 > fixed_due
+assert fixed_due == 900
+assert 1800 > fixed_due
 
 print('CTRL_TS_SAFE_UPDATE_CONTRACT_PASS')

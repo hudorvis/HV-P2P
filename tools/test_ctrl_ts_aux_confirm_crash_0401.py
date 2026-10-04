@@ -2,9 +2,9 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TS = (ROOT / 'HV_P2P_CTRL_TS_v26.10.04.01' / 'HV_P2P_CTRL_TS_v26.10.04.01.ino').read_text()
-CTRL = (ROOT / 'HV_P2P_CTRL_EDGEBOX_v26.10.04.01' / 'HV_P2P_CTRL_EDGEBOX_v26.10.04.01.ino').read_text()
-SRVR = (ROOT / 'SRVR_GitHub_v26.10.04.01' / 'backend.py').read_text()
+TS = (ROOT / 'HV_P2P_CTRL_TS_v26.10.04.02' / 'HV_P2P_CTRL_TS_v26.10.04.02.ino').read_text()
+CTRL = (ROOT / 'HV_P2P_CTRL_EDGEBOX_v26.10.04.02' / 'HV_P2P_CTRL_EDGEBOX_v26.10.04.02.ino').read_text()
+SRVR = (ROOT / 'SRVR_GitHub_v26.10.04.02' / 'backend.py').read_text()
 
 # Production face deliberately has no debug label. Any direct LVGL call through
 # that pointer is therefore a crash bug; diagnostic helper must remain null-safe.

@@ -1,8 +1,8 @@
-# HV P2P SRVR v26.10.04.01 — Qt Quick desktop build source
+# HV P2P SRVR v26.10.04.02 — Qt Quick desktop build source
 
-This SRVR source continues from the audited/hardened v26.08.31.08 control baseline. v26.10.04.01 locks the newly approved **Run** and **Setup** page revisions while retaining the existing Free-D, Log, communication, safety, calibration and configuration behavior unless explicitly noted below.
+This SRVR source continues from the audited/hardened v26.08.31.08 control baseline. v26.10.04.02 locks the newly approved **Run** and **Setup** page revisions while retaining the existing Free-D, Log, communication, safety, calibration and configuration behavior unless explicitly noted below.
 
-## v26.10.04.01 operator revisions
+## v26.10.04.02 operator revisions
 
 ### Run
 
@@ -20,6 +20,13 @@ This SRVR source continues from the audited/hardened v26.08.31.08 control baseli
 - The actual CTRL and W1P firmware versions are reported over their existing status protocols and exposed to QML.
 - Motion Profiles preserves the existing data/controls with even clearance around the Mode 1/Mode 2 centre divider.
 - The former `CTRL-TS / FIRMWARE` panel is now `CTRL-TS`, containing `CTRL-TS Link`, a divider, `Detected`, `Required`, and `Update`. Link uses the same green Active/red Disconnected model as the CTRL/W1P Link rows.
+
+
+### v26.10.04.02 transport/display integration
+
+- CTRL/W1P firmware progress is carried to CTRL-TS on the compact priority state path; CTRL firmware progress remains permitted during CTRL authority OTA without bypassing RS485 serialization.
+- CTRL-TS self-update is deliberately last after CTRL/W1P progress completes. Its own flash write remains headless/display-off while SRVR shows the exact percentage.
+- The approved SRVR QML layout itself is unchanged by this revision.
 
 ## Virtual Position Source
 
@@ -65,8 +72,8 @@ The core on-wire/control behavior remains compatible:
 
 The source-package preparation gates currently report:
 
-- integrated EdgeBox/SRVR validation: **316 checks PASS**;
-- build-pipeline validation: **34 checks PASS**;
+- integrated EdgeBox/SRVR validation: **370 checks PASS**;
+- build-pipeline validation: **53 checks PASS**;
 - RS485 host framing/CRC: PASS;
 - CTRL-TS updater retry/target gating: PASS;
 - Modbus host contract: PASS;
@@ -82,9 +89,9 @@ Use the repository-root workflow:
 
 `.github/workflows/complete-build.yml`
 
-It builds the matched v26.10.04.01 CTRL-TS, CTRL and W1P firmware, freezes/smoke-tests the Intel (`x86_64`) macOS SRVR application, preserves the original SRVR distribution ZIP, and publishes the complete matched release.
+It builds the matched v26.10.04.02 CTRL-TS, CTRL and W1P firmware, freezes/smoke-tests the Intel (`x86_64`) macOS SRVR application, preserves the original SRVR distribution ZIP, and publishes the complete matched release.
 
-A successful GitHub compile is not powered-motion commissioning approval. Complete the repository `NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.10.04.01.md` before hardware sign-off.
+A successful GitHub compile is not powered-motion commissioning approval. Complete the repository `NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.10.04.02.md` before hardware sign-off.
 
 
 ## Native desktop targets

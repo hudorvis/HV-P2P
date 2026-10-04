@@ -16,7 +16,7 @@
 static bool g_ads_inited = false;
 static uint8_t ADS_ADDR = 0x48;
 
-#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.10.04.01"
+#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.10.04.02"
 #define CTRL_HMI_ARCH "EdgeBox ESP-100 + isolated RS485 Waveshare thin HMI"
 
 IPAddress local_IP(172,20,1,101);
@@ -235,7 +235,7 @@ static uint32_t lastHmiLayoutForward = 0;
 #define HMI_LAYOUT_MAX_LEN 2200
 static const char* HMI_LAYOUT_NVS_NS = "hmiui";
 static const char* HMI_LAYOUT_NVS_KEY = "layout";
-static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.10.04.01|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
+static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.10.04.02|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
 
 
 
@@ -260,10 +260,10 @@ static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_CTRL";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL_TS,W1P,W1P_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_CTRL_v*.ino.bin firmware. CTRL-TS and W1P files are rejected.";
 static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=CTRL;";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.04.01;";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.04.02;";
 static const char* HV_AUTH_ROLE = "CTRL";
 static const char* HV_AUTH_TARGET = "EDGEBOX_ESP100";
-static const char* HV_AUTH_VERSION = "v26.10.04.01";
+static const char* HV_AUTH_VERSION = "v26.10.04.02";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
@@ -522,7 +522,7 @@ static void hvLoadHmiLayoutConfig() {
     int nl = stored.indexOf('\n');
     if(nl >= 0) stored = stored.substring(0, nl);
     stored.trim();
-    // v26.10.04.01 migration: older CTRL NVS layouts were main4/aux1-aux4.
+    // v26.10.04.02 migration: older CTRL NVS layouts were main4/aux1-aux4.
     // Preserve the operator's stored labels/settings but expose the new AUX5 tile.
     if(stored.indexOf("|layout=main4") >= 0) stored.replace("|layout=main4", "|layout=main5");
     if(stored.indexOf("|aux5=") < 0) stored += "|aux5=AUX 5";
@@ -994,7 +994,7 @@ static void sendHmiStatusToSrvr()
   uint32_t age = g_lastHmiRxMs ? (now - g_lastHmiRxMs) : 999999;
   String line = "HMI_STATUS";
   line += "|ctrl_ts=" + String(hmiLinkConnected() ? 1 : 0);
-  line += "|ctrl_version=v26.10.04.01";
+  line += "|ctrl_version=v26.10.04.02";
   line += "|fw_match=" + String(g_srvrFirmwareMatched ? 1 : 0);
   line += "|fw_authority=" + g_srvrFirmwareState;
   line += "|fw_required=" + (g_srvrRequiredVersion.length() ? g_srvrRequiredVersion : String("unknown"));
@@ -1141,7 +1141,16 @@ static String buildHmiStatePacketFromSrvr(const String &line)
     "status", "status_level", "mode", "drive_mode", "accel_mode",
     "battery_change", "service", "flags", "cal_active", "cal_kind",
     "cal_step", "cal_title", "cal_instruction", "aux1", "aux2", "aux3",
-    "aux4", "aux5", "max_mps", "max_kmh"
+    "aux4", "aux5", "max_mps", "max_kmh",
+    // Limit/ramp settings are operator-visible state too. Carry them in the
+    // compact packet so CTRL-TS ramp geometry converges immediately after a
+    // Settings edit rather than waiting for the next ~900-byte HMI1 frame.
+    "near", "ref", "far", "pos_frac", "ref_frac", "ref_vis",
+    "ramp_near", "ramp_far",
+    // Firmware progress is also compact/high-priority. This keeps the update
+    // dashboard responsive even while bulk telemetry is deliberately throttled.
+    "fw_ctrl_active", "fw_ctrl_phase", "fw_ctrl_pct",
+    "fw_w1p_active", "fw_w1p_phase", "fw_w1p_pct"
   };
   String out = "HMS1";
   for(size_t i=0; i<(sizeof(keys)/sizeof(keys[0])); ++i){
@@ -1325,6 +1334,22 @@ static bool hmiSendText(const String &line)
   return ok;
 }
 
+static bool hmiSendFirmwareStatusText(const String &line)
+{
+  // CTRL deliberately drops normal HMI compatibility before programming its
+  // own OTA partition. Firmware progress must still reach the operator display
+  // during that interval, but it must obey the exact same half-duplex ownership
+  // rules as every other RS485 transmission.
+  if(!line.length() || hmiFwActive() || g_hmiPollOutstanding || hmiBusRecoveryQuiet()) return false;
+  hmiMasterTurnaroundGuard();
+  const bool ok = HVP2PRS485::sendText(HMI, HVP2PRS485::TEXT, g_hmiSeq++, line);
+  if(ok){
+    g_hmiFramesTx++;
+    g_lastHmiPollTxMs = millis();
+  }
+  return ok;
+}
+
 static void hmiAckEvent(uint16_t pollSeq, uint16_t eventId)
 {
   if(hmiFwActive() || g_hmiPollOutstanding || hmiBusRecoveryQuiet()) return;
@@ -1418,8 +1443,25 @@ static void hmiFwStart(){
     Serial.println("[HMI FW] update deferred until CTRL matches SRVR firmware authority");
     return;
   }
+  // Keep CTRL-TS alive as the operator progress display while CTRL/W1P are
+  // still converging. Its own safe self-programming is deliberately last,
+  // because that phase must run display-off to avoid ESP32-S3 flash/PSRAM RGB
+  // contention. The repeated HELLO path will retry this decision automatically.
+  if(g_latestDisplayPacket.length()){
+    const bool ctrlUpdating = hvGetPipeField(g_latestDisplayPacket, "fw_ctrl_active").toInt() != 0;
+    const bool w1pUpdating = hvGetPipeField(g_latestDisplayPacket, "fw_w1p_active").toInt() != 0;
+    if(ctrlUpdating || w1pUpdating){
+      static uint32_t lastDeferLogMs = 0;
+      const uint32_t now = millis();
+      if(!lastDeferLogMs || (now - lastDeferLogMs) >= 2000){
+        lastDeferLogMs = now;
+        Serial.printf("[HMI FW] CTRL-TS update deferred while external firmware update is active (CTRL=%d W1P=%d)\n", ctrlUpdating?1:0, w1pUpdating?1:0);
+      }
+      return;
+    }
+  }
   // One-time recovery boundary: only a CTRL-TS that explicitly advertises the
-  // v26.10.04.01+ display-off updater may receive an automatic self-update.
+  // Only a peer advertising the safe_ota=2 display-off updater may receive an automatic self-update.
   // Older receivers write OTA flash while RGB framebuffers are live in PSRAM,
   // which is the failure mode that produced the observed colour/scale corruption.
   if(!g_hmiSafeOtaCapable){
@@ -1448,7 +1490,7 @@ static bool hmiFwHandleFrame(const HVP2PRS485::Frame &frame){
     return true;
   }
   if(frame.type == HVP2PRS485::ERROR_MSG){
-    // v26.10.04.01 safe self-update handoff: the displayed CTRL-TS deliberately
+    // v26.10.04.02 safe self-update handoff: the displayed CTRL-TS deliberately
     // refuses to program flash, stages the exact target for a safe reboot, and asks CTRL to retry
     // after it has rebooted into its display-off updater. Treat this one response
     // as an expected transport transition, not as a failed firmware update.
@@ -1456,9 +1498,9 @@ static bool hmiFwHandleFrame(const HVP2PRS485::Frame &frame){
       Serial.println("[HMI FW] CTRL-TS entering safe headless updater; holding discovery until reboot completes");
       hmiFwReset(nullptr);
       // CTRL-TS schedules its software restart 350 ms after this response. Give
-      // it a generous non-blocking 1.2 s quiet window. The main CTRL control loop
+      // it a generous non-blocking 1.8 s quiet window. The main CTRL control loop
       // continues normally; only HMI discovery/firmware traffic is held.
-      g_hmiSafeRebootHoldUntilMs = millis() + 1200;
+      g_hmiSafeRebootHoldUntilMs = millis() + 1800;
       g_lastHmiHelloTxMs = millis();
       return true;
     }
@@ -1785,7 +1827,7 @@ static void reportCtrlAuthorityUpdateProgress(size_t received, size_t total, con
   // CTRL is the RS485 master and CTRL-TS is the operator-visible update surface.
   // Never pre-empt an outstanding POLL/EVENT transaction merely to show progress.
   // A skipped progress sample is preferable to driving both ends of the bus.
-  (void)hmiSendText(msg);
+  (void)hmiSendFirmwareStatusText(msg);
   Serial.printf("[FW AUTH] CTRL progress %s %d%%\n", phase ? phase : "Updating", pct);
 }
 
@@ -1972,7 +2014,7 @@ void loop()
     }
   }
 
-  // v26.10.04.01: do not resend UIL1 layout on a timer.
+  // v26.10.04.02: do not resend UIL1 layout on a timer.
   // Some Waveshare/LVGL builds visibly flicker when the layout header/config
   // is resent periodically. Layout is now sent only at boot, upload/reset,
   // and in response to a CTRL-TS PING/reconnect request.

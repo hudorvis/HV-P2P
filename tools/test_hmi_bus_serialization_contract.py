@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-C=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.04.01/HV_P2P_CTRL_EDGEBOX_v26.10.04.01.ino').read_text()
-T=(ROOT/'HV_P2P_CTRL_TS_v26.10.04.01/HV_P2P_CTRL_TS_v26.10.04.01.ino').read_text()
+C=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.04.02/HV_P2P_CTRL_EDGEBOX_v26.10.04.02.ino').read_text()
+T=(ROOT/'HV_P2P_CTRL_TS_v26.10.04.02/HV_P2P_CTRL_TS_v26.10.04.02.ino').read_text()
 
 # Source contracts: single-flight POLL, explicit timeout, and bulk TX gate.
 assert '#define HMI_POLL_RESPONSE_TIMEOUT_MS 250' in C
@@ -64,4 +64,7 @@ assert m.poll(103); assert m.event(103, 8, 'AUX2') == 'ack'
 assert m.executed == ['AUX1','AUX2']
 print('HMI_BUS_SERIALIZATION_CONTRACT_PASS')
 
-assert '(void)hmiSendText(msg);' in C  # CTRL authority progress cannot bypass bus arbiter
+assert '(void)hmiSendFirmwareStatusText(msg);' in C
+fw=C[C.index('static bool hmiSendFirmwareStatusText'):C.index('static void hmiAckEvent')]
+for guard in ('hmiFwActive()', 'g_hmiPollOutstanding', 'hmiBusRecoveryQuiet()'):
+    assert guard in fw  # firmware status may bypass compatibility, never bus ownership

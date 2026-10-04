@@ -1,3 +1,14 @@
+# v26.10.04.02 — 2026-10-04
+
+- Bench follow-up after `.04.01` confirmed the CTRL-TS AUX reboot and immediate SRVR-offline splash fixes.
+- Fixed CTRL authority OTA progress being suppressed by the normal HMI compatibility gate; firmware status now bypasses only that gate while retaining the single-flight RS485 arbiter.
+- Carries CTRL/W1P firmware phase/percentage in compact HMS1 and defers CTRL-TS self-update until those external rows are inactive, keeping CTRL-TS available as their progress display.
+- Shows `Preparing safe updater` for ~900 ms before the deliberate CTRL-TS headless reboot. Actual CTRL-TS self-flash remains display-off; SRVR continues to show exact percentage.
+- Fixed AUX value clipping so `Practice Mode` fits in the existing tile without changing approved tile geometry.
+- Replaced rectangular CTRL-TS Near/Far ramp bands with proportional wedge rendering and prioritised ramp settings in HMS1 so the visual matches SRVR semantics.
+- Preserved `.04.01` AUX delivery/reboot fix, 60 ms/250 ms/300 ms HMI timing, 4 Hz bulk display cap, W1P 500 ms watchdog and the approved SRVR UI.
+- macOS bundle metadata: short version `26.10.4`, build `2610.4.2`.
+
 # v26.10.04.01 — 2026-10-04
 
 - Fixed the remaining common CTRL-TS AUX-confirm reboot: the production UI sets `lbl_touch_debug=nullptr`, but the two-second Confirmed timeout still called `lv_label_set_text()` directly through that null pointer. The path is now null-safe and regression-locked.

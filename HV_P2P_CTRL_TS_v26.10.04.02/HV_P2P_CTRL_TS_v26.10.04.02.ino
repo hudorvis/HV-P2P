@@ -14,7 +14,7 @@
 #include <esp_system.h>
 #include <esp_attr.h>
 
-#define CTRL_TS_SEMVER "v26.10.04.01"
+#define CTRL_TS_SEMVER "v26.10.04.02"
 #define CTRL_TS_VERSION "HV P2P CTRL-TS " CTRL_TS_SEMVER
 #define CTRL_TS_HW_ID "WS-ESP32S3-7"
 #define HMI_BAUD 115200
@@ -153,6 +153,9 @@ static String g_rx_line;
 static lv_obj_t *lbl_to_near,*lbl_to_far,*lbl_speed_combo,*lbl_touch_debug,*current_marker,*travel_near_marker,*travel_ref_marker,*travel_far_marker,*aux_btn[AUX_COUNT],*aux_state[AUX_COUNT];
 static lv_obj_t *lbl_title,*lbl_subtitle;
 static lv_obj_t *travel_panel,*travel_near_lbl,*travel_ref_lbl,*travel_far_lbl,*ramp_l,*ramp_r;
+static const int RAMP_STRIP_COUNT = 10;
+static lv_obj_t *ramp_l_strip[RAMP_STRIP_COUNT] = {nullptr};
+static lv_obj_t *ramp_r_strip[RAMP_STRIP_COUNT] = {nullptr};
 static lv_obj_t *preset_line[12], *preset_lbl[12], *preset_tri[12];
 static lv_obj_t *pill_ctrl,*pill_srvr,*pill_w1p,*lbl_ctrl,*lbl_srvr,*lbl_w1p;
 static lv_obj_t *dot_ctrl,*dot_w1p,*lbl_ctrl_ip,*lbl_w1p_ip;
@@ -228,7 +231,7 @@ static float g_last_ramp_near_draw = -999999.0f;
 static float g_last_ramp_far_draw = -999999.0f;
 
 // -------------------- CTRL-TS Settings page --------------------
-// Safe v26.10.04.01 approach: no backlight/brightness writes. This page only
+// Safe v26.10.04.02 approach: no backlight/brightness writes. This page only
 // edits CTRL network settings over UART and therefore should preserve the known
 // Keep the proven splash/boot path; do not write to the backlight controller.
 static lv_obj_t *settings_overlay = nullptr;
@@ -276,7 +279,7 @@ static void force_screen_refresh(){
 }
 
 static void screen_keepalive(){
-  // v26.10.04.01: no periodic full-screen or left-strip invalidation or brightness writes.
+  // v26.10.04.02: no periodic full-screen or left-strip invalidation or brightness writes.
   // The Waveshare/LVGL port refreshes changed objects itself; forcing a full
   // screen refresh every second caused the visible 1-second flicker/glitch.
   if(!g_ui_ready) return;
@@ -1183,7 +1186,7 @@ static void confirm_aux_idx(int idx, bool send_command){
   selected_aux = -1;
   g_selected_aux_ms = 0;
   confirmed_aux = idx;
-  clear_confirm_at = now_ms + 2000;  // v26.10.04.01: confirmed AUX tile stays lit for 2 seconds
+  clear_confirm_at = now_ms + 2000;  // v26.10.04.02: confirmed AUX tile stays lit for 2 seconds
   g_aux_suppress_until_ms[idx] = now_ms + 400;
   style_aux(idx,false,true);
   snprintf(msg,sizeof(msg),"AUX %d Confirmed", idx+1);
@@ -1258,7 +1261,7 @@ static void style_w1p_status_pill(int state){
 }
 
 static void style_estop_pill(bool active){
-  // v26.10.04.01: the middle status banner follows the SRVR-resolved state.
+  // v26.10.04.02: the middle status banner follows the SRVR-resolved state.
   // A local CTRL-TS UART/display gap must not invent "E-Stop CTRL" while SRVR
   // is still sending Status | Active. Real CTRL/W1P E-Stops are still shown
   // immediately when SRVR sends status=E-Stop... / status_level=red.
@@ -1306,7 +1309,7 @@ static void refresh_status_ui(){
   style_status_pill_cached(0,pill_ctrl,lbl_ctrl,"CTRL",g_ctrl_ok);
   if(pill_srvr && lbl_srvr) style_status_pill_cached(1,pill_srvr,lbl_srvr,"SRVR",g_srvr_ok);
   style_w1p_status_pill(g_w1p_health);
-  // v26.10.04.01: do not turn the main middle box red purely because the
+  // v26.10.04.02: do not turn the main middle box red purely because the
   // CTRL-TS local UART/display link hiccuped. The SRVR status packet is the
   // authoritative source for Active / Un-Calibrated / E-Stop display state.
   bool stopped_visual = (g_status_level >= 2) || g_estop_active;
@@ -1711,26 +1714,33 @@ static void update_ramp_markers(){
   const int bar_left = BAR_LIMIT_LEFT;
   const int bar_right = BAR_LIMIT_RIGHT;
   const int bar_w = bar_right - bar_left;
-  const int ramp_y = 51;
-  const int ramp_h = 7;
+  const int ramp_top = 47;
   float span = g_far - g_near;
   if(span < 0.001f) span = 0.001f;
-  float frac_near = g_ramp_near / span;
-  float frac_far = g_ramp_far / span;
-  if(frac_near < 0.0f) frac_near = 0.0f;
-  if(frac_near > 1.0f) frac_near = 1.0f;
-  if(frac_far < 0.0f) frac_far = 0.0f;
-  if(frac_far > 1.0f) frac_far = 1.0f;
-  int near_w = (int)(bar_w * frac_near);
-  int far_w = (int)(bar_w * frac_far);
-  if(near_w < 0) near_w = 0;
-  if(near_w > bar_w) near_w = bar_w;
-  if(far_w < 0) far_w = 0;
-  if(far_w > bar_w) far_w = bar_w;
-  lv_obj_set_pos(ramp_l, bar_left, ramp_y);
-  lv_obj_set_size(ramp_l, near_w, ramp_h);
-  lv_obj_set_pos(ramp_r, bar_right - far_w, ramp_y);
-  lv_obj_set_size(ramp_r, far_w, ramp_h);
+  float frac_near = constrain(g_ramp_near / span, 0.0f, 1.0f);
+  float frac_far = constrain(g_ramp_far / span, 0.0f, 1.0f);
+  int near_w = constrain((int)lroundf(bar_w * frac_near), 0, bar_w);
+  int far_w = constrain((int)lroundf(bar_w * frac_far), 0, bar_w);
+
+  // Match the SRVR SpanDiagram semantics: each ramp begins at its hard-limit
+  // endpoint and widens linearly toward the configured ramp boundary. Ten
+  // one-pixel strips give a low-cost triangular wedge without a canvas buffer.
+  for(int row=0; row<RAMP_STRIP_COUNT; ++row){
+    const int nw = near_w > 0 ? max(1, (near_w * (row + 1)) / RAMP_STRIP_COUNT) : 0;
+    const int fw = far_w > 0 ? max(1, (far_w * (row + 1)) / RAMP_STRIP_COUNT) : 0;
+    if(ramp_l_strip[row]){
+      lv_obj_set_pos(ramp_l_strip[row], bar_left, ramp_top + row);
+      lv_obj_set_size(ramp_l_strip[row], nw, 1);
+      if(nw > 0) lv_obj_clear_flag(ramp_l_strip[row], LV_OBJ_FLAG_HIDDEN);
+      else lv_obj_add_flag(ramp_l_strip[row], LV_OBJ_FLAG_HIDDEN);
+    }
+    if(ramp_r_strip[row]){
+      lv_obj_set_pos(ramp_r_strip[row], bar_right - fw, ramp_top + row);
+      lv_obj_set_size(ramp_r_strip[row], fw, 1);
+      if(fw > 0) lv_obj_clear_flag(ramp_r_strip[row], LV_OBJ_FLAG_HIDDEN);
+      else lv_obj_add_flag(ramp_r_strip[row], LV_OBJ_FLAG_HIDDEN);
+    }
+  }
 }
 
 static void update_preset_markers(){
@@ -1850,7 +1860,7 @@ static void apply_hmi_packet(const String &line){
     else g_status_level = 0;
   }
 
-  // v26.10.04.01: if SRVR sends explicit status/status_level, trust it as
+  // v26.10.04.02: if SRVR sends explicit status/status_level, trust it as
   // the authoritative display state. Do not override it locally with a CTRL
   // error just because the touchscreen/CTRL UART side saw a transient gap.
   g_estop_active = packet_estop;
@@ -1980,7 +1990,7 @@ static void apply_hmi_packet(const String &line){
   if(mode_changed || (prev_status_text != g_status_text) || (prev_status_level != g_status_level) || (prev_estop != g_estop_active) || (prev_estop_source != g_estop_source) || (prev_ctrl != g_ctrl_ok) || (prev_srvr != g_srvr_ok) || (prev_w1p != g_w1p_ok) || (prev_w1p_health != g_w1p_health)) {
     refresh_status_ui();
   }
-  // v26.10.04.01: no left-strip/full-screen invalidation on packets; progress marker animates locally.
+  // v26.10.04.02: no left-strip/full-screen invalidation on packets; progress marker animates locally.
 }
 
 
@@ -1989,7 +1999,7 @@ static void apply_layout_packet(const String &line){
   // on CTRL cannot overwrite the screen title/version or trigger header redraws.
   String hint = getField(line, "hint");
   if(lbl_title) set_label_text_if_changed(lbl_title, "HV P2P\nCTRL-TS");
-  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.04.01");
+  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.04.02");
   if(hint.length() && hint.startsWith("ERROR")) set_touch_debug(hint.c_str());
   for(int i=0;i<AUX_COUNT;i++){
     String key = String("aux") + String(i+1);
@@ -2014,6 +2024,11 @@ static void process_text_from_ctrl(String line, bool boot_phase){
   if(is_valid_hmi_packet(line)){
     g_boot_ctrl_confirmed = getFieldBool(line, "ctrl", g_boot_ctrl_confirmed);
     g_boot_srvr_confirmed = getFieldBool(line, "srvr", g_boot_srvr_confirmed);
+    apply_external_fw_fields(line);
+  } else if(line.startsWith("HMS1|")) {
+    // Firmware progress and ramp/settings state ride the priority delta too.
+    // Apply update rows before fw_display_owned() returns so an already-open
+    // update dashboard continues to advance without bulk HMI1 traffic.
     apply_external_fw_fields(line);
   }
   if(boot_phase){
@@ -2169,12 +2184,15 @@ static void fw_handle_begin(const HVP2PRS485::Frame &frame){
       fw_send_text(HVP2PRS485::ERROR_MSG, frame.seq, "fw_safe_handoff_failed");
       return;
     }
-    // SRVR is the progress display for CTRL-TS self-programming. Keep the normal
-    // UI visible until the deliberate safe/headless blackout instead of briefly
-    // flashing a 0% update dashboard just before the panel turns off.
+    // Make the transition explicit: show the coordinated dashboard and mark the
+    // CTRL-TS row as preparing. The actual flash write still happens only after
+    // the deliberate display-off reboot; running RGB/LVGL while programming
+    // ESP32-S3 flash reintroduces the PSRAM/RGB corruption this safe updater was
+    // created to eliminate. SRVR continues to show exact self-flash percentage.
+    fw_set_device_status("CTRL-TS", "Preparing safe updater", 0, true);
     Serial.printf("[FW RX] safe-update reboot requested target=%s sha=%s\n", version.c_str(), sha.c_str());
     fw_send_text(HVP2PRS485::ERROR_MSG, frame.seq, "fw_safe_reboot_retry");
-    g_fw_safe_reboot_due_ms = millis() + 350;
+    g_fw_safe_reboot_due_ms = millis() + 900;
     return;
   }
 
@@ -2480,7 +2498,7 @@ static void create_ui(){
   lv_obj_t *brand=make_panel(frame,SX,HEADER_Y,70,HEADER_H,C_BG,0x63d84e,7);
   lbl_title=make_label(brand,"HV P2P\nCTRL-TS",0,6,&lv_font_montserrat_12,lv_color_hex(C_FG),70);
   lv_obj_set_style_text_line_space(lbl_title,-2,0);
-  lbl_subtitle=make_label(frame,"v26.10.04.01",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
+  lbl_subtitle=make_label(frame,"v26.10.04.02",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
 
   pill_ctrl=make_panel(frame,255,HEADER_Y,126,HEADER_H,C_PANEL,C_BORDER,5);
   dot_ctrl=lv_obj_create(pill_ctrl); lv_obj_set_pos(dot_ctrl,9,15); lv_obj_set_size(dot_ctrl,8,8); lv_obj_set_style_radius(dot_ctrl,LV_RADIUS_CIRCLE,0); lv_obj_set_style_border_width(dot_ctrl,0,0); lv_obj_set_style_bg_color(dot_ctrl,lv_color_hex(0xef5757),0); lv_obj_clear_flag(dot_ctrl,LV_OBJ_FLAG_SCROLLABLE);
@@ -2505,7 +2523,11 @@ static void create_ui(){
     lv_obj_add_event_cb(aux_btn[i],aux_event_cb,LV_EVENT_CLICKED,(void*)(intptr_t)i);
     make_label(aux_btn[i],aux_heads[i],8,8,&lv_font_montserrat_10,lv_color_hex(C_CYAN),AUX_W-16);
     aux_text_lbl[i]=make_label(aux_btn[i],aux_action_part(g_aux_labels[i]).c_str(),8,32,&lv_font_montserrat_12,lv_color_hex(C_FG),AUX_W-16);
-    aux_state[i]=make_label(aux_btn[i],aux_value_part(g_aux_labels[i]).c_str(),8,52,&lv_font_montserrat_12,lv_color_hex(C_GREEN),AUX_W-16);
+    // Value names can be longer than the action (for example "Practice Mode").
+    // Give the value line almost the full card width and keep it explicitly on
+    // one line so LVGL cannot wrap the final characters below the 83 px tile.
+    aux_state[i]=make_label(aux_btn[i],aux_value_part(g_aux_labels[i]).c_str(),4,52,&lv_font_montserrat_10,lv_color_hex(C_GREEN),AUX_W-8);
+    lv_label_set_long_mode(aux_state[i], LV_LABEL_LONG_CLIP);
   }
 
   // Cable/travel panel. Presets green, Ref blue, current skate white/green.
@@ -2520,8 +2542,18 @@ static void create_ui(){
   // horizontal travel line
   lv_obj_t *track=lv_obj_create(travel_panel); lv_obj_set_pos(track,BAR_LIMIT_LEFT,43); lv_obj_set_size(track,BAR_LIMIT_WIDTH,1); lv_obj_set_style_bg_color(track,lv_color_hex(0xd7dad8),0); lv_obj_set_style_border_width(track,0,0); lv_obj_clear_flag(track,LV_OBJ_FLAG_SCROLLABLE);
   // ramp zones below the line
-  ramp_l=make_panel(travel_panel,BAR_LIMIT_LEFT,51,0,7,0x687074,0x687074,0,HV_OPA_35); lv_obj_set_style_border_width(ramp_l,0,0);
-  ramp_r=make_panel(travel_panel,BAR_LIMIT_RIGHT,51,0,7,0x687074,0x687074,0,HV_OPA_35); lv_obj_set_style_border_width(ramp_r,0,0);
+  // Ramping zones use the same triangular Near/Far semantics as SRVR's
+  // SpanDiagram instead of the old thin rectangular bands.
+  for(int r=0; r<RAMP_STRIP_COUNT; ++r){
+    ramp_l_strip[r]=make_panel(travel_panel,BAR_LIMIT_LEFT,47+r,1,1,0x687074,0x687074,0,HV_OPA_35);
+    ramp_r_strip[r]=make_panel(travel_panel,BAR_LIMIT_RIGHT-1,47+r,1,1,0x687074,0x687074,0,HV_OPA_35);
+    lv_obj_set_style_border_width(ramp_l_strip[r],0,0);
+    lv_obj_set_style_border_width(ramp_r_strip[r],0,0);
+    lv_obj_add_flag(ramp_l_strip[r], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(ramp_r_strip[r], LV_OBJ_FLAG_HIDDEN);
+  }
+  ramp_l=ramp_l_strip[RAMP_STRIP_COUNT-1];
+  ramp_r=ramp_r_strip[RAMP_STRIP_COUNT-1];
 
   travel_near_marker=lv_obj_create(travel_panel); lv_obj_set_pos(travel_near_marker,BAR_LIMIT_LEFT,37); lv_obj_set_size(travel_near_marker,2,14); lv_obj_set_style_bg_color(travel_near_marker,lv_color_hex(0xd7dad8),0); lv_obj_set_style_border_width(travel_near_marker,0,0); lv_obj_clear_flag(travel_near_marker,LV_OBJ_FLAG_SCROLLABLE);
   travel_ref_marker=lv_obj_create(travel_panel); lv_obj_set_pos(travel_ref_marker,360,38); lv_obj_set_size(travel_ref_marker,5,5); lv_obj_set_style_radius(travel_ref_marker,1,0); lv_obj_set_style_bg_color(travel_ref_marker,lv_color_hex(C_GREEN),0); lv_obj_set_style_border_width(travel_ref_marker,0,0); lv_obj_clear_flag(travel_ref_marker,LV_OBJ_FLAG_SCROLLABLE);
@@ -2636,7 +2668,7 @@ static void service_link_state(){
 
   bool link_alive = last_hmi_rx && ((millis() - last_hmi_rx) <= HMI_TIMEOUT_MS);
   if(!link_alive) {
-    // v26.10.04.01: local UART/display timeout is a CTRL-TS link warning, not
+    // v26.10.04.02: local UART/display timeout is a CTRL-TS link warning, not
     // proof of a real CTRL E-Stop. Keep the last SRVR-resolved status banner so
     // the touchscreen cannot randomly show "Status | E-Stop CTRL" while SRVR
     // remains "Status | Active". The CTRL status pill can still show ERROR.
