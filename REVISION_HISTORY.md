@@ -1,3 +1,13 @@
+# v26.10.04.06 — 2026-10-04
+
+- Fixed CTRL-TS post-update state convergence: live HMI, AUX assignments, geometry, REF and presets are cached while firmware UI owns the panel and replayed immediately when normal UI returns.
+- Added compact HMS1/HMG1 keepalives so state/geometry self-heal after a missed or suppressed delta.
+- Fixed firmware-dashboard release so repeated inactive keepalives cannot extend the return-to-main timer indefinitely.
+- Added fast CTRL firmware-authority retry during a new SRVR startup session to avoid needing a manual CTRL reboot when the SRVR beacon arrives just before the HTTP authority endpoint is ready.
+- Rebuilt SRVR Limit Calibration to mirror the approved Joystick Calibration wizard: three steps (Near/Far/Ref), Side View cable-position visual, and Near/Ref/Far capture boxes.
+- Limit Calibration now completes on the Ref capture and forces Battery Change Mode Off before returning to normal limit enforcement.
+- Safe CTRL-TS self-flash remains intentionally headless/display-off; SRVR remains the authoritative live percentage during the CTRL-TS flash-write phase.
+
 # v26.10.04.05 — 2026-10-04
 
 - Fixed automatic release convergence for an already-running older CTRL: fresh CTRL `HMI_STATUS` can now schedule the background firmware push without requiring a manual CTRL/CTRL-TS reboot.

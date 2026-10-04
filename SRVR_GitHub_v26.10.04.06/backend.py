@@ -248,7 +248,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.04.05", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.04.06", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -257,7 +257,7 @@ class HVP2PBackend(QObject):
         self._legacy_fw_push_last_attempt = {"ctrl": 0.0, "w1p": 0.0}
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.04.05+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.04.06+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -3266,7 +3266,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.04.05 moves the installed joystick polarity correction into CTRL,
+        # v26.10.04.06 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same
@@ -4479,10 +4479,22 @@ class HVP2PBackend(QObject):
                 self._limit_raw["ref"] = None if raw is None else int(raw)
                 self._sync_position(self.state.ref_point.position_m)
                 self._not_calibrated = False
+                # Completing Limit Calibration always returns Battery Change to
+                # Off. A fresh calibrated system must resume inside its normal
+                # Near/Far safety envelope rather than inheriting a service bypass.
+                self.battery_change_mode = False
+                self._battery_change_went_outside_limits = False
+                # Limit Calibration is exactly three captures (Near/Far/Ref),
+                # matching the three-step Joystick wizard. Close the service
+                # owner before syncing W1P so the final command also exits service
+                # mode and re-enables the normal Near/Far safety envelope.
+                self.calibration_open = False
+                self.calibration_step = 2
+                self.calibration_title = "Set Reference Point"
                 self._sync_w1p_settings()
+                self._sync_service_mode_to_winch(force=True)
                 self._save_config()
-                self.calibration_step = 3
-                self.calibration_title = "Done"
+                self._refresh_setup_mirror()
             else:
                 self.calibration_open = False
                 self._sync_service_mode_to_winch(force=True)
@@ -4513,7 +4525,7 @@ class HVP2PBackend(QObject):
         if self.calibration_step > 0:
             self.calibration_step -= 1
         if self.calibration_type == "Limit":
-            self.calibration_title = ("Set Near Limit","Set Far Limit","Set Reference Point","Done")[self.calibration_step]
+            self.calibration_title = ("Set Near Limit","Set Far Limit","Set Reference Point")[min(self.calibration_step,2)]
         else:
             self.calibration_title = ("Set Zero","Set 20 m","Done")[min(self.calibration_step,2)]
         self.calibrationChanged.emit()

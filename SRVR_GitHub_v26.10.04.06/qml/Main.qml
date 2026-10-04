@@ -592,49 +592,114 @@ ApplicationWindow {
         }
     }
 
-    // -------------------- LOCKED LIMIT / WINCH CALIBRATION POPUP --------------------
+    // -------------------- LIMIT / WINCH CALIBRATION POPUP --------------------
     Rectangle {
         visible:backend.calibrationOpen
         anchors.fill:parent; color:"#99070a0c"; z:50
         MouseArea { anchors.fill:parent }
         Panel {
-            width:f(720); height:f(455); anchors.centerIn:parent
+            width:f(720); height:f(540); anchors.centerIn:parent
+
+            // Limit Calibration deliberately mirrors the approved Joystick
+            // Calibration layout: three steps, one central position visual,
+            // three captured-value boxes, one safety note and the same footer.
             Column {
+                visible: backend.calibrationType === "Limit"
                 anchors.fill:parent; anchors.margins:f(20); spacing:f(14)
-                Row { width:parent.width;height:f(32);Text{width:parent.width-f(35);text:backend.calibrationType==="Winch"?"Winch Calibration":"Limit Calibration";color:blue;font.pixelSize:f(22)}Text{width:f(35);text:"×";color:fg;font.pixelSize:f(26);horizontalAlignment:Text.AlignHCenter;MouseArea{anchors.fill:parent;cursorShape:Qt.PointingHandCursor;onClicked:backend.cancelCalibration()}} }
+
+                Row {
+                    width:parent.width; height:f(32)
+                    Text { width:parent.width-f(35); text:"Limit Calibration"; color:blue; font.pixelSize:f(22); font.weight:Font.Medium }
+                    Text { width:f(35); text:"×"; color:fg; font.pixelSize:f(26); horizontalAlignment:Text.AlignHCenter; MouseArea{anchors.fill:parent;cursorShape:Qt.PointingHandCursor;onClicked:backend.cancelCalibration()} }
+                }
+
+                Row {
+                    width:parent.width; height:f(68); spacing:0
+                    Repeater {
+                        model:["Set Near","Set Far","Set Ref"]
+                        Item {
+                            width:parent.width/3; height:parent.height
+                            Rectangle { width:f(30);height:f(30);radius:f(15);anchors.horizontalCenter:parent.horizontalCenter;y:0;color:index<=backend.calibrationStep?blue:"#1b2024";border.color:index<=backend.calibrationStep?blue:"#6b7275" }
+                            Text { anchors.horizontalCenter:parent.horizontalCenter;y:f(7);text:index+1;color:index<=backend.calibrationStep?"#081316":fg;font.pixelSize:f(13) }
+                            Rectangle { visible:index<2;x:parent.width/2+f(15);y:f(14);width:parent.width-f(30);height:1;color:index<backend.calibrationStep?blue:"#62686b" }
+                            Text { anchors.horizontalCenter:parent.horizontalCenter;y:f(39);text:modelData;color:index<=backend.calibrationStep?blue:fg;font.pixelSize:f(12) }
+                        }
+                    }
+                }
+
+                Rectangle { width:parent.width;height:1;color:"#3b4245" }
+
+                Column {
+                    width:parent.width; height:f(225); spacing:f(10)
+                    Text { width:parent.width;text:backend.calibrationTitle;color:blue;font.pixelSize:f(22);font.weight:Font.Medium;horizontalAlignment:Text.AlignHCenter }
+                    Text {
+                        width:parent.width
+                        text:backend.calibrationStep===0 ? "Move the skate to the NEAR limit position, then capture the position." : backend.calibrationStep===1 ? "Move the skate to the FAR limit position, then capture the position." : "Move the skate to the REF point position, then capture the position to finish calibration."
+                        color:fg;font.pixelSize:f(14);horizontalAlignment:Text.AlignHCenter;wrapMode:Text.WordWrap
+                    }
+                    Item {
+                        width:parent.width; height:f(105)
+                        SpanDiagram {
+                            anchors.fill:parent
+                            title:"Cable Position"; subtitle:"Side View"; sideView:true
+                            cableProfile:backend.cableProfile
+                            currentPosition:backend.position-backend.nearLimit
+                            currentFraction:-1
+                            nearLimit:0
+                            farLimit:Math.max(0.01,backend.farLimit-backend.nearLimit)
+                            refPoint:backend.refPoint-backend.nearLimit
+                            refFraction:-1
+                            presets:[]; showPresets:false; showGeometryPoints:false
+                            showSkate:true
+                            showReference:backend.limitCalibrationCaptures.ref!=="—"
+                            nearRamp:backend.nearRampDistance; farRamp:backend.farRampDistance
+                            nearRampFraction:backend.nearRampFraction; farRampFraction:backend.farRampFraction
+                            headingColor:blue; subheadingColor:blue
+                        }
+                    }
+                    Row {
+                        width:parent.width; height:f(44); spacing:f(12)
+                        Repeater {
+                            model:[{label:"NEAR",key:"near"},{label:"REF",key:"ref"},{label:"FAR",key:"far"}]
+                            Item {
+                                width:(parent.width-f(24))/3; height:parent.height
+                                Text { anchors.left:parent.left;anchors.verticalCenter:parent.verticalCenter;width:f(48);text:modelData.label;color:blue;font.pixelSize:f(10) }
+                                HVReadout { anchors.right:parent.right;width:parent.width-f(52);height:f(31);anchors.verticalCenter:parent.verticalCenter;text:String(backend.limitCalibrationCaptures[modelData.key]) }
+                            }
+                        }
+                    }
+                    Text { width:parent.width;text:"Current position:  "+String(backend.limitCalibrationCaptures.current);color:muted;font.pixelSize:f(12);horizontalAlignment:Text.AlignHCenter }
+                }
+
+                Rectangle {
+                    width:parent.width;height:f(52);radius:f(5);color:"#1b2024";border.color:"#3f4649"
+                    Text { anchors.centerIn:parent;width:parent.width-f(24);text:"ⓘ   Capture Near, Far and Ref in order. Motion remains under calibration/service safety and Battery Change is forced Off when calibration completes.";color:muted;font.pixelSize:f(13);horizontalAlignment:Text.AlignHCenter;wrapMode:Text.WordWrap }
+                }
+
+                Item {
+                    width:parent.width;height:f(40)
+                    HVButton { anchors.left:parent.left;width:f(110);height:parent.height;text:"Cancel";onClicked:backend.cancelCalibration() }
+                    HVButton { anchors.right:limitNextButton.left;anchors.rightMargin:f(12);width:f(110);height:parent.height;text:"Back";enabled:backend.calibrationStep>0;onClicked:backend.calibrationBack() }
+                    HVButton { id:limitNextButton;anchors.right:parent.right;width:f(190);height:parent.height;text:backend.calibrationStep===0?"Set Near & Continue":backend.calibrationStep===1?"Set Far & Continue":"Set Ref & Done";selected:true;accent:blue;onClicked:backend.calibrationNext() }
+                }
+            }
+
+            // Winch Calibration is separate from the three-point Limit wizard
+            // and retains its established two-capture workflow.
+            Column {
+                visible: backend.calibrationType === "Winch"
+                anchors.fill:parent; anchors.margins:f(20); spacing:f(14)
+                Row { width:parent.width;height:f(32);Text{width:parent.width-f(35);text:"Winch Calibration";color:blue;font.pixelSize:f(22)}Text{width:f(35);text:"×";color:fg;font.pixelSize:f(26);horizontalAlignment:Text.AlignHCenter;MouseArea{anchors.fill:parent;cursorShape:Qt.PointingHandCursor;onClicked:backend.cancelCalibration()}} }
                 Row {
                     width:parent.width;height:f(68);spacing:0
                     Repeater {
-                        model:backend.calibrationType==="Winch"?["Set Zero","Set 20 m","Done"]:["Set Near","Set Far","Set Ref","Done"]
-                        Item { width:parent.width/(backend.calibrationType==="Winch"?3:4);height:parent.height;Rectangle{width:f(30);height:f(30);radius:f(15);anchors.horizontalCenter:parent.horizontalCenter;y:0;color:index<=backend.calibrationStep?green:"#1b2024";border.color:index<=backend.calibrationStep?green:"#6b7275"}Text{anchors.horizontalCenter:parent.horizontalCenter;y:f(7);text:index+1;color:index<=backend.calibrationStep?"#101410":fg;font.pixelSize:f(13)}Rectangle{visible:index<(backend.calibrationType==="Winch"?2:3);x:parent.width/2+f(15);y:f(14);width:parent.width-f(30);height:1;color:index<backend.calibrationStep?green:"#62686b"}Text{anchors.horizontalCenter:parent.horizontalCenter;y:f(39);text:modelData;color:fg;font.pixelSize:f(12)} }
+                        model:["Set Zero","Set 20 m","Done"]
+                        Item { width:parent.width/3;height:parent.height;Rectangle{width:f(30);height:f(30);radius:f(15);anchors.horizontalCenter:parent.horizontalCenter;y:0;color:index<=backend.calibrationStep?green:"#1b2024";border.color:index<=backend.calibrationStep?green:"#6b7275"}Text{anchors.horizontalCenter:parent.horizontalCenter;y:f(7);text:index+1;color:index<=backend.calibrationStep?"#101410":fg;font.pixelSize:f(13)}Rectangle{visible:index<2;x:parent.width/2+f(15);y:f(14);width:parent.width-f(30);height:1;color:index<backend.calibrationStep?green:"#62686b"}Text{anchors.horizontalCenter:parent.horizontalCenter;y:f(39);text:modelData;color:fg;font.pixelSize:f(12)} }
                     }
                 }
                 Rectangle { width:parent.width;height:1;color:"#3b4245" }
-                Row {
-                    width:parent.width;height:f(190);spacing:f(24)
-                    Item { width:parent.width*.42;height:parent.height;Canvas{anchors.fill:parent;onPaint:{var c=getContext("2d");c.reset();c.strokeStyle="#d8ddda";c.lineWidth=1;c.beginPath();c.moveTo(52,120);c.lineTo(65,48);c.lineTo(78,120);c.moveTo(45,120);c.lineTo(85,120);c.moveTo(52,90);c.lineTo(78,90);c.stroke();c.strokeRect(width-76,82,38,30);c.strokeRect(width-82,89,6,14);c.strokeRect(width-38,89,6,14);c.strokeStyle=green;c.setLineDash([5,4]);c.beginPath();c.moveTo(90,98);c.lineTo(width-90,98);c.stroke()}}Text{anchors.left:parent.left;anchors.bottom:parent.bottom;text:backend.calibrationStep===0?"NEAR\nLIMIT":backend.calibrationStep===1?"FAR\nLIMIT":"REF\nPOINT";color:fg;font.pixelSize:f(14);horizontalAlignment:Text.AlignHCenter}Text{anchors.right:parent.right;anchors.bottom:parent.bottom;text:"SKATE";color:fg;font.pixelSize:f(14)} }
-                    Rectangle { width:1;height:parent.height;color:"#3a4144" }
-                    Column { width:parent.width*.53;height:parent.height;spacing:f(14);Text{text:backend.calibrationTitle;color:blue;font.pixelSize:f(22)}Text{width:parent.width;text:backend.calibrationStep===0?"Move the skate to the near limit position,\nthen press Save Near & Continue.":backend.calibrationStep===1?"Move the skate to the far limit position,\nthen press Save Far & Continue.":backend.calibrationStep===2?"Move the skate to the reference position,\nthen press Save Ref & Continue.":"Calibration points have been saved.";color:fg;font.pixelSize:f(15);lineHeight:1.45}Rectangle{
-                            width:parent.width;height:f(64);radius:f(5);color:"#1b2024";border.color:"#3f4649"
-                            Text{
-                                anchors.centerIn:parent;width:parent.width-f(20)
-                                text:backend.calibrationType==="Limit"
-                                     ? ("NEAR  " + String(backend.limitCalibrationCaptures.near) +
-                                        "     REF  " + String(backend.limitCalibrationCaptures.ref) +
-                                        "     FAR  " + String(backend.limitCalibrationCaptures.far) +
-                                        "\nCURRENT POSITION  " + String(backend.limitCalibrationCaptures.current))
-                                     : "ⓘ   Ensure the skate is stable at the selected position before saving."
-                                color:backend.calibrationType==="Limit"?fg:muted;font.pixelSize:f(12)
-                                horizontalAlignment:Text.AlignHCenter;wrapMode:Text.WordWrap
-                            }
-                        } }
-                }
-                Item {
-                    width:parent.width;height:f(40)
-                    HVButton{anchors.left:parent.left;width:f(110);height:parent.height;text:"Cancel";onClicked:backend.cancelCalibration()}
-                    HVButton{anchors.right:nextButton.left;anchors.rightMargin:f(12);width:f(110);height:parent.height;text:"Back";enabled:backend.calibrationStep>0;onClicked:backend.calibrationBack()}
-                    HVButton{id:nextButton;anchors.right:parent.right;width:f(180);height:parent.height;text:backend.calibrationType==="Limit"?(backend.calibrationStep===0?"Save Near & Continue":backend.calibrationStep===1?"Save Far & Continue":backend.calibrationStep===2?"Save Ref & Continue":"Done"):(backend.calibrationStep===0?"Set Zero & Continue":backend.calibrationStep===1?"Set 20 m & Continue":"Done");selected:true;onClicked:backend.calibrationNext()}
-                }
+                Column { width:parent.width;height:f(280);spacing:f(18);Text{width:parent.width;text:backend.calibrationTitle;color:blue;font.pixelSize:f(22);horizontalAlignment:Text.AlignHCenter}Text{width:parent.width;text:backend.calibrationStep===0?"Set the zero position, then continue.":backend.calibrationStep===1?"Move the skate exactly 20 m, then continue.":"Winch calibration has been saved.";color:fg;font.pixelSize:f(15);horizontalAlignment:Text.AlignHCenter;wrapMode:Text.WordWrap}Rectangle{width:parent.width;height:f(70);radius:f(5);color:"#1b2024";border.color:"#3f4649";Text{anchors.centerIn:parent;width:parent.width-f(24);text:"ⓘ   Ensure the skate is stable at the selected position before saving.";color:muted;font.pixelSize:f(13);horizontalAlignment:Text.AlignHCenter;wrapMode:Text.WordWrap}} }
+                Item { width:parent.width;height:f(40);HVButton{anchors.left:parent.left;width:f(110);height:parent.height;text:"Cancel";onClicked:backend.cancelCalibration()}HVButton{anchors.right:winchNextButton.left;anchors.rightMargin:f(12);width:f(110);height:parent.height;text:"Back";enabled:backend.calibrationStep>0;onClicked:backend.calibrationBack()}HVButton{id:winchNextButton;anchors.right:parent.right;width:f(180);height:parent.height;text:backend.calibrationStep===0?"Set Zero & Continue":backend.calibrationStep===1?"Set 20 m & Continue":"Done";selected:true;onClicked:backend.calibrationNext()} }
             }
         }
     }

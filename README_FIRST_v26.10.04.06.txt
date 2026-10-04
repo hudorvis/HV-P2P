@@ -1,4 +1,4 @@
-HV P2P v26.10.04.05 - READ THIS FIRST
+HV P2P v26.10.04.06 - READ THIS FIRST
 
 This is the 2026-10-04 bench-follow-up release based directly on
 HV P2P v26.10.04.04.

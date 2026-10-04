@@ -16,7 +16,7 @@
 static bool g_ads_inited = false;
 static uint8_t ADS_ADDR = 0x48;
 
-#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.10.04.05"
+#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.10.04.06"
 #define CTRL_HMI_ARCH "EdgeBox ESP-100 + isolated RS485 Waveshare thin HMI"
 
 IPAddress local_IP(172,20,1,101);
@@ -46,6 +46,8 @@ IPAddress server_IP(172,20,1,100);
 #define HMI_POLL_RESPONSE_TIMEOUT_MS 250
 #define HMI_POLL_RECOVERY_QUIET_MS 300
 #define DISPLAY_KEEPALIVE_MS   3000
+#define HMI_STATE_KEEPALIVE_MS  1000
+#define HMI_GEOMETRY_KEEPALIVE_MS 2500
 #define SRVR_DISPLAY_TIMEOUT_MS 5000
 #define SRVR_PEER_TIMEOUT_MS     750
 #define HMI_BAUD              115200
@@ -235,7 +237,7 @@ static uint32_t lastHmiLayoutForward = 0;
 #define HMI_LAYOUT_MAX_LEN 2200
 static const char* HMI_LAYOUT_NVS_NS = "hmiui";
 static const char* HMI_LAYOUT_NVS_KEY = "layout";
-static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.10.04.05|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
+static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.10.04.06|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
 
 
 
@@ -260,10 +262,10 @@ static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_CTRL";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL_TS,W1P,W1P_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_CTRL_v*.ino.bin firmware. CTRL-TS and W1P files are rejected.";
 static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=CTRL;";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.04.05;";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.04.06;";
 static const char* HV_AUTH_ROLE = "CTRL";
 static const char* HV_AUTH_TARGET = "EDGEBOX_ESP100";
-static const char* HV_AUTH_VERSION = "v26.10.04.05";
+static const char* HV_AUTH_VERSION = "v26.10.04.06";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
@@ -522,7 +524,7 @@ static void hvLoadHmiLayoutConfig() {
     int nl = stored.indexOf('\n');
     if(nl >= 0) stored = stored.substring(0, nl);
     stored.trim();
-    // v26.10.04.05 migration: older CTRL NVS layouts were main4/aux1-aux4.
+    // v26.10.04.06 migration: older CTRL NVS layouts were main4/aux1-aux4.
     // Preserve the operator's stored labels/settings but expose the new AUX5 tile.
     if(stored.indexOf("|layout=main4") >= 0) stored.replace("|layout=main4", "|layout=main5");
     if(stored.indexOf("|aux5=") < 0) stored += "|aux5=AUX 5";
@@ -651,6 +653,8 @@ static String g_latestHmiStatePacket;
 static bool g_hmiStatePacketPending = false;
 static String g_latestHmiGeometryPacket;
 static bool g_hmiGeometryPacketPending = false;
+static uint32_t g_lastHmiStateTxMs = 0;
+static uint32_t g_lastHmiGeometryTxMs = 0;
 static uint32_t g_lastSrvrDisplayMs = 0;
 static uint32_t g_lastSrvrRxMs = 0;
 static bool g_srvrExplicitOffline = false;
@@ -673,6 +677,8 @@ static String g_srvrRequiredVersion;
 static String g_srvrRequiredSha;
 static uint32_t g_fwAuthorityLastAttemptMs = 0;
 static uint32_t g_fwAuthorityRetryDelayMs = 1500;
+static uint32_t g_fwAuthorityFastRetryUntilMs = 0;
+static String g_srvrFirmwareSession;
 
 
 static bool i2cProbe(uint8_t addr) {
@@ -996,7 +1002,7 @@ static void sendHmiStatusToSrvr()
   uint32_t age = g_lastHmiRxMs ? (now - g_lastHmiRxMs) : 999999;
   String line = "HMI_STATUS";
   line += "|ctrl_ts=" + String(hmiLinkConnected() ? 1 : 0);
-  line += "|ctrl_version=v26.10.04.05";
+  line += "|ctrl_version=v26.10.04.06";
   line += "|fw_match=" + String(g_srvrFirmwareMatched ? 1 : 0);
   line += "|fw_authority=" + g_srvrFirmwareState;
   line += "|fw_required=" + (g_srvrRequiredVersion.length() ? g_srvrRequiredVersion : String("unknown"));
@@ -1124,13 +1130,23 @@ static bool applySrvrFirmwareBeacon(const String &line)
   if(!announced.length()) return false;
   srvrOnline = true;
   g_lastSrvrRxMs = millis();
-  if(announced != HV_AUTH_VERSION && g_srvrFirmwareMatched) {
+  const String session = hvGetPipeField(line, "session").length() ? hvGetPipeField(line, "session") : hvGetPipeField(line, "fw_session");
+  const bool newSession = session.length() && session != g_srvrFirmwareSession;
+  if(newSession) g_srvrFirmwareSession = session;
+  if(announced != HV_AUTH_VERSION) {
+    const bool wasMatched = g_srvrFirmwareMatched;
     g_srvrFirmwareMatched = false;
     g_srvrFirmwareState = "authority_changed";
+    // SRVR can advertise its new release a fraction of a second before its HTTP
+    // authority endpoint is accepting connections. Retry quickly during that
+    // startup window instead of appearing idle until a manual node reboot.
     g_fwAuthorityLastAttemptMs = 0;
     g_fwAuthorityRetryDelayMs = 0;
-    Serial.printf("[FW AUTH] SRVR beacon changed %s -> %s; entering safe update path\n",
-                  HV_AUTH_VERSION, announced.c_str());
+    g_fwAuthorityFastRetryUntilMs = millis() + 15000;
+    if(wasMatched || newSession) {
+      Serial.printf("[FW AUTH] SRVR beacon changed %s -> %s; entering fast safe-update discovery\n",
+                    HV_AUTH_VERSION, announced.c_str());
+    }
   }
   return true;
 }
@@ -1523,7 +1539,7 @@ static bool hmiFwHandleFrame(const HVP2PRS485::Frame &frame){
     return true;
   }
   if(frame.type == HVP2PRS485::ERROR_MSG){
-    // v26.10.04.05 safe self-update handoff: the displayed CTRL-TS deliberately
+    // v26.10.04.06 safe self-update handoff: the displayed CTRL-TS deliberately
     // refuses to program flash, stages the exact target for a safe reboot, and asks CTRL to retry
     // after it has rebooted into its display-off updater. Treat this one response
     // as an expected transport transition, not as a failed firmware update.
@@ -1895,7 +1911,9 @@ static void serviceSrvrFirmwareAuthority()
   String err;
   if(!HVP2PAuthorityOTA::fetchManifest(server_IP, HV_AUTH_ROLE, manifest, err)) {
     g_srvrFirmwareState = String("authority_") + err;
-    g_fwAuthorityRetryDelayMs = 5000;
+    // During a newly-started SRVR session the beacon may beat the HTTP server
+    // to readiness. Fast retry prevents the old node sitting apparently idle.
+    g_fwAuthorityRetryDelayMs = (g_fwAuthorityFastRetryUntilMs && (int32_t)(now - g_fwAuthorityFastRetryUntilMs) < 0) ? 500 : 5000;
     return;
   }
   if(manifest.role != HV_AUTH_ROLE || manifest.target != HV_AUTH_TARGET || manifest.version != manifest.release) {
@@ -1932,6 +1950,7 @@ static void serviceSrvrFirmwareAuthority()
       g_srvrFirmwareMatched = true;
       g_srvrFirmwareState = "matched";
       g_fwAuthorityRetryDelayMs = 1500;
+      g_fwAuthorityFastRetryUntilMs = 0;
       g_lastHmiHelloTxMs = 0;
       Serial.printf("[FW AUTH] CTRL exact SRVR image verified %s sha=%s\n", manifest.version.c_str(), runningSha.c_str());
       return;
@@ -2054,22 +2073,28 @@ void loop()
 
   // Priority state/config delta: this is intentionally sent before the bulk HMI
   // telemetry packet so operator state changes cannot be hidden behind an
-  // ~900-byte transfer. It uses the same single-flight bus gate as all TEXT.
+  // ~900-byte transfer. Periodic compact refreshes make the display self-healing
+  // if a delta arrived while the update dashboard owned the screen or after a
+  // transient reconnect.
+  if(g_latestHmiStatePacket.length() && (now - g_lastHmiStateTxMs) >= HMI_STATE_KEEPALIVE_MS) g_hmiStatePacketPending = true;
+  if(g_latestHmiGeometryPacket.length() && (now - g_lastHmiGeometryTxMs) >= HMI_GEOMETRY_KEEPALIVE_MS) g_hmiGeometryPacketPending = true;
   bool hmiPriorityPacketSent = false;
   if(g_hmiStatePacketPending && g_latestHmiStatePacket.length() && hmiNormalTxAllowed()) {
     if(hmiSendText(g_latestHmiStatePacket)) {
       g_hmiStatePacketPending = false;
+      g_lastHmiStateTxMs = now;
       hmiPriorityPacketSent = true;
     }
   }
   if(!hmiPriorityPacketSent && g_hmiGeometryPacketPending && g_latestHmiGeometryPacket.length() && hmiNormalTxAllowed()) {
     if(hmiSendText(g_latestHmiGeometryPacket)) {
       g_hmiGeometryPacketPending = false;
+      g_lastHmiGeometryTxMs = now;
       hmiPriorityPacketSent = true;
     }
   }
 
-  // v26.10.04.05: do not resend UIL1 layout on a timer.
+  // v26.10.04.06: do not resend UIL1 layout on a timer.
   // Some Waveshare/LVGL builds visibly flicker when the layout header/config
   // is resent periodically. Layout is now sent only at boot, upload/reset,
   // and in response to a CTRL-TS PING/reconnect request.
