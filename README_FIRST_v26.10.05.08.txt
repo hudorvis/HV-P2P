@@ -1,7 +1,16 @@
-HV P2P v26.10.05.07 - READ THIS FIRST
+HV P2P v26.10.05.08 - READ THIS FIRST
 
-This is the 2026-10-05 bench-follow-up release based directly on the authoritative
-HV P2P v26.10.05.06 source supplied for this revision.
+This is the 2026-10-05 native-build hotfix release based on the audited
+HV P2P v26.10.05.07 source, whose functional changes were developed directly
+from the authoritative v26.10.05.06 source supplied for this work.
+
+NATIVE BUILD HOTFIX
+- The staged CTRL-TS application is no longer emitted as a multi-megabyte
+  comma-separated integer initializer inside CTRL's main header.
+- A small generated metadata header now references one generated .cpp carrier
+  translation unit containing the exact native image bytes.
+- Size, ESP image magic, SHA-256 and byte-for-byte identity are verified before
+  CTRL compilation. The RS485 updater protocol and transferred bytes are unchanged.
 
 KEY FIXES
 - CTRL-TS final firmware reboot now requires proof of a new boot_id plus exact
