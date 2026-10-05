@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER="26.10.05.08"
+VER="26.10.05.09"
 W=(ROOT/f"HV_P2P_W1P_EDGEBOX_v{VER}/HV_P2P_W1P_EDGEBOX_v{VER}.ino").read_text()
 C=(ROOT/f"HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino").read_text()
 T=(ROOT/f"HV_P2P_CTRL_TS_v{VER}/HV_P2P_CTRL_TS_v{VER}.ino").read_text()
@@ -23,7 +23,7 @@ edgebox_fqbn = N[N.index('EDGEBOX_FQBN'):N.index('HMI_FQBN')]
 assert 'PartitionScheme=app3M_fat9M_16MB' in edgebox_fqbn
 assert 'PartitionScheme=custom' not in edgebox_fqbn
 
-# v26.10.05.08 operator input / safety refinements.
+# v26.10.05.09 operator input / safety refinements.
 assert 'self.reverse_joystick = False' in B
 assert 'VEL_KEEPALIVE_S = 0.15' in B
 assert 'def joystickPercentage' in B
@@ -36,9 +36,9 @@ assert 'sgmSelectChannelVerified(SGM_CONFIG_AI0_CONT_800SPS_6V144, "AI0 E-stop")
 assert 'sgmEnsureChannelVerified(SGM_CONFIG_AI1_CONT_800SPS_6V144, "AI1 joystick")' in C
 assert 'Always restore and verify AI1' in C
 assert 'CTRL_ESTOP_HEALTHY_MIN_V = 3.5f' in C and 'CTRL_ESTOP_HEALTHY_CONFIRM_SAMPLES = 3' in C
-# v26.10.05.08 direction-regression guard: CTRL normalises physical Left/Right
+# v26.10.05.09 direction-regression guard: CTRL normalises physical Left/Right
 # before SRVR, so the default backend direction is Normal and sign is preserved.
-BT=(ROOT/'SRVR_GitHub_v26.10.05.08/tools/test_backend_logic.py').read_text()
+BT=(ROOT/'SRVR_GitHub_v26.10.05.09/tools/test_backend_logic.py').read_text()
 assert 'assert b.reverse_joystick is False' in BT
 assert 'physical Left=-1' in B
 assert 'b.requested_speed_mps < 0.0' in BT
@@ -53,7 +53,7 @@ assert 'def systemStatusLevel' in B and 'System | Uncalibrated' in B
 assert 'g_boot_session_id' in W and 'BOOT_ID=' in W
 assert 'fw_ensure_update_screen' in T and 'fw_display_owned' in T
 assert 'if(fw_display_owned())' in T and 'CTRL-TS self-flash' in T
-# v26.10.05.08 safe CTRL-TS self-update architecture.  The .02.01/.02.02
+# v26.10.05.09 safe CTRL-TS self-update architecture.  The .02.01/.02.02
 # experiment that changed RGB PCLK/bounce buffers and restarted RGB DMA while
 # flash was being written is intentionally prohibited.  A displayed FW_BEGIN
 # stages the exact target in retained internal RAM then reboots into a
@@ -107,7 +107,7 @@ assert 'lcd_init()' not in headless_branch and 'psramFound()' not in headless_br
 reboot_start=T.index('static void fw_handle_reboot')
 assert 'fw_clear_headless_update_state();' in T[reboot_start:T.index('static void fw_service_reboot', reboot_start)]
 
-# v26.10.05.08 field-feedback regressions: a newer SRVR must be noticed without
+# v26.10.05.09 field-feedback regressions: a newer SRVR must be noticed without
 # power-cycling field nodes *and without periodic HTTP in the healthy real-time
 # loops*. SRVR's normal UDP beacons invalidate an old match; only the already
 # fail-closed unmatched/update path may perform HTTP/SHA/OTA work.
@@ -199,7 +199,7 @@ assert 'Joystick calibration saved' in joy
 assert 'def joystickPercentage' in B and '_operator_joystick_axis(self._calibrated_joystick(self._ctrl_axis)) * 100.0' in B
 assert 'freed_snap = self._freed_snapshot()' in B
 
-# v26.10.05.08 bench-hardening regressions: ordinary AUX confirmation must never
+# v26.10.05.09 bench-hardening regressions: ordinary AUX confirmation must never
 # execute UI/protocol/String work in the LVGL callback or reboot CTRL-TS. Reset
 # identity is relayed through CTRL so a future hardware reset is diagnosable.
 aux_cb=T[T.index('static void aux_event_cb'):T.index('static void service_aux_touch_events', T.index('static void aux_event_cb'))]

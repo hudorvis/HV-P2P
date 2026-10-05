@@ -1,36 +1,31 @@
-# v26.10.05.08 — 2026-10-05
+# v26.10.05.09 — 2026-10-05
 
-- Native-build hotfix after GitHub Actions reached the staged CTRL compile and returned exit status 1 following successful CTRL-TS compilation.
-- Replaced the generated multi-megabyte comma-separated CTRL-TS byte-array header with a small metadata header plus one generated external C++ carrier translation unit using escaped byte-string literals. The carried firmware bytes, SHA-256, version/protocol target and RS485 update protocol are unchanged.
-- `verify_staged_hmi_header.py` now reconstructs and verifies every external carrier byte against the native CTRL-TS `.bin`; the native builder rejects a missing carrier source or unexpectedly bulky metadata header before CTRL compilation.
-- Added `test_native_carrier_compile_0508.py`; normal source audits exercise a 1 MiB generated carrier and the release audit separately stress-tested the complete 0x380000 / 3.5 MiB HMI slot.
-- Preserved all `.05.07` updater, calibration, layout, W1P status-arbitration, macOS background-liveness and VEL-refresh fixes without changing W1P's independent 500 ms watchdog or the motion/safety architecture.
-- macOS bundle metadata: short version `26.10.5`, build `2610.5.8`.
-
-# v26.10.05.07 — 2026-10-05
-
-- Final CTRL-TS update completion now requires a new touchscreen `boot_id` plus the exact required version/SHA; a REBOOT ACK is treated only as command receipt. CTRL retains a bounded reboot-confirm phase so older safe-updater firmware cannot remain indefinitely on the black headless screen after acknowledging REBOOT.
-- Rebalanced CTRL-TS travel geometry: AUX tiles are slightly shorter, the travel panel is taller, and Near/Far values, REF, track/skate/ramp zones and preset label lanes no longer share the same vertical text band. Minimum operational font remains Montserrat 10.
-- Renamed SRVR Settings -> CTRL-TS subheading from `CTRL-TS Link` to `Link` and updated validators.
-- Replaced unsupported em-dash calibration placeholders with ASCII `-`.
-- Added CTRL-TS calibration Cancel end-to-end (`CAL_CANCEL` -> CTRL 16-bit event flag -> SRVR). Joystick cancellation remains non-committing; Limit Calibration is now transactional so Near/Far/Ref and pending Winch Invert commit only at the final Reference capture. Cancel stops motion, exits service mode safely, requires joystick neutral before normal motion and preserves the previous valid calibration.
-- W1P STATUS parsing is validate-before-commit: one malformed/incomplete datagram is rejected/counted without erasing the last valid safety snapshot; PONG no longer invalidates W1P STATUS authority. Genuine stale/fault states remain fail-safe.
-- Added a dedicated 250 ms SRVR background liveness worker so CTRL peer-alive traffic no longer depends solely on macOS Qt foreground scheduling.
-- Added a short background non-zero VEL refresh lease in the W1P networking thread to bridge brief missed ~150 ms Qt refresh intervals. The lease expires quickly if the control producer stalls, preserving the unchanged independent W1P 500 ms watchdog.
-- These communication fixes address the reported random Limit Calibration stops that were re-arming the existing joystick-neutral safety latch after false/transient safety interruptions; the neutral-return interlock itself remains unchanged for genuine faults.
-- Added/updated `.05.07` regression contracts covering reboot confirmation, calibration Cancel/transactionality, layout, status rejection and background communications.
-- macOS bundle metadata: short version `26.10.5`, build `2610.5.7`.
-
-# v26.10.05.06 — 2026-10-05
-
-- Reordered SRVR AUX Assign choices exactly as requested: general actions alphabetically, then Near, Ref, Far, Preset Recall, Preset Save and Preset Slip groups.
-- Hardened automatic firmware convergence after bench testing still required manual CTRL/CTRL-TS reboots: modern pull-first fallback reduced to 2.5 s and mismatch timing self-establishes from any fresh older node identity.
-- CTRL-TS final-stage authorization now requires CTRL current first but cannot be held false indefinitely by stale/missing W1P status; only active W1P updating briefly defers the display stage.
-- Added a CTRL safe-update continuation latch after the first authorised `fw_safe_reboot_retry`, carrying the exact update across `.04.07`'s display-off reboot without depending on a transient coordinator grant. New SRVR sessions/offline state invalidate the latch.
-- Final CTRL-TS verified-image REBOOT handshake retries at 750 ms up to eight times for older safe_ota=2 receivers; other firmware traffic retains the conservative 3 s / five-retry policy.
-- Added `test_firmware_update_convergence_0506.py` and updated coordinator/transport/AUX-order regressions.
-- W1P 500 ms VEL watchdog, Leadshine motion architecture, E-stop/hard-limit protections, predictive stopping and safe headless touchscreen flash architecture remain unchanged.
-- macOS bundle metadata: short version `26.10.5`, build `2610.5.6`.
+- Rebuilt directly from the user-supplied authoritative `v26.10.05.06` source.
+- Fixed CTRL-TS final-update convergence: REBOOT ACK is no longer completion;
+  CTRL waits for exact target identity plus reboot proof and continues bounded
+  reboot enforcement/HELLO discovery, including legacy no-preboot-id fallback.
+- Rebalanced CTRL-TS AUX/travel geometry so Near/Far, REF, skate/ramp graphics and
+  Preset names have separate lanes without reducing the minimum small font.
+- Renamed Settings -> CTRL-TS subheading from `CTRL-TS Link` to `Link`.
+- Changed uncaptured calibration values to ASCII `-`; added retry-safe touchscreen
+  Cancel to Joystick and Limit Calibration.
+- Made Limit Calibration transactional so Near/Far/Ref/Winch Invert commit only at
+  final Ref; Cancel preserves the previous valid calibration and exits service
+  motion with the neutral-return interlock intact.
+- Changed W1P telemetry arbitration to validate-before-commit; malformed STATUS and
+  PONG no longer create a one-frame false safety/red state while genuine stale or
+  fault conditions remain fail-safe.
+- Added background SRVR->CTRL liveness and short leased W1P VEL-refresh bridging to
+  reduce macOS background scheduling disconnects/random calibration stops while
+  preserving normal ~150 ms refresh and the unchanged W1P 500 ms watchdog.
+- Corrected the GitHub C++ compile error from intermediate `.05.07/.05.08`: the
+  reboot-confirmation `newBootId` is now declared in HELLO_RESP scope. Added a
+  regression specifically preventing the old nested-scope form.
+- Removed the unnecessary `.05.08` carrier redesign; native build/embed architecture
+  is the original `.05.06` design.
+- Source/static/regression/preflight suite passes locally; native ESP32 and frozen
+  desktop compilation remain GitHub Actions gates.
+- macOS bundle metadata: short version `26.10.5`, build `2610.5.9`.
 
 # v26.10.05.05 — 2026-10-05
 

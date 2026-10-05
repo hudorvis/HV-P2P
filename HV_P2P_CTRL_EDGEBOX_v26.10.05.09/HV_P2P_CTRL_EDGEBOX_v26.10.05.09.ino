@@ -16,7 +16,7 @@
 static bool g_ads_inited = false;
 static uint8_t ADS_ADDR = 0x48;
 
-#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.10.05.08"
+#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.10.05.09"
 #define CTRL_HMI_ARCH "EdgeBox ESP-100 + isolated RS485 Waveshare thin HMI"
 
 IPAddress local_IP(172,20,1,101);
@@ -244,7 +244,7 @@ static uint32_t lastHmiLayoutForward = 0;
 #define HMI_LAYOUT_MAX_LEN 2200
 static const char* HMI_LAYOUT_NVS_NS = "hmiui";
 static const char* HMI_LAYOUT_NVS_KEY = "layout";
-static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.10.05.08|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
+static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.10.05.09|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
 
 
 
@@ -269,10 +269,10 @@ static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_CTRL";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL_TS,W1P,W1P_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_CTRL_v*.ino.bin firmware. CTRL-TS and W1P files are rejected.";
 static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=CTRL;";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.05.08;";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.05.09;";
 static const char* HV_AUTH_ROLE = "CTRL";
 static const char* HV_AUTH_TARGET = "EDGEBOX_ESP100";
-static const char* HV_AUTH_VERSION = "v26.10.05.08";
+static const char* HV_AUTH_VERSION = "v26.10.05.09";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
@@ -531,7 +531,7 @@ static void hvLoadHmiLayoutConfig() {
     int nl = stored.indexOf('\n');
     if(nl >= 0) stored = stored.substring(0, nl);
     stored.trim();
-    // v26.10.05.08 migration: older CTRL NVS layouts were main4/aux1-aux4.
+    // v26.10.05.09 migration: older CTRL NVS layouts were main4/aux1-aux4.
     // Preserve the operator's stored labels/settings but expose the new AUX5 tile.
     if(stored.indexOf("|layout=main4") >= 0) stored.replace("|layout=main4", "|layout=main5");
     if(stored.indexOf("|aux5=") < 0) stored += "|aux5=AUX 5";
@@ -1027,7 +1027,7 @@ static void sendHmiStatusToSrvr()
   uint32_t age = g_lastHmiRxMs ? (now - g_lastHmiRxMs) : 999999;
   String line = "HMI_STATUS";
   line += "|ctrl_ts=" + String(hmiLinkConnected() ? 1 : 0);
-  line += "|ctrl_version=v26.10.05.08";
+  line += "|ctrl_version=v26.10.05.09";
   line += "|fw_match=" + String(g_srvrFirmwareMatched ? 1 : 0);
   line += "|fw_authority=" + g_srvrFirmwareState;
   line += "|fw_required=" + (g_srvrRequiredVersion.length() ? g_srvrRequiredVersion : String("unknown"));
@@ -1637,7 +1637,7 @@ static bool hmiFwHandleFrame(const HVP2PRS485::Frame &frame){
       g_hmiFwLastTxMs = millis();
       return true;
     }
-    // v26.10.05.08 safe self-update handoff: the displayed CTRL-TS deliberately
+    // v26.10.05.09 safe self-update handoff: the displayed CTRL-TS deliberately
     // refuses to program flash, stages the exact target for a safe reboot, and asks CTRL to retry
     // after it has rebooted into its display-off updater. Treat this one response
     // as an expected transport transition, not as a failed firmware update.
@@ -1724,7 +1724,7 @@ static void hmiFwServiceTimeout(){
   if(g_hmiFwState == HMI_FW_WAIT_REBOOT_CONFIRM){
     // Keep enforcing REBOOT even after an ACK. This is deliberately bounded and
     // interleaved with HELLO discovery; success is declared only by a new boot.
-    if(g_hmiFwRebootConfirmStartedMs && (now - g_hmiFwRebootConfirmStartedMs) > 12000U){
+    if(g_hmiFwRebootConfirmStartedMs && (now - g_hmiFwRebootConfirmStartedMs) > 14000U){
       hmiFwReset("CTRL-TS reboot was not confirmed by a new boot identity");
       g_lastHmiHelloTxMs = 0;
       return;
@@ -1783,17 +1783,18 @@ static void handleHmiFrame(const HVP2PRS485::Frame &frame)
     g_hmiReportedHw = hvGetPipeField(line, "hw");
     g_hmiReportedVersion = hvGetPipeField(line, "version");
     g_hmiReportedHash = hvGetPipeField(line, "hash");
-    {
-      String newBootId = hvGetPipeField(line, "boot_id");
-      String rr = hvGetPipeField(line, "reset_reason");
-      if(newBootId.length() && newBootId != g_hmiReportedBootId){
-        if(g_hmiReportedBootId.length()) Serial.printf("[HMI] CTRL-TS reboot detected old_boot=%s new_boot=%s reset_reason=%d\n", g_hmiReportedBootId.c_str(), newBootId.c_str(), rr.length()?rr.toInt():-1);
-        else Serial.printf("[HMI] CTRL-TS boot=%s reset_reason=%d\n", newBootId.c_str(), rr.length()?rr.toInt():-1);
-        g_hmiReportedBootId = newBootId;
-        g_hmiHaveAcceptedEventId = false;
-      }
-      if(rr.length()) g_hmiReportedResetReason = rr.toInt();
+    // Keep the current HELLO boot identity in the HELLO_RESP scope because the
+    // post-update convergence checks below must compare it with the pre-update
+    // boot_id.  Do not hide this value inside a nested block.
+    String newBootId = hvGetPipeField(line, "boot_id");
+    String rr = hvGetPipeField(line, "reset_reason");
+    if(newBootId.length() && newBootId != g_hmiReportedBootId){
+      if(g_hmiReportedBootId.length()) Serial.printf("[HMI] CTRL-TS reboot detected old_boot=%s new_boot=%s reset_reason=%d\n", g_hmiReportedBootId.c_str(), newBootId.c_str(), rr.length()?rr.toInt():-1);
+      else Serial.printf("[HMI] CTRL-TS boot=%s reset_reason=%d\n", newBootId.c_str(), rr.length()?rr.toInt():-1);
+      g_hmiReportedBootId = newBootId;
+      g_hmiHaveAcceptedEventId = false;
     }
+    if(rr.length()) g_hmiReportedResetReason = rr.toInt();
     String pv = hvGetPipeField(line, "proto");
     g_hmiReportedProto = (uint8_t)pv.toInt();
     {
@@ -1809,12 +1810,20 @@ static void handleHmiFrame(const HVP2PRS485::Frame &frame)
       g_hmiSafeUpdateContinuation = false;
       if(g_hmiFwState == HMI_FW_WAIT_REBOOT_CONFIRM){
         const bool bootChanged = g_hmiFwPreUpdateBootId.length() && newBootId.length() && newBootId != g_hmiFwPreUpdateBootId;
-        if(bootChanged){
-          Serial.printf("[HMI FW] reboot confirmed old_boot=%s new_boot=%s; exact image identity active\n",
-                        g_hmiFwPreUpdateBootId.c_str(), newBootId.c_str());
+        // Legacy safe-updater firmware may not report boot_id. In that case an
+        // exact target version+SHA is itself sufficient reboot proof because the
+        // running updater deliberately never advertises the staged image as active.
+        const bool legacyExactIdentityProof = !g_hmiFwPreUpdateBootId.length();
+        if(bootChanged || legacyExactIdentityProof){
+          if(bootChanged){
+            Serial.printf("[HMI FW] reboot confirmed old_boot=%s new_boot=%s; exact image identity active\n",
+                          g_hmiFwPreUpdateBootId.c_str(), newBootId.c_str());
+          } else {
+            Serial.println("[HMI FW] reboot confirmed by exact target identity (legacy peer did not provide pre-update boot_id)");
+          }
           hmiFwReset("updated CTRL-TS identity confirmed after reboot");
         } else {
-          Serial.println("[HMI FW] exact image identity reported without a new boot_id; reboot transaction remains open");
+          Serial.println("[HMI FW] exact image identity reported without a changed boot_id; reboot transaction remains open");
           match = false;
         }
       } else if(hmiFwActive()) {
@@ -2309,7 +2318,7 @@ void loop()
     }
   }
 
-  // v26.10.05.08: do not resend UIL1 layout on a timer.
+  // v26.10.05.09: do not resend UIL1 layout on a timer.
   // Some Waveshare/LVGL builds visibly flicker when the layout header/config
   // is resent periodically. Layout is now sent only at boot, upload/reset,
   // and in response to a CTRL-TS PING/reconnect request.

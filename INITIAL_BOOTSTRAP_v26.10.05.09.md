@@ -1,4 +1,4 @@
-# HV P2P v26.10.05.08 initial / recovery bootstrap
+# HV P2P v26.10.05.09 initial / recovery bootstrap
 
 ## Required recovery from v26.10.02.03 CTRL-TS
 
@@ -8,7 +8,7 @@ starvation race in the level-1 handoff.
 
 Recommended recovery order:
 
-1. Build v26.10.05.08 in GitHub Actions.
+1. Build v26.10.05.09 in GitHub Actions.
 2. Update CTRL to the GitHub-produced `.04` firmware/staged source.
 3. CTRL `.04` may report the `.03` touchscreen as **manual bootstrap required**;
    this is intentional and fail-safe.

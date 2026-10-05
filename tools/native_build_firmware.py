@@ -22,7 +22,7 @@ import subprocess
 import sys
 import tempfile
 
-VER = "26.10.05.08"
+VER = "26.10.05.09"
 SEMVER = f"v{VER}"
 CTRL_SLOT = 0x600000
 HMI_SLOT = 0x380000
@@ -210,16 +210,6 @@ def main() -> int:
         staged_header = stage / ctrl_name / "HV_P2P_CTRL_TS_Firmware_Image.h"
         run([sys.executable, str(root / "tools" / "embed_ctrl_ts_firmware.py"), str(hmi_app), SEMVER, str(staged_header)])
         run([sys.executable, str(root / "tools" / "verify_staged_hmi_header.py"), str(staged_header), str(hmi_app)])
-        staged_carrier = staged_header.with_suffix(".cpp")
-        if not staged_carrier.is_file():
-            raise SystemExit("ERROR: external CTRL-TS carrier source was not generated")
-        if staged_header.stat().st_size > 16 * 1024:
-            raise SystemExit("ERROR: generated CTRL-TS metadata header unexpectedly contains bulk image data")
-        print(
-            f"CTRL-TS carrier staging: metadata={staged_header.stat().st_size} bytes "
-            f"source={staged_carrier.stat().st_size} bytes native_image={hmi_app.stat().st_size} bytes",
-            flush=True,
-        )
 
         ctrl_app = compile_sketch(args.arduino_cli, stage / ctrl_name, EDGEBOX_FQBN, build / "ctrl", CTRL_SLOT)
         w1p_app = compile_sketch(args.arduino_cli, stage / w1p_name, EDGEBOX_FQBN, build / "w1p", CTRL_SLOT)

@@ -3,7 +3,7 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.10.05.08'
+VER = '26.10.05.09'
 B = (ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 Q = (ROOT/f'SRVR_GitHub_v{VER}/qml/pages/SetupPage.qml').read_text()
 C = (ROOT/f'HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino').read_text()
@@ -19,9 +19,18 @@ assert 'hmiFwReset(nullptr)' not in ack
 hello = C[C.index('if(frame.type == HVP2PRS485::HELLO_RESP)'):C.index('if(frame.type == HVP2PRS485::EVENT)')]
 assert 'newBootId != g_hmiFwPreUpdateBootId' in hello
 assert 'updated CTRL-TS identity confirmed after reboot' in hello
-assert 'exact image identity reported without a new boot_id; reboot transaction remains open' in hello
+assert 'exact image identity reported without a changed boot_id; reboot transaction remains open' in hello
+assert 'legacyExactIdentityProof = !g_hmiFwPreUpdateBootId.length()' in hello
+assert 'reboot confirmed by exact target identity (legacy peer did not provide pre-update boot_id)' in hello
+# GitHub native compile regression: newBootId must live in the HELLO_RESP scope,
+# not inside the earlier reset-reason block. .05.07/.05.08 referenced it later
+# after the nested declaration had gone out of scope.
+hello_pre_match = hello[:hello.index('bool match = hmiIdentityMatches();')]
+assert 'g_hmiReportedHash = hvGetPipeField(line, "hash");\n    // Keep the current HELLO boot identity' in hello_pre_match
+assert 'String newBootId = hvGetPipeField(line, "boot_id");' in hello_pre_match
+assert '{\n      String newBootId = hvGetPipeField(line, "boot_id");' not in hello_pre_match
 timeout = C[C.index('static void hmiFwServiceTimeout()'):C.index('static bool hmiTransportCompatible')]
-assert '> 12000U' in timeout and 'g_hmiFwRebootEnforceCount < 8U' in timeout
+assert '> 14000U' in timeout and 'g_hmiFwRebootEnforceCount < 8U' in timeout
 assert '(now - g_hmiFwLastTxMs) >= 1500U' in timeout
 assert 'post-reboot peer replied ERROR while confirmation is pending' in C
 # Receiver keeps autonomous fallback alive in the headless loop; boot_service_uart
@@ -57,6 +66,7 @@ assert 'if(!v.length()) v = "-";' in overlay
 assert 'v = "—"' not in overlay
 assert 'g_cal_cancel_btn=make_button' in T and '"Cancel"' in T
 assert 'send_hmi_command("CAL_CANCEL")' in T
+assert 'else if(send_hmi_command("CAL_CANCEL"))' in T and 'local touch request only after the command was successfully queued' in T
 assert 'FLAG_CAL_CANCEL' in C and 'cmd == "CAL_CANCEL"' in C
 assert 'FLAG_CAL_CANCEL = 0x2000' in B
 assert '_ctrl_cal_cancel_pending = True' in B
@@ -110,4 +120,4 @@ assert '(now - lastVelocityCommandMs) <= W1P_VEL_COMMAND_TIMEOUT_MS' in W
 assert 'self._joystick_neutral_required = True' in motion
 assert 'waiting for joystick neutral before re-arm' in motion
 
-print('BENCH_REGRESSION_0507_PASS')
+print('BENCH_REGRESSION_0509_PASS')
