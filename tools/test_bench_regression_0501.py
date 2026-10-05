@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.10.05.06'
+VER='26.10.05.07'
 B=(ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 Q=(ROOT/f'SRVR_GitHub_v{VER}/qml/Main.qml').read_text()
 S=(ROOT/f'SRVR_GitHub_v{VER}/qml/components/SpanDiagram.qml').read_text()
@@ -39,7 +39,7 @@ assert '#define DISPLAY_FORWARD_MIN_MS 250' in C
 # Smallest dashboard data font is Montserrat 10, including presets and limits.
 main=T[T.index('static void create_ui'):]
 assert 'lv_font_montserrat_8' not in main
-assert 'preset_lbl[i]=make_label(travel_panel,"",0,28,&lv_font_montserrat_10' in main
+assert 'preset_lbl[i]=make_label(travel_panel,"",0,35,&lv_font_montserrat_10' in main
 
 # Modern update order: CTRL self-pull first, W1P gated behind CTRL, CTRL-TS final.
 assert 'parts <= (26, 10, 1, 1)' in B

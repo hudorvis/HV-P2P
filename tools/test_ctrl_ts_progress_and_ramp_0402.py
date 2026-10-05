@@ -3,8 +3,8 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-ctrl = next((ROOT / 'HV_P2P_CTRL_EDGEBOX_v26.10.05.06').glob('*.ino')).read_text()
-ts = next((ROOT / 'HV_P2P_CTRL_TS_v26.10.05.06').glob('*.ino')).read_text()
+ctrl = next((ROOT / 'HV_P2P_CTRL_EDGEBOX_v26.10.05.07').glob('*.ino')).read_text()
+ts = next((ROOT / 'HV_P2P_CTRL_TS_v26.10.05.07').glob('*.ino')).read_text()
 
 # CTRL firmware progress must bypass only the *compatibility* gate, not bus serialization.
 assert 'static bool hmiSendFirmwareStatusText' in ctrl
@@ -41,7 +41,7 @@ assert m and int(m.group(1)) >= 800, 'pre-handoff dashboard is not held long eno
 
 # AUX value line must be single-line and wider/smaller-font so Practice Mode is not wrapped/cropped.
 create = ts.split('static void create_ui()',1)[1]
-assert 'aux_state[i]=make_label(aux_btn[i],aux_value_part(g_aux_labels[i]).c_str(),4,52,&lv_font_montserrat_10' in create
+assert 'aux_state[i]=make_label(aux_btn[i],aux_value_part(g_aux_labels[i]).c_str(),4,48,&lv_font_montserrat_10' in create
 assert 'AUX_W-8' in create
 assert 'lv_label_set_long_mode(aux_state[i], LV_LABEL_LONG_CLIP);' in create
 

@@ -38,7 +38,7 @@ from backend import (
 )
 
 app = QCoreApplication.instance() or QCoreApplication([])
-b = HVP2PBackend(version="26.10.05.06", smoke_test=True)
+b = HVP2PBackend(version="26.10.05.07", smoke_test=True)
 assert b.reverse_joystick is False, "New/reset CTRL joystick direction must default to Normal"
 
 def healthy_ctrl_status(*, ctrl_ts=1, ads=1, version="vTEST", compatible=1):
@@ -46,16 +46,16 @@ def healthy_ctrl_status(*, ctrl_ts=1, ads=1, version="vTEST", compatible=1):
     b._ctrl_rx_times.clear()
     b._ctrl_rx_times.extend([now - 0.05, now])
     b._handle_ctrl_hmi_status(
-        f"HMI_STATUS|ctrl_ts={int(ctrl_ts)}|ctrl_version=v26.10.05.06|"
-        f"fw_match=1|fw_authority=matched|fw_required=v26.10.05.06|"
-        f"version={version}|required=v26.10.05.06|fw_state=idle|image=1|"
+        f"HMI_STATUS|ctrl_ts={int(ctrl_ts)}|ctrl_version=v26.10.05.07|"
+        f"fw_match=1|fw_authority=matched|fw_required=v26.10.05.07|"
+        f"version={version}|required=v26.10.05.07|fw_state=idle|image=1|"
         f"compatible={int(compatible)}|age_ms=12|ads={int(ads)}"
     )
 
 def healthy_w1p_status(*, pos=0.0, vel=0.0, ip="172.20.1.102", boot_id="A1B2C3D4"):
     b.w1p.last_seen = time.time()
     b._parse_w1p(
-        f"STATUS POS_M={pos} VEL_MPS={vel} IP={ip} FW=v26.10.05.06 BOOT_ID={boot_id} "
+        f"STATUS POS_M={pos} VEL_MPS={vel} IP={ip} FW=v26.10.05.07 BOOT_ID={boot_id} "
         "FW_MATCH=1 FW_AUTH=matched ESTOP=0 VEL_WD=0 SERVICE_LOCK=0 "
         "WRITE_EN=0 SW_SRVON=0 SW_SRVON_INHIBIT=1 BRAKE_OUT=0 "
         "RS_STAT=CONNECTED LEAD_CFG=OK MODBUS=1 READY=1 POS_READ=1 "
@@ -112,10 +112,10 @@ try:
     # controller interface and must not be confused with the binary control stream.
     now = time.time()
     b._ctrl_rx_times.extend([now - 0.05, now])
-    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=1|ctrl_version=v26.10.05.06|fw_match=1|fw_authority=matched|fw_required=v26.10.05.06|version=vTEST|required=v26.10.05.06|fw_state=idle|image=1|compatible=1|age_ms=12|ads=1")
+    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=1|ctrl_version=v26.10.05.07|fw_match=1|fw_authority=matched|fw_required=v26.10.05.07|version=vTEST|required=v26.10.05.07|fw_state=idle|image=1|compatible=1|age_ms=12|ads=1")
     assert b.ctrlTsConnected and b.ads1115Connected
     assert b._ctrl_ts_version == "vTEST" and b._ctrl_ts_age_ms == 12
-    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=0|ctrl_version=v26.10.05.06|fw_match=1|fw_authority=matched|fw_required=v26.10.05.06|version=vTEST|required=v26.10.05.06|fw_state=idle|image=1|compatible=0|age_ms=20|ads=0")
+    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=0|ctrl_version=v26.10.05.07|fw_match=1|fw_authority=matched|fw_required=v26.10.05.07|version=vTEST|required=v26.10.05.07|fw_state=idle|image=1|compatible=0|age_ms=20|ads=0")
     assert not b.ctrlTsConnected and not b.ads1115Connected
     # Old CTRL firmware without a fresh explicit ads= field remains compatible:
     # live joystick packets + no ADS fault bit infer a healthy ADS link.
@@ -131,27 +131,47 @@ try:
     # Legacy automatic OTA is intentionally upgrade-only: .01 can bridge directly
     # to .04, but a future/newer node must never be silently downgraded by SRVR.
     assert b._firmware_version_is_older("v26.10.01.01")
-    assert not b._firmware_version_is_older("v26.10.05.06")
-    assert not b._firmware_version_is_older("v26.10.05.06")
+    assert not b._firmware_version_is_older("v26.10.05.07")
+    assert not b._firmware_version_is_older("v26.10.05.07")
     assert not b._firmware_version_is_older("unknown")
 
     # Firmware authority must be explicit and fresh. Missing FW_MATCH in CTRL
-    # HMI_STATUS or W1P STATUS is fail-closed; HELLO/PONG may prove Ethernet
-    # liveness but must invalidate prior W1P authority/RS485 state until a new
-    # complete STATUS arrives.
+    # HMI_STATUS is fail-closed. For W1P, one malformed/incomplete STATUS is now
+    # rejected atomically while the last complete safety snapshot remains valid
+    # until its normal freshness timeout; a HELLO still marks a real new session
+    # boundary and invalidates the old snapshot. PONG is liveness-only.
     healthy_ctrl_status(); healthy_w1p_status()
-    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=1|ctrl_version=v26.10.05.06|version=vTEST|age_ms=12|ads=1")
+    b._handle_ctrl_hmi_status("HMI_STATUS|ctrl_ts=1|ctrl_version=v26.10.05.07|version=vTEST|age_ms=12|ads=1")
     b._ctrl_axis = 0.0; b._ctrl_flags = 0; b._motion_tick()
     assert b.state.estop_active and not b._ctrl_fw_match, "Missing CTRL FW_MATCH did not fail closed"
     healthy_ctrl_status(); healthy_w1p_status()
+    rejected_before = b._w1p_status_rejected
     b._parse_w1p("STATUS FW_MATCH=1 ESTOP=0 VEL_WD=0 SERVICE_LOCK=0 WRITE_EN=0")
-    assert not b._w1p_status_fresh() and not b._w1p_fw_match and b.winch_rs_status == "Disconnected"
-    healthy_w1p_status()
-    b._parse_w1p("HELLO VER=v26.10.05.06")
+    assert b._w1p_status_fresh() and b._w1p_fw_match and b.winch_rs_status == "Connected"
+    assert b._w1p_status_rejected == rejected_before + 1
+    # A syntactically complete frame with a corrupt safety boolean must also be
+    # rejected atomically; it must not manufacture a transient E-stop/red state.
+    corrupt = (
+        "STATUS POS_M=0 VEL_MPS=0 FW=v26.10.05.07 BOOT_ID=A1B2C3D4 "
+        "FW_MATCH=1 FW_AUTH=matched ESTOP=x VEL_WD=0 SERVICE_LOCK=0 "
+        "WRITE_EN=0 SW_SRVON_INHIBIT=1 BRAKE_OUT=0 RS_STAT=CONNECTED "
+        "LEAD_CFG=OK MODBUS=1 READY=1 POS_READ=1 IO_READ=1 "
+        "DO2_CFG=1 DO3_CFG=1 DO4_CFG=1 DO5_CFG=1 SRDY=1"
+    )
+    b._parse_w1p(corrupt)
+    assert b._w1p_status_fresh() and not b._w1p_estop and b.winch_rs_status == "Connected"
+    assert b._w1p_status_rejected == rejected_before + 2
+    nonfinite = corrupt.replace("ESTOP=x", "ESTOP=0").replace("POS_M=0", "POS_M=nan")
+    b._parse_w1p(nonfinite)
+    assert b._w1p_status_fresh() and b.winch_rs_status == "Connected"
+    assert b._w1p_status_rejected == rejected_before + 3
+    b._parse_w1p("PONG")
+    assert b._w1p_status_fresh() and b._w1p_fw_match and b.winch_rs_status == "Connected"
+    b._parse_w1p("HELLO VER=v26.10.05.07")
     assert not b._w1p_status_fresh() and not b._w1p_fw_match and b.winch_rs_status == "Disconnected"
     healthy_w1p_status()
     b._not_calibrated = False
-    b._parse_w1p("HELLO VER=v26.10.05.06 BOOT_ID=DEADBEEF")
+    b._parse_w1p("HELLO VER=v26.10.05.07 BOOT_ID=DEADBEEF")
     assert b._not_calibrated, "W1P HELLO/reboot did not invalidate position reference"
     healthy_w1p_status(boot_id="DEADBEEF")
     b._not_calibrated = False
@@ -342,17 +362,23 @@ try:
 
     # Limit calibration establishes Near->Far as the positive system axis even
     # when physical rope/winch threading initially makes the Far move negative.
-    b.calibration_type = "Limit"
-    b.calibration_open = True
-    b.calibration_step = 1
+    # Near/Far are staged transactionally; Winch Invert and live limits change
+    # only at the final Ref commit.
     b._not_calibrated = True
     b.reverse_motor = False
-    b.state.pos_m = -80.0
-    b.calibrationNext()
-    assert b.reverse_motor, "negative Near->Far travel did not auto-correct Winch Invert"
-    assert abs(float(b.state.far_limit.position_m) - 80.0) < 1e-9
-    assert abs(float(b.state.pos_m) - 80.0) < 1e-9
+    old_far = float(b.state.far_limit.position_m)
+    b._last_raw_pos = None
+    b.state.pos_m = 0.0
+    b.openLimitCalibration(); b.calibrationNext()  # stage Near
+    b.state.pos_m = -80.0; b.calibrationNext()     # stage Far
+    assert not b.reverse_motor and abs(float(b.state.far_limit.position_m) - old_far) < 1e-9
     assert b.calibration_step == 2 and b._not_calibrated
+    assert b.limitCalibrationCaptures["far"] == "80.00 m"
+    b.state.pos_m = -40.0; b.calibrationNext()     # Ref & Done
+    assert b.reverse_motor, "negative Near->Far travel did not auto-correct Winch Invert at commit"
+    assert abs(float(b.state.far_limit.position_m) - 80.0) < 1e-9
+    assert abs(float(b.state.ref_point.position_m) - 40.0) < 1e-9
+    assert not b.calibration_open and not b._not_calibrated
 
     # Goto stops before reversing against forward momentum after crossing target.
     b.current_speed_mps = 0.5
@@ -919,7 +945,7 @@ try:
     # config explicitly records non-persistence, and a fresh backend starts yellow.
     saved_cfg = json.loads(b._config_path.read_text())
     assert saved_cfg["not_calibrated_mode"] is True and saved_cfg["position_reference_persistent"] is False
-    b2 = HVP2PBackend(version="26.10.05.06", smoke_test=True)
+    b2 = HVP2PBackend(version="26.10.05.07", smoke_test=True)
     # WinchState intentionally starts fail-safe with estop_active=True until the
     # first live safety evaluation. This regression is specifically proving that
     # the runtime position reference is not persisted, so isolate that yellow
@@ -944,19 +970,25 @@ try:
     b._update_battery_change_auto_cancel()
     assert not b.battery_change_mode and b.setupDraft["battery_change_mode"] is False
 
-    # Limit Calibration coordinate contract: Near=0, Far positive, Ref inside,
-    # and normal calibrated state only after the reference step is saved.
+    # Limit Calibration coordinate contract: Near/Far/Ref are staged without
+    # partially overwriting the previous valid calibration and commit together
+    # only after Reference is saved.
     b._not_calibrated = True
+    b._last_raw_pos = None
+    old_limits = (float(b.state.near_limit.position_m), float(b.state.far_limit.position_m), float(b.state.ref_point.position_m))
     b.state.pos_m = 12.0
     b.openLimitCalibration()
-    b.calibrationNext()  # Near
-    assert b.calibration_step == 1 and abs(b.state.near_limit.position_m) < 1e-9
-    b.state.pos_m = -100.0
-    b.calibrationNext()  # Far
-    assert b.calibration_step == 2 and abs(b.state.far_limit.position_m - 100.0) < 1e-9
-    b.state.pos_m = 40.0
+    b.calibrationNext()  # stage Near
+    assert b.calibration_step == 1 and (float(b.state.near_limit.position_m), float(b.state.far_limit.position_m), float(b.state.ref_point.position_m)) == old_limits
+    b.state.pos_m = -88.0
+    b.calibrationNext()  # stage Far, 100 m from Near
+    assert b.calibration_step == 2 and b.limitCalibrationCaptures["far"] == "100.00 m"
+    assert (float(b.state.near_limit.position_m), float(b.state.far_limit.position_m), float(b.state.ref_point.position_m)) == old_limits
+    b.state.pos_m = -48.0
     b.calibrationNext()  # Ref & Done
-    assert b.calibration_step == 2 and abs(b.state.ref_point.position_m - 40.0) < 1e-9
+    assert b.calibration_step == 2 and abs(b.state.near_limit.position_m) < 1e-9
+    assert abs(b.state.far_limit.position_m - 100.0) < 1e-9
+    assert abs(b.state.ref_point.position_m - 60.0) < 1e-9
     assert not b._not_calibrated and not b.calibration_open
     saved_ref = float(b.state.ref_point.position_m)
     b.state.pos_m = 55.0
@@ -987,6 +1019,8 @@ try:
         @property
         def connected(self): return True
         def send(self, text): self.sent.append(str(text))
+        def arm_velocity_refresh(self, text): self.refresh = str(text)
+        def clear_velocity_refresh(self): self.refresh = ""
         def reconfigure(self, host, port): self.host, self.port = host, port
         def close(self): pass
 
@@ -1101,7 +1135,7 @@ try:
     assert backup_cfg.is_file()
     expected_backup = json.loads(backup_cfg.read_text())
     b._config_path.write_text('{broken-json', encoding='utf-8')
-    b2 = HVP2PBackend(version="26.10.05.06", smoke_test=True)
+    b2 = HVP2PBackend(version="26.10.05.07", smoke_test=True)
     try:
         assert json.loads(b2._config_path.read_text()) == expected_backup
     finally:

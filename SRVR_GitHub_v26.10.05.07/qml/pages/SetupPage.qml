@@ -230,7 +230,7 @@ Item {
                     Column {
                         anchors.fill:parent;anchors.margins:root.f(17);spacing:root.f(10)
                         Text{text:"▣  CTRL-TS";color:root.cyan;font.pixelSize:root.f(15);font.weight:Font.Medium}
-                        Row{width:parent.width;height:root.f(25);Text{width:root.f(94);anchors.verticalCenter:parent.verticalCenter;text:"CTRL-TS Link";color:root.fg;font.pixelSize:root.f(11)}StatusDot{width:root.f(11);height:root.f(11);radius:root.f(6);anchors.verticalCenter:parent.verticalCenter;active:backend.ctrlTsConnected}Text{anchors.verticalCenter:parent.verticalCenter;leftPadding:root.f(7);text:backend.ctrlTsConnected?"Active":"Disconnected";color:root.fg;font.pixelSize:root.f(11)}}
+                        Row{width:parent.width;height:root.f(25);Text{width:root.f(94);anchors.verticalCenter:parent.verticalCenter;text:"Link";color:root.fg;font.pixelSize:root.f(11)}StatusDot{width:root.f(11);height:root.f(11);radius:root.f(6);anchors.verticalCenter:parent.verticalCenter;active:backend.ctrlTsConnected}Text{anchors.verticalCenter:parent.verticalCenter;leftPadding:root.f(7);text:backend.ctrlTsConnected?"Active":"Disconnected";color:root.fg;font.pixelSize:root.f(11)}}
                         Rectangle{width:parent.width;height:1;color:root.line}
                         Row{width:parent.width;height:root.f(25);Text{width:root.f(80);anchors.verticalCenter:parent.verticalCenter;text:"Firmware";color:root.fg;font.pixelSize:root.f(11)}HVReadout{width:parent.width-root.f(80);height:parent.height;text:backend.ctrlTsFirmwareDisplay}}
                     }

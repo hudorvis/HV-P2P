@@ -14,7 +14,7 @@
 #include <esp_system.h>
 #include <esp_attr.h>
 
-#define CTRL_TS_SEMVER "v26.10.05.06"
+#define CTRL_TS_SEMVER "v26.10.05.07"
 #define CTRL_TS_VERSION "HV P2P CTRL-TS " CTRL_TS_SEMVER
 #define CTRL_TS_HW_ID "WS-ESP32S3-7"
 #define HMI_BAUD 115200
@@ -172,7 +172,8 @@ static lv_obj_t *g_cal_overlay=nullptr,*g_cal_title_lbl=nullptr,*g_cal_step_lbl=
 static lv_obj_t *g_cal_value_box[3]={nullptr,nullptr,nullptr};
 static lv_obj_t *g_cal_value_name[3]={nullptr,nullptr,nullptr};
 static lv_obj_t *g_cal_value_text[3]={nullptr,nullptr,nullptr};
-static lv_obj_t *g_cal_current_lbl=nullptr;
+static lv_obj_t *g_cal_current_lbl=nullptr,*g_cal_cancel_btn=nullptr;
+static volatile bool g_cal_cancel_requested=false;
 static bool g_calibration_overlay_active=false;
 static String g_last_cal_overlay_title="";
 static String g_last_cal_overlay_kind="";
@@ -242,7 +243,7 @@ static float g_last_ramp_near_draw = -999999.0f;
 static float g_last_ramp_far_draw = -999999.0f;
 
 // -------------------- CTRL-TS Settings page --------------------
-// Safe v26.10.05.06 approach: no backlight/brightness writes. This page only
+// Safe v26.10.05.07 approach: no backlight/brightness writes. This page only
 // edits CTRL network settings over UART and therefore should preserve the known
 // Keep the proven splash/boot path; do not write to the backlight controller.
 static lv_obj_t *settings_overlay = nullptr;
@@ -290,7 +291,7 @@ static void force_screen_refresh(){
 }
 
 static void screen_keepalive(){
-  // v26.10.05.06: no periodic full-screen or left-strip invalidation or brightness writes.
+  // v26.10.05.07: no periodic full-screen or left-strip invalidation or brightness writes.
   // The Waveshare/LVGL port refreshes changed objects itself; forcing a full
   // screen refresh every second caused the visible 1-second flicker/glitch.
   if(!g_ui_ready) return;
@@ -1202,7 +1203,7 @@ static void confirm_aux_idx(int idx, bool send_command){
   selected_aux = -1;
   g_selected_aux_ms = 0;
   confirmed_aux = idx;
-  clear_confirm_at = now_ms + 2000;  // v26.10.05.06: confirmed AUX tile stays lit for 2 seconds
+  clear_confirm_at = now_ms + 2000;  // v26.10.05.07: confirmed AUX tile stays lit for 2 seconds
   g_aux_suppress_until_ms[idx] = now_ms + 400;
   style_aux(idx,false,true);
   snprintf(msg,sizeof(msg),"AUX %d Confirmed", idx+1);
@@ -1277,7 +1278,7 @@ static void style_w1p_status_pill(int state){
 }
 
 static void style_estop_pill(bool active){
-  // v26.10.05.06: the middle status banner follows the SRVR-resolved state.
+  // v26.10.05.07: the middle status banner follows the SRVR-resolved state.
   // A local CTRL-TS UART/display gap must not invent "E-Stop CTRL" while SRVR
   // is still sending Status | Active. Real CTRL/W1P E-Stops are still shown
   // immediately when SRVR sends status=E-Stop... / status_level=red.
@@ -1328,7 +1329,7 @@ static void refresh_status_ui(){
   style_status_pill_cached(0,pill_ctrl,lbl_ctrl,"CTRL",g_ctrl_ok);
   if(pill_srvr && lbl_srvr) style_status_pill_cached(1,pill_srvr,lbl_srvr,"SRVR",g_srvr_ok);
   style_w1p_status_pill(g_w1p_health);
-  // v26.10.05.06: do not turn the main middle box red purely because the
+  // v26.10.05.07: do not turn the main middle box red purely because the
   // CTRL-TS local UART/display link hiccuped. The SRVR status packet is the
   // authoritative source for Active / Un-Calibrated / E-Stop display state.
   bool stopped_visual = (g_status_level >= 2) || g_estop_active;
@@ -1378,8 +1379,17 @@ static void aux_event_cb(lv_event_t *e){
   queue_aux_touch((uint8_t)idx);
 }
 
+static void calibration_cancel_event_cb(lv_event_t *e){
+  if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  g_cal_cancel_requested = true;
+}
+
 static void service_aux_touch_events(){
   if(pop_aux_cancel()) cancel_pending_aux();
+  if(g_cal_cancel_requested){
+    g_cal_cancel_requested = false;
+    if(g_calibration_overlay_active) send_hmi_command("CAL_CANCEL");
+  }
   for(int n=0; n<8; ++n){
     int idx = pop_aux_touch();
     if(idx < 0) break;
@@ -1478,7 +1488,7 @@ static bool apply_calibration_overlay_fields(const String &line){
       if(g_cal_value_box[i]) lv_obj_clear_flag(g_cal_value_box[i], LV_OBJ_FLAG_HIDDEN);
       if(g_cal_value_name[i]) set_label_text_if_changed(g_cal_value_name[i], isLimit ? limitNames[i] : joyNames[i]);
       String v = getField(line, isLimit ? limitKeys[i] : joyKeys[i]);
-      if(!v.length()) v = "—";
+      if(!v.length()) v = "-";
       else if(isLimit) v += " m";
       if(g_cal_value_text[i]) set_label_text_if_changed(g_cal_value_text[i], v.c_str());
     }
@@ -1761,7 +1771,7 @@ static void update_reference_marker(){
   if(label_x < bar_left - 10) label_x = bar_left - 10;
   if(label_x > bar_right - 30) label_x = bar_right - 30;
   lv_obj_set_x(travel_ref_lbl, label_x);
-  lv_obj_set_pos(travel_ref_marker, marker_x, 38);
+  lv_obj_set_pos(travel_ref_marker, marker_x, 47);
   lv_obj_set_size(travel_ref_marker, marker_w, 5);
 }
 
@@ -1770,7 +1780,7 @@ static void update_ramp_markers(){
   const int bar_left = BAR_LIMIT_LEFT;
   const int bar_right = BAR_LIMIT_RIGHT;
   const int bar_w = bar_right - bar_left;
-  const int ramp_top = 47;
+  const int ramp_top = 56;
   float span = g_far - g_near;
   if(span < 0.001f) span = 0.001f;
   float frac_near = g_ramp_near_frac >= 0.0f ? constrain(g_ramp_near_frac, 0.0f, 1.0f) : constrain(g_ramp_near / span, 0.0f, 1.0f);
@@ -1805,11 +1815,11 @@ static void update_preset_markers(){
   const int bar_right = BAR_LIMIT_RIGHT;
   const int marker_w = 5;
   const int line_w = 2;
-  const int line_top_y = 38;
+  const int line_top_y = 47;
   const int line_h = 11;
   const int label_w = 64;
-  const int label_y_top = 27;
-  const int label_y_bottom = 58;
+  const int label_y_top = 34;
+  const int label_y_bottom = 69;
 
   for(int i=0;i<12;i++){
     bool has_name = g_preset_names[i].length() > 0;
@@ -1929,7 +1939,7 @@ static void apply_hmi_packet(const String &line){
     else g_status_level = 0;
   }
 
-  // v26.10.05.06: if SRVR sends explicit status/status_level, trust it as
+  // v26.10.05.07: if SRVR sends explicit status/status_level, trust it as
   // the authoritative display state. Do not override it locally with a CTRL
   // error just because the touchscreen/CTRL UART side saw a transient gap.
   if(status_packet){
@@ -2086,7 +2096,7 @@ static void apply_hmi_packet(const String &line){
   if(mode_changed || (prev_status_text != g_status_text) || (prev_status_level != g_status_level) || (prev_estop != g_estop_active) || (prev_estop_source != g_estop_source) || (prev_ctrl != g_ctrl_ok) || (prev_srvr != g_srvr_ok) || (prev_w1p != g_w1p_ok) || (prev_w1p_health != g_w1p_health)) {
     refresh_status_ui();
   }
-  // v26.10.05.06: no left-strip/full-screen invalidation on packets; progress marker animates locally.
+  // v26.10.05.07: no left-strip/full-screen invalidation on packets; progress marker animates locally.
 }
 
 
@@ -2095,7 +2105,7 @@ static void apply_layout_packet(const String &line){
   // on CTRL cannot overwrite the screen title/version or trigger header redraws.
   String hint = getField(line, "hint");
   if(lbl_title) set_label_text_if_changed(lbl_title, "HV P2P\nCTRL-TS");
-  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.05.06");
+  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.05.07");
   if(hint.length() && hint.startsWith("ERROR")) set_touch_debug(hint.c_str());
   // UIL1 is presentation-only. AUX assignment/value ownership belongs solely to
   // live SRVR HMI state, so an old layout persisted in CTRL NVS cannot overwrite
@@ -2605,8 +2615,8 @@ static void create_ui(){
   const int SX=10, SW=780, GAP=7;
   const int HEADER_Y=8, HEADER_H=45;
   const int BANNER_Y=HEADER_Y+HEADER_H+GAP, BANNER_H=34;
-  const int AUX_Y=BANNER_Y+BANNER_H+GAP, AUX_H=83;
-  const int TRAVEL_Y=AUX_Y+AUX_H+GAP, TRAVEL_H=91;
+  const int AUX_Y=BANNER_Y+BANNER_H+GAP, AUX_H=74;
+  const int TRAVEL_Y=AUX_Y+AUX_H+GAP, TRAVEL_H=100;
   const int INFO_Y=TRAVEL_Y+TRAVEL_H+GAP, INFO_H=141;
   const int FOOT_Y=INFO_Y+INFO_H+GAP, FOOT_H=35;
 
@@ -2614,7 +2624,7 @@ static void create_ui(){
   lv_obj_t *brand=make_panel(frame,SX,HEADER_Y,70,HEADER_H,C_BG,0x63d84e,7);
   lbl_title=make_label(brand,"HV P2P\nCTRL-TS",0,6,&lv_font_montserrat_12,lv_color_hex(C_FG),70);
   lv_obj_set_style_text_line_space(lbl_title,-2,0);
-  lbl_subtitle=make_label(frame,"v26.10.05.06",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
+  lbl_subtitle=make_label(frame,"v26.10.05.07",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
 
   pill_ctrl=make_panel(frame,255,HEADER_Y,126,HEADER_H,C_PANEL,C_BORDER,5);
   dot_ctrl=lv_obj_create(pill_ctrl); lv_obj_set_pos(dot_ctrl,9,15); lv_obj_set_size(dot_ctrl,8,8); lv_obj_set_style_radius(dot_ctrl,LV_RADIUS_CIRCLE,0); lv_obj_set_style_border_width(dot_ctrl,0,0); lv_obj_set_style_bg_color(dot_ctrl,lv_color_hex(0xef5757),0); lv_obj_clear_flag(dot_ctrl,LV_OBJ_FLAG_SCROLLABLE);
@@ -2638,31 +2648,31 @@ static void create_ui(){
     aux_btn[i]=make_button(frame,SX+i*(AUX_W+AUX_GAP),AUX_Y,AUX_W,AUX_H);
     lv_obj_add_event_cb(aux_btn[i],aux_event_cb,LV_EVENT_CLICKED,(void*)(intptr_t)i);
     make_label(aux_btn[i],aux_heads[i],8,8,&lv_font_montserrat_10,lv_color_hex(C_CYAN),AUX_W-16);
-    aux_text_lbl[i]=make_label(aux_btn[i],aux_action_part(g_aux_labels[i]).c_str(),8,32,&lv_font_montserrat_12,lv_color_hex(C_FG),AUX_W-16);
+    aux_text_lbl[i]=make_label(aux_btn[i],aux_action_part(g_aux_labels[i]).c_str(),8,28,&lv_font_montserrat_12,lv_color_hex(C_FG),AUX_W-16);
     // Value names can be longer than the action (for example "Practice Mode").
     // Give the value line almost the full card width and keep it explicitly on
     // one line so LVGL cannot wrap the final characters below the 83 px tile.
-    aux_state[i]=make_label(aux_btn[i],aux_value_part(g_aux_labels[i]).c_str(),4,52,&lv_font_montserrat_10,lv_color_hex(C_GREEN),AUX_W-8);
+    aux_state[i]=make_label(aux_btn[i],aux_value_part(g_aux_labels[i]).c_str(),4,48,&lv_font_montserrat_10,lv_color_hex(C_GREEN),AUX_W-8);
     lv_label_set_long_mode(aux_state[i], LV_LABEL_LONG_CLIP);
   }
 
   // Cable/travel panel. Presets green, Ref blue, current skate white/green.
   travel_panel=make_panel(frame,SX,TRAVEL_Y,SW,TRAVEL_H,C_PANEL,C_BORDER,4);
   lv_obj_add_event_cb(travel_panel,bg_event_cb,LV_EVENT_PRESSED,nullptr);
-  travel_near_lbl=make_label(travel_panel,"NEAR",8,8,&lv_font_montserrat_10,lv_color_hex(C_MUTED),48);
-  lbl_near_value=make_label(travel_panel,"0.00 m",8,22,&lv_font_montserrat_10,lv_color_hex(C_FG),48);
-  travel_far_lbl=make_label(travel_panel,"FAR",724,8,&lv_font_montserrat_10,lv_color_hex(C_MUTED),48);
-  lbl_far_value=make_label(travel_panel,"100.00 m",716,22,&lv_font_montserrat_10,lv_color_hex(C_FG),58);
-  travel_ref_lbl=make_label(travel_panel,"REF",332,12,&lv_font_montserrat_10,lv_color_hex(C_GREEN),40);
+  travel_near_lbl=make_label(travel_panel,"NEAR",8,6,&lv_font_montserrat_10,lv_color_hex(C_MUTED),60);
+  lbl_near_value=make_label(travel_panel,"0.00 m",8,19,&lv_font_montserrat_10,lv_color_hex(C_FG),72);
+  travel_far_lbl=make_label(travel_panel,"FAR",712,6,&lv_font_montserrat_10,lv_color_hex(C_MUTED),60);
+  lbl_far_value=make_label(travel_panel,"100.00 m",700,19,&lv_font_montserrat_10,lv_color_hex(C_FG),74);
+  travel_ref_lbl=make_label(travel_panel,"REF",370,7,&lv_font_montserrat_10,lv_color_hex(C_GREEN),40);
 
   // horizontal travel line
-  lv_obj_t *track=lv_obj_create(travel_panel); lv_obj_set_pos(track,BAR_LIMIT_LEFT,43); lv_obj_set_size(track,BAR_LIMIT_WIDTH,1); lv_obj_set_style_bg_color(track,lv_color_hex(0xd7dad8),0); lv_obj_set_style_border_width(track,0,0); lv_obj_clear_flag(track,LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t *track=lv_obj_create(travel_panel); lv_obj_set_pos(track,BAR_LIMIT_LEFT,52); lv_obj_set_size(track,BAR_LIMIT_WIDTH,1); lv_obj_set_style_bg_color(track,lv_color_hex(0xd7dad8),0); lv_obj_set_style_border_width(track,0,0); lv_obj_clear_flag(track,LV_OBJ_FLAG_SCROLLABLE);
   // ramp zones below the line
   // Ramping zones use the same triangular Near/Far semantics as SRVR's
   // SpanDiagram instead of the old thin rectangular bands.
   for(int r=0; r<RAMP_STRIP_COUNT; ++r){
-    ramp_l_strip[r]=make_panel(travel_panel,BAR_LIMIT_LEFT,47+r,1,1,0x687074,0x687074,0,HV_OPA_35);
-    ramp_r_strip[r]=make_panel(travel_panel,BAR_LIMIT_RIGHT-1,47+r,1,1,0x687074,0x687074,0,HV_OPA_35);
+    ramp_l_strip[r]=make_panel(travel_panel,BAR_LIMIT_LEFT,56+r,1,1,0x687074,0x687074,0,HV_OPA_35);
+    ramp_r_strip[r]=make_panel(travel_panel,BAR_LIMIT_RIGHT-1,56+r,1,1,0x687074,0x687074,0,HV_OPA_35);
     lv_obj_set_style_border_width(ramp_l_strip[r],0,0);
     lv_obj_set_style_border_width(ramp_r_strip[r],0,0);
     lv_obj_add_flag(ramp_l_strip[r], LV_OBJ_FLAG_HIDDEN);
@@ -2671,15 +2681,15 @@ static void create_ui(){
   ramp_l=ramp_l_strip[RAMP_STRIP_COUNT-1];
   ramp_r=ramp_r_strip[RAMP_STRIP_COUNT-1];
 
-  travel_near_marker=lv_obj_create(travel_panel); lv_obj_set_pos(travel_near_marker,BAR_LIMIT_LEFT,37); lv_obj_set_size(travel_near_marker,2,14); lv_obj_set_style_bg_color(travel_near_marker,lv_color_hex(0xd7dad8),0); lv_obj_set_style_border_width(travel_near_marker,0,0); lv_obj_clear_flag(travel_near_marker,LV_OBJ_FLAG_SCROLLABLE);
-  travel_ref_marker=lv_obj_create(travel_panel); lv_obj_set_pos(travel_ref_marker,360,38); lv_obj_set_size(travel_ref_marker,5,5); lv_obj_set_style_radius(travel_ref_marker,1,0); lv_obj_set_style_bg_color(travel_ref_marker,lv_color_hex(C_GREEN),0); lv_obj_set_style_border_width(travel_ref_marker,0,0); lv_obj_clear_flag(travel_ref_marker,LV_OBJ_FLAG_SCROLLABLE);
-  travel_far_marker=lv_obj_create(travel_panel); lv_obj_set_pos(travel_far_marker,BAR_LIMIT_RIGHT,37); lv_obj_set_size(travel_far_marker,2,14); lv_obj_set_style_bg_color(travel_far_marker,lv_color_hex(0xd7dad8),0); lv_obj_set_style_border_width(travel_far_marker,0,0); lv_obj_clear_flag(travel_far_marker,LV_OBJ_FLAG_SCROLLABLE);
-  current_marker=lv_obj_create(travel_panel); lv_obj_set_pos(current_marker,BAR_LIMIT_LEFT,35); lv_obj_set_size(current_marker,6,18); lv_obj_set_style_bg_color(current_marker,lv_color_hex(0xf0f2f1),0); lv_obj_set_style_border_color(current_marker,lv_color_hex(0x697074),0); lv_obj_set_style_border_width(current_marker,1,0); lv_obj_clear_flag(current_marker,LV_OBJ_FLAG_SCROLLABLE);
+  travel_near_marker=lv_obj_create(travel_panel); lv_obj_set_pos(travel_near_marker,BAR_LIMIT_LEFT,46); lv_obj_set_size(travel_near_marker,2,14); lv_obj_set_style_bg_color(travel_near_marker,lv_color_hex(0xd7dad8),0); lv_obj_set_style_border_width(travel_near_marker,0,0); lv_obj_clear_flag(travel_near_marker,LV_OBJ_FLAG_SCROLLABLE);
+  travel_ref_marker=lv_obj_create(travel_panel); lv_obj_set_pos(travel_ref_marker,360,47); lv_obj_set_size(travel_ref_marker,5,5); lv_obj_set_style_radius(travel_ref_marker,1,0); lv_obj_set_style_bg_color(travel_ref_marker,lv_color_hex(C_GREEN),0); lv_obj_set_style_border_width(travel_ref_marker,0,0); lv_obj_clear_flag(travel_ref_marker,LV_OBJ_FLAG_SCROLLABLE);
+  travel_far_marker=lv_obj_create(travel_panel); lv_obj_set_pos(travel_far_marker,BAR_LIMIT_RIGHT,46); lv_obj_set_size(travel_far_marker,2,14); lv_obj_set_style_bg_color(travel_far_marker,lv_color_hex(0xd7dad8),0); lv_obj_set_style_border_width(travel_far_marker,0,0); lv_obj_clear_flag(travel_far_marker,LV_OBJ_FLAG_SCROLLABLE);
+  current_marker=lv_obj_create(travel_panel); lv_obj_set_pos(current_marker,BAR_LIMIT_LEFT,44); lv_obj_set_size(current_marker,6,18); lv_obj_set_style_bg_color(current_marker,lv_color_hex(0xf0f2f1),0); lv_obj_set_style_border_color(current_marker,lv_color_hex(0x697074),0); lv_obj_set_style_border_width(current_marker,1,0); lv_obj_clear_flag(current_marker,LV_OBJ_FLAG_SCROLLABLE);
 
   for(int i=0;i<12;i++){
     preset_line[i]=lv_obj_create(travel_panel); lv_obj_set_size(preset_line[i],1,9); lv_obj_set_style_bg_color(preset_line[i],lv_color_hex(C_GREEN),0); lv_obj_set_style_border_width(preset_line[i],0,0); lv_obj_clear_flag(preset_line[i],LV_OBJ_FLAG_SCROLLABLE); lv_obj_add_flag(preset_line[i],LV_OBJ_FLAG_HIDDEN);
     preset_tri[i]=lv_obj_create(travel_panel); lv_obj_set_size(preset_tri[i],1,1); lv_obj_set_style_bg_opa(preset_tri[i],LV_OPA_TRANSP,0); lv_obj_set_style_border_width(preset_tri[i],0,0); lv_obj_add_flag(preset_tri[i],LV_OBJ_FLAG_HIDDEN);
-    preset_lbl[i]=make_label(travel_panel,"",0,28,&lv_font_montserrat_10,lv_color_hex(C_MUTED),64); lv_obj_add_flag(preset_lbl[i],LV_OBJ_FLAG_HIDDEN);
+    preset_lbl[i]=make_label(travel_panel,"",0,35,&lv_font_montserrat_10,lv_color_hex(C_MUTED),64); lv_obj_add_flag(preset_lbl[i],LV_OBJ_FLAG_HIDDEN);
   }
 
   // Bottom row: Drive / Speed / Position.
@@ -2728,12 +2738,15 @@ static void create_ui(){
     const int bx=28+i*(CAL_BOX_W+CAL_BOX_GAP);
     g_cal_value_box[i]=make_panel(g_cal_overlay,bx,CAL_BOX_Y,CAL_BOX_W,CAL_BOX_H,0x171f25,0x3f535d,4);
     g_cal_value_name[i]=make_label(g_cal_value_box[i],i==0?"NEAR":(i==1?"REF":"FAR"),8,5,&lv_font_montserrat_10,lv_color_hex(C_CYAN),CAL_BOX_W-16);
-    g_cal_value_text[i]=make_label(g_cal_value_box[i],"—",8,23,&lv_font_montserrat_16,lv_color_hex(C_GREEN),CAL_BOX_W-16);
+    g_cal_value_text[i]=make_label(g_cal_value_box[i],"-",8,23,&lv_font_montserrat_16,lv_color_hex(C_GREEN),CAL_BOX_W-16);
     lv_obj_add_flag(g_cal_value_box[i],LV_OBJ_FLAG_HIDDEN);
   }
-  g_cal_current_lbl=make_label(g_cal_overlay,"Current Winch Position   0.00 m",28,209,&lv_font_montserrat_14,lv_color_hex(C_GREEN),SW-56);
-  lv_obj_set_style_text_align(g_cal_current_lbl,LV_TEXT_ALIGN_CENTER,0);
+  g_cal_current_lbl=make_label(g_cal_overlay,"Current Winch Position   0.00 m",28,209,&lv_font_montserrat_14,lv_color_hex(C_GREEN),SW-190);
+  lv_obj_set_style_text_align(g_cal_current_lbl,LV_TEXT_ALIGN_LEFT,0);
   lv_obj_add_flag(g_cal_current_lbl,LV_OBJ_FLAG_HIDDEN);
+  g_cal_cancel_btn=make_button(g_cal_overlay,SW-142,201,112,32);
+  lv_obj_add_event_cb(g_cal_cancel_btn,calibration_cancel_event_cb,LV_EVENT_CLICKED,nullptr);
+  make_label(g_cal_cancel_btn,"Cancel",0,8,&lv_font_montserrat_12,lv_color_hex(C_FG),112);
   lv_obj_add_flag(g_cal_overlay,LV_OBJ_FLAG_HIDDEN);
 
   // Network settings code remains compiled for service builds, but the locked
@@ -2813,7 +2826,7 @@ static void service_link_state(){
 
   bool link_alive = last_hmi_rx && ((millis() - last_hmi_rx) <= HMI_TIMEOUT_MS);
   if(!link_alive) {
-    // v26.10.05.06: local UART/display timeout is a CTRL-TS link warning, not
+    // v26.10.05.07: local UART/display timeout is a CTRL-TS link warning, not
     // proof of a real CTRL E-Stop. Keep the last SRVR-resolved status banner so
     // the touchscreen cannot randomly show "Status | E-Stop CTRL" while SRVR
     // remains "Status | Active". The CTRL status pill can still show ERROR.
@@ -2861,6 +2874,9 @@ void setup(){
   if(safeHeadlessBoot){
     Serial.printf("[FW SAFE] headless updater target=%s sha=%s\n", g_fw_headless_target_version.c_str(), g_fw_headless_target_sha.c_str());
     while(true){
+      // boot_service_uart() polls framed RS485 and services both updater timeout
+      // and scheduled/autonomous reboot paths. Keep the display headless/black
+      // while self-flash is active, including when upgrading from older builds.
       boot_service_uart();
       fw_service_headless_idle_return();
       delay(20);

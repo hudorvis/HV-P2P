@@ -16,7 +16,7 @@
 static bool g_ads_inited = false;
 static uint8_t ADS_ADDR = 0x48;
 
-#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.10.05.06"
+#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.10.05.07"
 #define CTRL_HMI_ARCH "EdgeBox ESP-100 + isolated RS485 Waveshare thin HMI"
 
 IPAddress local_IP(172,20,1,101);
@@ -82,6 +82,7 @@ static const uint8_t CTRL_ESTOP_HEALTHY_CONFIRM_SAMPLES = 3;
 #define FLAG_AUX5                 0x0400
 #define FLAG_CTRL_HMI_FAULT       0x0800  // CTRL-TS RS485/compatibility safety fault (not physical E-stop)
 #define FLAG_CTRL_FW_FAULT        0x1000  // SRVR firmware-authority safety fault (not physical E-stop)
+#define FLAG_CAL_CANCEL           0x2000  // CTRL-TS calibration Cancel event, edge-captured by SRVR
 
 NetworkUDP udp;
 HardwareSerial HMI(1);
@@ -126,7 +127,7 @@ static uint32_t g_hmiTsParserResync = 0;
 // HV_P2P_CTRL_TS_Firmware_Image.h embeds the exact exported .bin, version and
 // SHA-256. When identity differs, CTRL keeps motion fail-safe stopped and
 // performs a deterministic request/response transfer over the same RS485 link.
-enum HmiFwTxState : uint8_t { HMI_FW_IDLE=0, HMI_FW_WAIT_READY, HMI_FW_WAIT_BLOCK_ACK, HMI_FW_WAIT_RESULT, HMI_FW_WAIT_REBOOT_ACK };
+enum HmiFwTxState : uint8_t { HMI_FW_IDLE=0, HMI_FW_WAIT_READY, HMI_FW_WAIT_BLOCK_ACK, HMI_FW_WAIT_RESULT, HMI_FW_WAIT_REBOOT_ACK, HMI_FW_WAIT_REBOOT_CONFIRM };
 static HmiFwTxState g_hmiFwState = HMI_FW_IDLE;
 static size_t g_hmiFwOffset = 0;
 static size_t g_hmiFwLastBlockLen = 0;
@@ -134,6 +135,9 @@ static uint16_t g_hmiFwSeq = 0;
 static uint32_t g_hmiFwLastTxMs = 0;
 static uint8_t g_hmiFwRetries = 0;
 static int g_hmiFwLastPct = -1;
+static String g_hmiFwPreUpdateBootId;
+static uint32_t g_hmiFwRebootConfirmStartedMs = 0;
+static uint8_t g_hmiFwRebootEnforceCount = 0;
 static const size_t HMI_FW_BLOCK_DATA = 1024;
 static const uint32_t HMI_FW_REPLY_TIMEOUT_MS = 3000;
 static const uint32_t HMI_RS485_TURNAROUND_US = 2500;
@@ -240,7 +244,7 @@ static uint32_t lastHmiLayoutForward = 0;
 #define HMI_LAYOUT_MAX_LEN 2200
 static const char* HMI_LAYOUT_NVS_NS = "hmiui";
 static const char* HMI_LAYOUT_NVS_KEY = "layout";
-static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.10.05.06|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
+static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.10.05.07|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
 
 
 
@@ -265,10 +269,10 @@ static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_CTRL";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL_TS,W1P,W1P_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_CTRL_v*.ino.bin firmware. CTRL-TS and W1P files are rejected.";
 static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=CTRL;";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.05.06;";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.05.07;";
 static const char* HV_AUTH_ROLE = "CTRL";
 static const char* HV_AUTH_TARGET = "EDGEBOX_ESP100";
-static const char* HV_AUTH_VERSION = "v26.10.05.06";
+static const char* HV_AUTH_VERSION = "v26.10.05.07";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
@@ -527,7 +531,7 @@ static void hvLoadHmiLayoutConfig() {
     int nl = stored.indexOf('\n');
     if(nl >= 0) stored = stored.substring(0, nl);
     stored.trim();
-    // v26.10.05.06 migration: older CTRL NVS layouts were main4/aux1-aux4.
+    // v26.10.05.07 migration: older CTRL NVS layouts were main4/aux1-aux4.
     // Preserve the operator's stored labels/settings but expose the new AUX5 tile.
     if(stored.indexOf("|layout=main4") >= 0) stored.replace("|layout=main4", "|layout=main5");
     if(stored.indexOf("|aux5=") < 0) stored += "|aux5=AUX 5";
@@ -651,6 +655,7 @@ static uint32_t g_lastAdsHealthCheckMs = 0;
 static uint32_t g_lastAdsRecoveryAttemptMs = 0;
 
 static uint32_t g_virtualAuxUntil[5] = {0,0,0,0,0};
+static uint32_t g_virtualCalCancelUntil = 0;
 static String g_latestDisplayPacket;
 static String g_latestHmiStatePacket;
 static bool g_hmiStatePacketPending = false;
@@ -990,6 +995,7 @@ static const char* hmiFwStateText()
     case HMI_FW_WAIT_BLOCK_ACK:  return "transferring";
     case HMI_FW_WAIT_RESULT:     return "verifying";
     case HMI_FW_WAIT_REBOOT_ACK: return "rebooting";
+    case HMI_FW_WAIT_REBOOT_CONFIRM: return "confirming reboot";
     default:
       if(!g_hmiCompatible && g_hmiReportedVersion.length() && !HV_CTRL_TS_IMAGE_AVAILABLE) return "image_missing";
       if(!g_hmiCompatible && g_hmiReportedVersion.length() &&
@@ -1003,7 +1009,7 @@ static int hmiFwProgressPct()
 {
   if(g_hmiSafeRebootHoldUntilMs && millis() < g_hmiSafeRebootHoldUntilMs) return 0;
   if(g_hmiFwState == HMI_FW_WAIT_RESULT) return 99;
-  if(g_hmiFwState == HMI_FW_WAIT_REBOOT_ACK) return 100;
+  if(g_hmiFwState == HMI_FW_WAIT_REBOOT_ACK || g_hmiFwState == HMI_FW_WAIT_REBOOT_CONFIRM) return 100;
   if(g_hmiFwState == HMI_FW_WAIT_READY) return 0;
   if(g_hmiFwState == HMI_FW_WAIT_BLOCK_ACK && HV_CTRL_TS_IMAGE_SIZE > 0){
     const unsigned long long done = (unsigned long long)g_hmiFwOffset;
@@ -1021,7 +1027,7 @@ static void sendHmiStatusToSrvr()
   uint32_t age = g_lastHmiRxMs ? (now - g_lastHmiRxMs) : 999999;
   String line = "HMI_STATUS";
   line += "|ctrl_ts=" + String(hmiLinkConnected() ? 1 : 0);
-  line += "|ctrl_version=v26.10.05.06";
+  line += "|ctrl_version=v26.10.05.07";
   line += "|fw_match=" + String(g_srvrFirmwareMatched ? 1 : 0);
   line += "|fw_authority=" + g_srvrFirmwareState;
   line += "|fw_required=" + (g_srvrRequiredVersion.length() ? g_srvrRequiredVersion : String("unknown"));
@@ -1300,6 +1306,15 @@ static void handleUdpRx()
   if(line == "AUX3") { g_virtualAuxUntil[2] = millis() + 300; return; }
   if(line == "AUX4") { g_virtualAuxUntil[3] = millis() + 300; return; }
   if(line == "AUX5") { g_virtualAuxUntil[4] = millis() + 300; return; }
+  if(line == "SRVR_ALIVE") {
+    // Background-safe liveness packet from SRVR communications worker. It carries
+    // no safety/config state; it only proves that the SRVR process/transport is
+    // alive independently of macOS Qt window scheduling.
+    g_srvrExplicitOffline = false;
+    srvrOnline = true;
+    g_lastSrvrRxMs = millis();
+    return;
+  }
   if(line == "SRVR_OFFLINE") {
     // Graceful desktop shutdown is an explicit safety/connection transition,
     // not a 5-second display freshness event. The next POLL carries srvr=0,
@@ -1388,6 +1403,7 @@ static void pollButtonsAndUpdateLatches(uint16_t &flags_out)
   if(now < g_virtualAuxUntil[2]) flags_out |= FLAG_AUX3;
   if(now < g_virtualAuxUntil[3]) flags_out |= FLAG_AUX4;
   if(now < g_virtualAuxUntil[4]) flags_out |= FLAG_AUX5;
+  if(now < g_virtualCalCancelUntil) flags_out |= FLAG_CAL_CANCEL;
 }
 
 static void handleHmiEventLine(String line)
@@ -1400,6 +1416,7 @@ static void handleHmiEventLine(String line)
   else if(line == "AUX3") g_virtualAuxUntil[2] = millis() + 300;
   else if(line == "AUX4") g_virtualAuxUntil[3] = millis() + 300;
   else if(line == "AUX5") g_virtualAuxUntil[4] = millis() + 300;
+  else if(line == "CAL_CANCEL") g_virtualCalCancelUntil = millis() + 300;
   else if(line == "LAYOUT?") sendHmiLayout();
   else if(line == "CFG?") sendNetworkConfigToHmi();
   else if(line.startsWith("CFG1|")) {
@@ -1486,6 +1503,9 @@ static void hmiFwReset(const char *reason){
   g_hmiFwLastTxMs = 0;
   g_hmiFwRetries = 0;
   g_hmiFwLastPct = -1;
+  g_hmiFwPreUpdateBootId = "";
+  g_hmiFwRebootConfirmStartedMs = 0;
+  g_hmiFwRebootEnforceCount = 0;
   g_hmiCompatible = false;
 }
 
@@ -1582,6 +1602,10 @@ static void hmiFwStart(){
     return;
   }
   if(hmiFwActive()) return;
+  // Final reboot completion must be proven by a different boot_id, not by the
+  // old updater merely ACKing the REBOOT command. Preserve the pre-update boot
+  // identity for the entire transfer.
+  g_hmiFwPreUpdateBootId = g_hmiReportedBootId;
   g_hmiCompatible = false;
   g_hmiFwOffset = 0;
   g_hmiFwRetries = 0;
@@ -1603,7 +1627,17 @@ static bool hmiFwHandleFrame(const HVP2PRS485::Frame &frame){
     return true;
   }
   if(frame.type == HVP2PRS485::ERROR_MSG){
-    // v26.10.05.06 safe self-update handoff: the displayed CTRL-TS deliberately
+    if(g_hmiFwState == HMI_FW_WAIT_REBOOT_CONFIRM){
+      // A freshly booted application may reject one of the bounded REBOOT
+      // enforcement frames because its updater transaction no longer exists.
+      // That is not update failure; only HELLO with a new boot_id + exact image
+      // identity is allowed to complete this phase. Keep soliciting identity.
+      Serial.printf("[HMI FW] post-reboot peer replied ERROR while confirmation is pending: %s\n", text.c_str());
+      g_lastHmiHelloTxMs = 0;
+      g_hmiFwLastTxMs = millis();
+      return true;
+    }
+    // v26.10.05.07 safe self-update handoff: the displayed CTRL-TS deliberately
     // refuses to program flash, stages the exact target for a safe reboot, and asks CTRL to retry
     // after it has rebooted into its display-off updater. Treat this one response
     // as an expected transport transition, not as a failed firmware update.
@@ -1665,10 +1699,20 @@ static bool hmiFwHandleFrame(const HVP2PRS485::Frame &frame){
     } else hmiFwReset("CTRL-TS rejected final image identity");
     return true;
   }
-  if(g_hmiFwState == HMI_FW_WAIT_REBOOT_ACK && frame.type == HVP2PRS485::ACK){
-    Serial.println("[HMI FW] reboot acknowledged; waiting for new HELLO identity");
-    hmiFwReset(nullptr);
-    g_lastHmiHelloTxMs = 0;
+  if((g_hmiFwState == HMI_FW_WAIT_REBOOT_ACK || g_hmiFwState == HMI_FW_WAIT_REBOOT_CONFIRM) && frame.type == HVP2PRS485::ACK){
+    // ACK proves only that the still-running updater received REBOOT. .05.06
+    // incorrectly treated this as completion, which stranded older headless
+    // updaters on a black screen if their local restart did not fire. Keep the
+    // transaction alive until a new boot_id and exact version/SHA are observed.
+    if(g_hmiFwState == HMI_FW_WAIT_REBOOT_ACK){
+      Serial.println("[HMI FW] reboot command acknowledged; awaiting new boot identity");
+      g_hmiFwState = HMI_FW_WAIT_REBOOT_CONFIRM;
+      g_hmiFwRebootConfirmStartedMs = millis();
+      g_hmiFwRebootEnforceCount = 0;
+      g_hmiFwRetries = 0;
+      g_lastHmiHelloTxMs = 0;
+    }
+    g_hmiFwLastTxMs = millis();
     return true;
   }
   return false;
@@ -1677,6 +1721,24 @@ static bool hmiFwHandleFrame(const HVP2PRS485::Frame &frame){
 static void hmiFwServiceTimeout(){
   if(!hmiFwActive()) return;
   const uint32_t now=millis();
+  if(g_hmiFwState == HMI_FW_WAIT_REBOOT_CONFIRM){
+    // Keep enforcing REBOOT even after an ACK. This is deliberately bounded and
+    // interleaved with HELLO discovery; success is declared only by a new boot.
+    if(g_hmiFwRebootConfirmStartedMs && (now - g_hmiFwRebootConfirmStartedMs) > 12000U){
+      hmiFwReset("CTRL-TS reboot was not confirmed by a new boot identity");
+      g_lastHmiHelloTxMs = 0;
+      return;
+    }
+    if((now - g_hmiFwLastTxMs) >= 1500U && g_hmiFwRebootEnforceCount < 8U){
+      g_hmiFwSeq = g_hmiSeq++;
+      hmiMasterTurnaroundGuard();
+      HVP2PRS485::sendText(HMI, HVP2PRS485::REBOOT, g_hmiFwSeq, "apply=1");
+      g_hmiFwLastTxMs = millis();
+      ++g_hmiFwRebootEnforceCount;
+      Serial.printf("[HMI FW] reboot enforcement %u/8; still waiting for new boot_id\n", unsigned(g_hmiFwRebootEnforceCount));
+    }
+    return;
+  }
   const uint32_t replyTimeout = (g_hmiFwState == HMI_FW_WAIT_REBOOT_ACK) ? 750U : HMI_FW_REPLY_TIMEOUT_MS;
   const uint8_t maxRetries = (g_hmiFwState == HMI_FW_WAIT_REBOOT_ACK) ? 8U : HMI_FW_MAX_RETRIES;
   if((now-g_hmiFwLastTxMs) < replyTimeout) return;
@@ -1745,7 +1807,24 @@ static void handleHmiFrame(const HVP2PRS485::Frame &frame)
     bool match = hmiIdentityMatches();
     if(match){
       g_hmiSafeUpdateContinuation = false;
-      if(hmiFwActive()) hmiFwReset("updated CTRL-TS identity confirmed");
+      if(g_hmiFwState == HMI_FW_WAIT_REBOOT_CONFIRM){
+        const bool bootChanged = g_hmiFwPreUpdateBootId.length() && newBootId.length() && newBootId != g_hmiFwPreUpdateBootId;
+        if(bootChanged){
+          Serial.printf("[HMI FW] reboot confirmed old_boot=%s new_boot=%s; exact image identity active\n",
+                        g_hmiFwPreUpdateBootId.c_str(), newBootId.c_str());
+          hmiFwReset("updated CTRL-TS identity confirmed after reboot");
+        } else {
+          Serial.println("[HMI FW] exact image identity reported without a new boot_id; reboot transaction remains open");
+          match = false;
+        }
+      } else if(hmiFwActive()) {
+        hmiFwReset("updated CTRL-TS identity confirmed");
+      }
+    } else if(g_hmiFwState == HMI_FW_WAIT_REBOOT_CONFIRM && g_hmiFwPreUpdateBootId.length() && newBootId.length() && newBootId != g_hmiFwPreUpdateBootId){
+      // The peer did reboot, but did not come back as the verified target. Drop
+      // the completed transfer and let ordinary mismatch convergence decide the
+      // next safe action.
+      hmiFwReset("CTRL-TS rebooted but target version/SHA was not active");
     }
     if(match && g_srvrFirmwareMatched && !g_hmiCompatible) {
       g_hmiCompatible = true;
@@ -1840,7 +1919,7 @@ static void handleHmiFrame(const HVP2PRS485::Frame &frame)
         // HMI_STATUS is pipe-delimited, so expose only the compact AUX token
         // verbatim. Other event families are represented generically rather than
         // allowing embedded configuration separators into the diagnostics line.
-        g_hmiLastAcceptedEventCmd = cmd.startsWith("AUX") ? cmd : String("OTHER");
+        g_hmiLastAcceptedEventCmd = (cmd.startsWith("AUX") || cmd == "CAL_CANCEL") ? cmd : String("OTHER");
         g_hmiEventsAccepted++;
         // AUX confirmation is the touchscreen's busiest UI moment. Keep the
         // ~900-byte bulk packet off the bus briefly; the compact HMS1 state
@@ -1872,7 +1951,17 @@ static void handleHmiRx()
 
   const uint32_t now = millis();
   hmiFwServiceTimeout();
-  if(hmiFwActive()) {
+  if(g_hmiFwState == HMI_FW_WAIT_REBOOT_CONFIRM) {
+    // After REBOOT ACK, discovery must continue while the firmware transaction
+    // remains open. Space HELLO away from the bounded REBOOT enforcement sends
+    // so the half-duplex bus still has only one master request at a time.
+    if((now - g_lastHmiHelloTxMs) >= 500U && (now - g_hmiFwLastTxMs) >= 120U){
+      g_lastHmiHelloTxMs = now;
+      String req = String("required=") + HV_CTRL_TS_REQUIRED_VERSION + "|proto=" + String(HVP2PRS485::PROTOCOL_VERSION);
+      hmiMasterTurnaroundGuard();
+      if(HVP2PRS485::sendText(HMI, HVP2PRS485::HELLO_REQ, g_hmiSeq++, req)) g_hmiFramesTx++;
+    }
+  } else if(hmiFwActive()) {
     // Firmware transfer owns the half-duplex bus until verification/reboot.
   } else if(g_hmiPollOutstanding) {
     // A POLL/EVENT exchange owns the bus even if compatibility changes while
@@ -2220,7 +2309,7 @@ void loop()
     }
   }
 
-  // v26.10.05.06: do not resend UIL1 layout on a timer.
+  // v26.10.05.07: do not resend UIL1 layout on a timer.
   // Some Waveshare/LVGL builds visibly flicker when the layout header/config
   // is resent periodically. Layout is now sent only at boot, upload/reset,
   // and in response to a CTRL-TS PING/reconnect request.

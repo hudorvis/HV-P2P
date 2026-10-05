@@ -36,6 +36,7 @@ FLAG_ADS1115_FAULT = 0x0200
 FLAG_AUX5 = 0x0400
 FLAG_CTRL_HMI_FAULT = 0x0800
 FLAG_CTRL_FW_FAULT = 0x1000
+FLAG_CAL_CANCEL = 0x2000
 CTRL_RX_WINDOW_S = 0.75
 CTRL_RX_MIN_PKTS = 2
 JOY_DEADBAND_PCT = 5.0
@@ -44,7 +45,10 @@ WINCH_PROBE_INTERVAL_S = 0.25
 HMI_STATUS_TIMEOUT_S = 3.5
 HMI_DISPLAY_MIN_CHANGE_INTERVAL_S = 0.10
 HMI_DISPLAY_KEEPALIVE_S = 3.0
-VEL_KEEPALIVE_S = 0.15  # refresh unchanged non-zero VEL well inside the 500 ms W1P watchdog
+VEL_KEEPALIVE_S = 0.15  # ordinary SRVR refresh cadence; W1P watchdog remains 500 ms
+VEL_BACKGROUND_REFRESH_S = 0.18  # sits behind the normal ~150 ms Qt cadence; bridges only a missed interval
+VEL_REFRESH_LEASE_S = 0.22       # short producer lease; expiry stops refresh so the unchanged 500 ms W1P watchdog still wins
+SRVR_ALIVE_INTERVAL_S = 0.25      # process/transport liveness independent of Qt window focus
 
 # Automatic centre-drift compensation is deliberately conservative. It is a
 # runtime trim only: calibration endpoints and the saved Centre capture are never
@@ -171,6 +175,14 @@ class W1PClient(threading.Thread):
         self._tx_lock = threading.Lock()
         self.last_seen = 0.0
         self.last_probe = 0.0
+        # Non-zero VEL refresh has a short producer lease. The background UDP
+        # worker may bridge brief Qt/macOS scheduling stalls, but once SRVR stops
+        # renewing the lease it stops refreshing and W1P's unchanged 500 ms
+        # watchdog remains the final independent stop.
+        self._vel_refresh_lock = threading.Lock()
+        self._vel_refresh_text = ""
+        self._vel_refresh_until = 0.0
+        self._vel_refresh_last_tx = 0.0
 
     @property
     def connected(self):
@@ -180,6 +192,21 @@ class W1PClient(threading.Thread):
         try: self.txq.put_nowait(str(text))
         except queue.Full: pass
 
+    def arm_velocity_refresh(self, text: str):
+        text = str(text or "").strip()
+        with self._vel_refresh_lock:
+            if not text or text == "VEL 0":
+                self._vel_refresh_text = ""
+                self._vel_refresh_until = 0.0
+                return
+            self._vel_refresh_text = text
+            self._vel_refresh_until = time.monotonic() + VEL_REFRESH_LEASE_S
+
+    def clear_velocity_refresh(self):
+        with self._vel_refresh_lock:
+            self._vel_refresh_text = ""
+            self._vel_refresh_until = 0.0
+
     def emergency_stop(self):
         """Send STOP + Servo Enable inhibit immediately, bypassing any TX backlog.
 
@@ -187,6 +214,7 @@ class W1PClient(threading.Thread):
         freshness watchdog remains unchanged as the abnormal-exit fallback.
         """
         payload = b"STOP\nSW_SRVON 0\n"
+        self.clear_velocity_refresh()
         try:
             # Discard ordinary queued settings/status requests so they cannot be
             # transmitted after the shutdown safety command.
@@ -212,8 +240,36 @@ class W1PClient(threading.Thread):
                     payload = text if text.endswith("\n") else text + "\n"
                     with self._tx_lock:
                         self.sock.sendto(payload.encode("ascii", "ignore"), (self.host, self.port))
+                    # Healthy SRVR operation already refreshes non-zero VEL at
+                    # approximately 150 ms. Record those ordinary transmissions
+                    # so the worker-side bridge stays dormant unless that cadence
+                    # is actually missed (for example while macOS deprioritises
+                    # the Qt GUI thread in the background).
+                    if str(text).strip().startswith("VEL ") and str(text).strip() != "VEL 0":
+                        with self._vel_refresh_lock:
+                            self._vel_refresh_last_tx = time.monotonic()
             except queue.Empty: pass
             except Exception as exc: self.log(f"[W1P TX] {exc}")
+
+            # Bridge only brief producer stalls. This is not a replacement for
+            # W1P's 500 ms watchdog: the lease expires unless _send_velocity()
+            # continues to renew the current command.
+            mono_now = time.monotonic()
+            refresh_text = ""
+            with self._vel_refresh_lock:
+                if self._vel_refresh_text and mono_now < self._vel_refresh_until and (mono_now - self._vel_refresh_last_tx) >= VEL_BACKGROUND_REFRESH_S:
+                    refresh_text = self._vel_refresh_text
+                    self._vel_refresh_last_tx = mono_now
+                elif self._vel_refresh_text and mono_now >= self._vel_refresh_until:
+                    self._vel_refresh_text = ""
+                    self._vel_refresh_until = 0.0
+            if refresh_text:
+                try:
+                    with self._tx_lock:
+                        self.sock.sendto((refresh_text + "\n").encode("ascii", "ignore"), (self.host, self.port))
+                except Exception as exc:
+                    self.log(f"[W1P VEL REFRESH] {exc}")
+
             now = time.time()
             if now - self.last_probe >= WINCH_PROBE_INTERVAL_S:
                 self.last_probe = now
@@ -236,6 +292,7 @@ class W1PClient(threading.Thread):
             time.sleep(0.015)
 
     def close(self):
+        self.clear_velocity_refresh()
         self.stop_evt.set()
         try: self.sock.close()
         except Exception: pass
@@ -248,7 +305,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.05.06", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.05.07", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -264,7 +321,7 @@ class HVP2PBackend(QObject):
         self._fw_modern_fallback_delay_s = 2.5
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.05.06+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.05.07+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -388,6 +445,9 @@ class HVP2PBackend(QObject):
         self._ctrl_aux_rx_last = [False] * 5
         self._ctrl_aux_events = queue.Queue(maxsize=32)
         self._ctrl_aux_event_drops = 0
+        self._ctrl_cal_cancel_rx_last = False
+        self._ctrl_cal_cancel_pending = False
+        self._ctrl_cal_cancel_last = False
         # Secondary controller/touchscreen health reporting carried forward from
         # the proven v26.06.26.25 backend. These do not replace the primary
         # joystick/W1P safety path; they drive the Setup link indicators.
@@ -426,6 +486,8 @@ class HVP2PBackend(QObject):
         self._w1p_fw_match = False
         self._w1p_fw_authority = "unknown"
         self._w1p_status_last_seen = 0.0
+        self._w1p_status_rejected = 0
+        self._w1p_status_reject_last_log = 0.0
         # SRVR is authoritative for persistent W1P configuration.  W1P STATUS
         # is confirmation, not a source that may silently overwrite a freshly
         # selected operator setting after a lost UDP SET command.
@@ -447,6 +509,8 @@ class HVP2PBackend(QObject):
         # to CTRL-TS as HMI1. Use an independent unbound socket so the listener
         # remains the sole owner of UDP/5000 locally.
         self._ctrl_display_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._ctrl_presence_tx_lock = threading.Lock()
+        self._srvr_alive_thread = None
         self._last_ctrl_display_packet = b""
         self._last_ctrl_display_change_tx = 0.0
         self._last_ctrl_display_keepalive_tx = 0.0
@@ -524,6 +588,9 @@ class HVP2PBackend(QObject):
         # applied calibration makes the in-progress wizard observable without
         # pretending an unfinished calibration is already authoritative.
         self._limit_cal_pending = {"near": None, "ref": None, "far": None}
+        self._limit_cal_capture = {"near_raw": None, "far_raw": None, "ref_raw": None,
+                                   "near_pos": None, "far_pos": None, "ref_pos": None,
+                                   "pending_reverse_motor": None}
 
         # Three-step joystick calibration wizard. Temporary captures are kept
         # separate until Right is accepted, so Cancel never alters calibration.
@@ -563,6 +630,7 @@ class HVP2PBackend(QObject):
             self._config_write_thread.start()
             self.w1p.start()
             self._start_controller_listener()
+            self._start_srvr_alive_worker()
             self._start_freed_input()
             self._sync_w1p_settings()
 
@@ -661,7 +729,36 @@ class HVP2PBackend(QObject):
 
     # --- controller ---
     def _start_controller_listener(self):
-        threading.Thread(target=self._controller_worker, daemon=True).start()
+        threading.Thread(target=self._controller_worker, name="HVP2P-CTRL-RX", daemon=True).start()
+
+    def _start_srvr_alive_worker(self):
+        """Keep CTRL peer liveness independent of Qt/macOS window scheduling.
+
+        This packet carries no motion or safety state. It only proves that the
+        SRVR process and networking worker are alive. Graceful shutdown sends an
+        explicit SRVR_OFFLINE packet under the same TX lock, so offline always
+        wins the final ordering.
+        """
+        if self._srvr_alive_thread and self._srvr_alive_thread.is_alive():
+            return
+        self._srvr_alive_thread = threading.Thread(target=self._srvr_alive_worker, name="HVP2P-SRVR-Alive", daemon=True)
+        self._srvr_alive_thread.start()
+
+    def _srvr_alive_worker(self):
+        next_tx = 0.0
+        while not self._stop_evt.is_set():
+            now = time.monotonic()
+            if now >= next_tx:
+                next_tx = now + SRVR_ALIVE_INTERVAL_S
+                target = str(self.ctrl_ip or "").strip()
+                if target:
+                    try:
+                        with self._ctrl_presence_tx_lock:
+                            if not self._stop_evt.is_set():
+                                self._ctrl_display_sock.sendto(b"SRVR_ALIVE\n", (target, SERVER_BIND_PORT))
+                    except Exception:
+                        pass
+            self._stop_evt.wait(0.05)
 
     def _controller_worker(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -713,6 +810,10 @@ class HVP2PBackend(QObject):
                     except queue.Full:
                         self._ctrl_aux_event_drops += 1
                 self._ctrl_aux_rx_last[aux_i] = pressed
+            cal_cancel_now = bool(flags_now & FLAG_CAL_CANCEL)
+            if cal_cancel_now and not self._ctrl_cal_cancel_rx_last:
+                self._ctrl_cal_cancel_pending = True
+            self._ctrl_cal_cancel_rx_last = cal_cancel_now
             with self._lock:
                 self._ctrl_last_seen = now
                 self._ctrl_rx_times.append(now)
@@ -1113,6 +1214,17 @@ class HVP2PBackend(QObject):
         self.winch_brake_released = False
         self._w1p_internal_safety = True
 
+    def _reject_w1p_status(self, reason: str):
+        # Reject one bad telemetry frame without erasing the last complete safety
+        # snapshot. Authority expires naturally through WINCH_STATUS_TIMEOUT_S if
+        # no valid STATUS follows. This prevents a single malformed datagram from
+        # manufacturing a 25-50 ms E-stop/red flash.
+        self._w1p_status_rejected += 1
+        now = time.monotonic()
+        if now - float(self._w1p_status_reject_last_log or 0.0) >= 2.0:
+            self._w1p_status_reject_last_log = now
+            self._log(f"[W1P STATUS] rejected frame #{self._w1p_status_rejected}: {reason}")
+
     def _w1p_status_fresh(self):
         return bool(self._w1p_status_last_seen > 0 and
                     time.time() - self._w1p_status_last_seen <= WINCH_STATUS_TIMEOUT_S)
@@ -1153,7 +1265,8 @@ class HVP2PBackend(QObject):
         if line.startswith("ERR"):
             self._log(f"[W1P] {line}"); return
         if line.startswith("PONG"):
-            self._invalidate_w1p_status()
+            # PONG proves Ethernet liveness only. It must not erase a still-fresh,
+            # fully validated STATUS safety snapshot.
             return
         if line.startswith("HELLO"):
             # HELLO represents a new W1P transport/power session. Never inherit a
@@ -1174,9 +1287,8 @@ class HVP2PBackend(QObject):
                 self._sync_w1p_settings()
             return
         if not line.startswith("STATUS"): return
-        # Invalidate the previous status before parsing the new one. Freshness is
-        # restored only after all safety-critical fields have been validated.
-        self._invalidate_w1p_status()
+        # Validate-then-commit: keep the previous complete snapshot authoritative
+        # until this frame has all mandatory safety fields and parses successfully.
         fields = {}
         for p in line.split()[1:]:
             if "=" in p:
@@ -1188,6 +1300,38 @@ class HVP2PBackend(QObject):
             "DO3_CFG", "DO4_CFG", "DO5_CFG", "SRDY"
         }
         if not required_status.issubset(fields):
+            missing = sorted(required_status.difference(fields))
+            self._reject_w1p_status("missing " + ",".join(missing))
+            return
+        # Validate every token that can affect the live safety snapshot before
+        # mutating any authoritative state. W1P emits these safety booleans as
+        # literal 0/1 values; accepting arbitrary text here would turn a corrupt
+        # token (for example ESTOP=x) into a real fail-safe transition instead of
+        # rejecting the bad sample and retaining the previous fresh snapshot.
+        strict_bits = (
+            "FW_MATCH", "ESTOP", "VEL_WD", "SERVICE_LOCK", "WRITE_EN",
+            "SW_SRVON_INHIBIT", "BRAKE_OUT", "MODBUS", "READY",
+            "POS_READ", "IO_READ", "DO2_CFG", "DO3_CFG", "DO4_CFG",
+            "DO5_CFG", "SRDY",
+        )
+        for bit_key in strict_bits:
+            if str(fields.get(bit_key, "")).strip() not in ("0", "1"):
+                self._reject_w1p_status(f"invalid boolean field {bit_key}")
+                return
+        if str(fields.get("RS_STAT", "")).strip().upper() not in ("CONNECTED", "FAULT", "WAITING"):
+            self._reject_w1p_status("invalid enum field RS_STAT")
+            return
+        if str(fields.get("LEAD_CFG", "")).strip().upper() not in ("OK", "MISMATCH", "READ_FAULT"):
+            self._reject_w1p_status("invalid enum field LEAD_CFG")
+            return
+        try:
+            for numeric_key in ("POS_M", "RAW_POS", "VEL_MPS", "DO2_ASSIGN", "DO3_ASSIGN", "DO4_ASSIGN", "DO5_ASSIGN"):
+                if numeric_key in fields:
+                    numeric_value = float(fields[numeric_key])
+                    if not math.isfinite(numeric_value):
+                        raise ValueError(f"{numeric_key} is non-finite")
+        except Exception as exc:
+            self._reject_w1p_status(f"invalid numeric field: {exc}")
             return
         try:
             boot_id = str(fields.get("BOOT_ID", "")).strip()
@@ -1260,8 +1404,8 @@ class HVP2PBackend(QObject):
             else: self.winch_rs_status = "Disconnected"
             self._update_w1p_reported_config(fields)
             self._w1p_status_last_seen = time.time()
-        except Exception:
-            self._invalidate_w1p_status()
+        except Exception as exc:
+            self._reject_w1p_status(f"parse error: {exc}")
 
     def _sanity_accept_winch_position(self, new_pos_m: float, fields: dict) -> bool:
         """Fail closed on implausible W1P position jumps.
@@ -1820,6 +1964,10 @@ class HVP2PBackend(QObject):
             self.current_speed_mps = 0.0
 
     def _send_stop_command(self):
+        try:
+            self.w1p.clear_velocity_refresh()
+        except Exception:
+            pass
         self.last_sent_vel = 0.0
         self.requested_speed_mps = 0.0
         self.last_winch_output = 0.0
@@ -1880,8 +2028,24 @@ class HVP2PBackend(QObject):
             self.current_speed_mps = vel
             self.last_winch_output = 0.0
             self.last_sent_vel = 0.0
+            try:
+                self.w1p.clear_velocity_refresh()
+            except Exception:
+                pass
             self._virtual_output_inhibit()
             return
+
+        cmd = "VEL 0" if abs(vel) < .001 else f"VEL {vel:.3f}"
+        if not self.smoke_test:
+            # Renew the short worker lease on every control-loop decision, even
+            # when the ordinary 150 ms wire refresh is not yet due. This keeps a
+            # brief macOS/Qt scheduling stall from tripping W1P, while lease expiry
+            # still lets the unchanged 500 ms W1P watchdog stop an unhealthy SRVR.
+            if abs(vel) < .001:
+                self.w1p.clear_velocity_refresh()
+            else:
+                self.w1p.arm_velocity_refresh(cmd)
+
         now = time.time()
         same = abs(vel-self.last_sent_vel) < .01
         if not force and same:
@@ -1893,7 +2057,7 @@ class HVP2PBackend(QObject):
         self._last_vel_tx = now
         if self.smoke_test:
             return
-        self.w1p.send("VEL 0" if abs(vel) < .001 else f"VEL {vel:.3f}")
+        self.w1p.send(cmd)
 
     @staticmethod
     def _normalise_aux_action_name(action: str) -> str:
@@ -2248,7 +2412,8 @@ class HVP2PBackend(QObject):
             if (not changed) and (now - self._last_ctrl_display_keepalive_tx) < HMI_DISPLAY_KEEPALIVE_S:
                 return
         try:
-            self._ctrl_display_sock.sendto(packet, (target, SERVER_BIND_PORT))
+            with self._ctrl_presence_tx_lock:
+                self._ctrl_display_sock.sendto(packet, (target, SERVER_BIND_PORT))
             self._last_ctrl_display_packet = packet
             self._last_ctrl_display_keepalive_tx = now
             if changed:
@@ -2279,7 +2444,8 @@ class HVP2PBackend(QObject):
             f"ts_allowed={1 if self._ctrl_ts_update_allowed() else 0}\n"
         ).encode("ascii", "ignore")
         try:
-            self._ctrl_display_sock.sendto(packet, (target, SERVER_BIND_PORT))
+            with self._ctrl_presence_tx_lock:
+                self._ctrl_display_sock.sendto(packet, (target, SERVER_BIND_PORT))
         except Exception:
             pass
 
@@ -2493,6 +2659,24 @@ class HVP2PBackend(QObject):
 
         if flags & FLAG_CANCEL_PRESSED:
             self._cancel_goto()
+
+        # Calibration Cancel from CTRL-TS is edge-captured in the UDP worker so
+        # it survives Qt/background scheduling stalls. In smoke tests, where the
+        # worker is intentionally absent, retain deterministic direct flag edges.
+        cal_cancel = False
+        if self.smoke_test:
+            cal_pressed = bool(flags & FLAG_CAL_CANCEL)
+            cal_cancel = bool(cal_pressed and not self._ctrl_cal_cancel_last)
+            self._ctrl_cal_cancel_last = cal_pressed
+        elif self._ctrl_cal_cancel_pending:
+            self._ctrl_cal_cancel_pending = False
+            cal_cancel = True
+        if cal_cancel:
+            if self.joystick_calibration_open:
+                self.cancelJoystickCalibration()
+            elif self.calibration_open:
+                self.cancelCalibration()
+
         mode_pressed = bool(flags & FLAG_MODE_TOGGLE)
         if mode_pressed and not self._mode_last:
             self.setDriveMode(1-self.active_drive_mode)
@@ -3408,7 +3592,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.05.06 moves the installed joystick polarity correction into CTRL,
+        # v26.10.05.07 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same
@@ -4500,15 +4684,24 @@ class HVP2PBackend(QObject):
 
     @Slot()
     def openLimitCalibration(self):
+        # Limit calibration is transactional. Captures are staged from raw encoder
+        # deltas/current position and the existing valid Near/Far/Ref calibration
+        # remains untouched until the final Reference confirmation commits all
+        # three points together. This makes Cancel genuinely non-destructive.
         self.calibration_type = "Limit"
         self.calibration_open = True
         self.calibration_step = 0
         self.calibration_title = "Set Near Limit"
         self._limit_cal_pending = {"near": None, "ref": None, "far": None}
+        self._limit_cal_capture = {"near_raw": None, "far_raw": None, "ref_raw": None,
+                                   "near_pos": None, "far_pos": None, "ref_pos": None,
+                                   "pending_reverse_motor": bool(self.reverse_motor)}
         if self.position_source == "Virtual" and self.state.pos_m is None:
             self.state.pos_m = 0.0
         self._cancel_goto()
+        self._send_velocity(0.0, force=True)
         self._sync_service_mode_to_winch(force=True)
+        self._log("[Calibration] Limit calibration started (transaction staged; existing calibration preserved until Ref commit)")
         self.calibrationChanged.emit(); self.stateChanged.emit()
 
     @Slot()
@@ -4524,10 +4717,23 @@ class HVP2PBackend(QObject):
 
     @Slot()
     def cancelCalibration(self):
+        was_limit = bool(self.calibration_open and self.calibration_type == "Limit")
         self.calibration_open = False
         self._cancel_goto()
+        self._send_velocity(0.0, force=True)
+        # A Cancel may be pressed while the joystick is displaced. Do not let
+        # service-mode exit turn that held stick into normal-speed motion.
+        self._joystick_neutral_required = True
         self._sync_service_mode_to_winch(force=True)
-        self.calibrationChanged.emit(); self.stateChanged.emit()
+        if was_limit:
+            self._limit_cal_pending = {"near": None, "ref": None, "far": None}
+            self._limit_cal_capture = {"near_raw": None, "far_raw": None, "ref_raw": None,
+                                       "near_pos": None, "far_pos": None, "ref_pos": None,
+                                       "pending_reverse_motor": None}
+            self._log("[Calibration] Limit calibration cancelled; previous calibration retained")
+        else:
+            self._log("[Calibration] Calibration cancelled")
+        self.calibrationChanged.emit(); self.configChanged.emit(); self.stateChanged.emit()
 
     def _sync_position(self, pos_m: float):
         self.state.pos_m = float(pos_m)
@@ -4546,72 +4752,102 @@ class HVP2PBackend(QObject):
         if not self.calibration_open:
             return
         if self.calibration_type == "Limit":
+            raw_now = None if self.position_source == "Virtual" else getattr(self, "_last_raw_pos", None)
+            raw_now = None if raw_now is None else int(raw_now)
+            pos_now = float(self.state.pos_m or 0.0)
+            cap = self._limit_cal_capture
             if self.calibration_step == 0:
-                # Near establishes the operator coordinate system: Near = 0.00 m.
-                self.state.near_limit.position_m = 0.0
-                raw = getattr(self, "_last_raw_pos", None)
-                self._limit_raw["near"] = None if raw is None else int(raw)
+                cap["near_raw"] = raw_now
+                cap["near_pos"] = pos_now
                 self._limit_cal_pending["near"] = 0.0
-                self._sync_position(0.0)
                 self.calibration_step = 1
                 self.calibration_title = "Set Far Limit"
+                self._log(f"[Calibration] Near staged raw={raw_now} pos={pos_now:.3f}; existing live limits unchanged")
             elif self.calibration_step == 1:
-                # After Near was synchronised to zero, the physical move to Far
-                # establishes which encoder/motor sign represents operator
-                # Near->Far. If that travel arrived as a negative coordinate,
-                # correct Winch Invert here (not Joystick Invert), then re-sync
-                # the Far point positive. W1P applies the same motor-direction
-                # transform to command and feedback, so the operator/UI axis is
-                # Near=0 increasing toward Far regardless of rope threading.
-                signed_far = float(self.state.pos_m or 0.0)
-                if signed_far < -0.05:
-                    self.reverse_motor = not bool(self.reverse_motor)
-                    self._log(
-                        "[Calibration] Near->Far travel was negative; "
-                        f"Winch Invert auto-corrected to {'On' if self.reverse_motor else 'Off'}"
-                    )
-                    if not self.smoke_test:
-                        self._mark_w1p_settings_pending(("MOTOR_REV",))
-                        self._service_w1p_setting_sync()
-                far = abs(signed_far)
-                self.state.far_limit.position_m = max(0.01, far)
-                self._limit_cal_pending["far"] = float(self.state.far_limit.position_m)
-                raw = getattr(self, "_last_raw_pos", None)
-                self._limit_raw["far"] = None if raw is None else int(raw)
-                self.state.total_length_m = self.state.far_limit.position_m
-                self._sync_ramp_representations_for_span()
-                self._sync_position(self.state.far_limit.position_m)
-                if signed_far < -0.05:
-                    # Persist the corrected physical winch orientation even if
-                    # the operator later cancels before setting Reference. The
-                    # system deliberately remains Not Calibrated until Done.
-                    self._save_config()
+                cap["far_raw"] = raw_now
+                cap["far_pos"] = pos_now
+                near_raw = cap.get("near_raw")
+                near_pos = cap.get("near_pos")
+                if near_raw is not None and raw_now is not None:
+                    raw_delta = int(raw_now) - int(near_raw)
+                    sign = -1.0 if bool(self.reverse_motor) else 1.0
+                    signed_travel = sign * (float(raw_delta) / max(1.0, float(self.winch_units_per_m)))
+                else:
+                    signed_travel = pos_now - float(near_pos if near_pos is not None else pos_now)
+                if abs(signed_travel) < 0.01:
+                    self._log("[Calibration] Far capture rejected: Near-to-Far travel is too small")
+                    self.calibrationChanged.emit(); self.stateChanged.emit()
+                    return
+                span = abs(float(signed_travel))
+                pending_reverse = bool(self.reverse_motor) ^ bool(signed_travel < 0.0)
+                cap["pending_reverse_motor"] = pending_reverse
+                self._limit_cal_pending["far"] = span
                 self.calibration_step = 2
                 self.calibration_title = "Set Reference Point"
+                self._log(f"[Calibration] Far staged span={span:.3f} m; Winch Invert commit={'On' if pending_reverse else 'Off'}")
             elif self.calibration_step == 2:
-                ref = abs(float(self.state.pos_m or 0.0))
-                self.state.ref_point.position_m = min(max(0.0, ref), float(self.state.far_limit.position_m or ref))
-                self._limit_cal_pending["ref"] = float(self.state.ref_point.position_m)
-                raw = getattr(self, "_last_raw_pos", None)
-                self._limit_raw["ref"] = None if raw is None else int(raw)
-                self._sync_position(self.state.ref_point.position_m)
+                cap["ref_raw"] = raw_now
+                cap["ref_pos"] = pos_now
+                span = float(self._limit_cal_pending.get("far") or 0.0)
+                if span < 0.01:
+                    self._log("[Calibration] Reference capture rejected: Far span has not been staged")
+                    return
+                near_raw = cap.get("near_raw")
+                near_pos = cap.get("near_pos")
+                if near_raw is not None and raw_now is not None:
+                    ref = abs((float(int(raw_now) - int(near_raw))) / max(1.0, float(self.winch_units_per_m)))
+                else:
+                    ref = abs(pos_now - float(near_pos if near_pos is not None else pos_now))
+                ref = min(max(0.0, ref), span)
+                self._limit_cal_pending["ref"] = ref
+
+                # Commit point: all operator-facing calibration and motor direction
+                # change together. No partial Near/Far values were live before here.
+                new_reverse = bool(cap.get("pending_reverse_motor"))
+                reverse_changed = new_reverse != bool(self.reverse_motor)
+                self.reverse_motor = new_reverse
+                self.state.near_limit.position_m = 0.0
+                self.state.far_limit.position_m = span
+                self.state.ref_point.position_m = ref
+                self.state.total_length_m = span
+                self._limit_raw["near"] = cap.get("near_raw")
+                self._limit_raw["far"] = cap.get("far_raw")
+                self._limit_raw["ref"] = cap.get("ref_raw")
+                self._sync_ramp_representations_for_span()
                 self._not_calibrated = False
-                # Completing Limit Calibration always returns Battery Change to
-                # Off. A fresh calibrated system must resume inside its normal
-                # Near/Far safety envelope rather than inheriting a service bypass.
                 self.battery_change_mode = False
                 self._battery_change_went_outside_limits = False
-                # Limit Calibration is exactly three captures (Near/Far/Ref),
-                # matching the three-step Joystick wizard. Close the service
-                # owner before syncing W1P so the final command also exits service
-                # mode and re-enables the normal Near/Far safety envelope.
+                self._cancel_goto()
+                self._send_velocity(0.0, force=True)
+
+                if self.position_source == "Virtual":
+                    self.state.pos_m = ref
+                elif not self.smoke_test:
+                    # Preserve exact command ordering through W1P's single TX queue:
+                    # direction/limits first, then establish the new Reference
+                    # coordinate, then leave service mode. The convergence layer
+                    # remains armed afterwards to retry any lost UDP setting.
+                    self.w1p.send(f"SET_MOTOR_REVERSE {1 if self.reverse_motor else 0}")
+                    self.w1p.send(f"SET_SPAN {span:.3f}")
+                    self.w1p.send("SET_LIMIT_NEAR 0.000")
+                    self.w1p.send(f"SET_LIMIT_FAR {span:.3f}")
+                    self.w1p.send(f"SYNC_POS {ref:.3f}")
+                    self.w1p.send("SERVICE_MODE 0")
+                    self._winch_position_accept_jump_until = time.time() + 2.0
+                    self.state.pos_m = ref
+
                 self.calibration_open = False
                 self.calibration_step = 2
                 self.calibration_title = "Set Reference Point"
+                self._last_service_mode_sent = 0
+                self._mark_w1p_settings_pending()
                 self._sync_w1p_settings()
-                self._sync_service_mode_to_winch(force=True)
                 self._save_config()
                 self._refresh_setup_mirror()
+                self._log(
+                    f"[Calibration] Limit calibration committed Near=0.000 Far={span:.3f} Ref={ref:.3f}"
+                    + ("; Winch Invert changed" if reverse_changed else "")
+                )
             else:
                 self.calibration_open = False
                 self._sync_service_mode_to_winch(force=True)
@@ -4642,6 +4878,24 @@ class HVP2PBackend(QObject):
         if self.calibration_step > 0:
             self.calibration_step -= 1
         if self.calibration_type == "Limit":
+            # Back means the later staged capture is no longer authoritative.
+            # Clear it (and any derived direction decision) so a subsequent Next
+            # always derives from the newly recaptured physical point.
+            if self.calibration_step == 0:
+                self._limit_cal_pending = {"near": None, "ref": None, "far": None}
+                self._limit_cal_capture.update({
+                    "near_raw": None, "far_raw": None, "ref_raw": None,
+                    "near_pos": None, "far_pos": None, "ref_pos": None,
+                    "pending_reverse_motor": bool(self.reverse_motor),
+                })
+            elif self.calibration_step == 1:
+                self._limit_cal_pending["far"] = None
+                self._limit_cal_pending["ref"] = None
+                self._limit_cal_capture.update({
+                    "far_raw": None, "ref_raw": None,
+                    "far_pos": None, "ref_pos": None,
+                    "pending_reverse_motor": bool(self.reverse_motor),
+                })
             self.calibration_title = ("Set Near Limit","Set Far Limit","Set Reference Point")[min(self.calibration_step,2)]
         else:
             self.calibration_title = ("Set Zero","Set 20 m","Done")[min(self.calibration_step,2)]
@@ -4957,10 +5211,12 @@ class HVP2PBackend(QObject):
     def cancelJoystickCalibration(self):
         self.joystick_calibration_open = False
         self.joystick_calibration_error = ""
+        self._joystick_cal_pending = {"left": None, "centre": None, "right": None}
+        self._joystick_neutral_required = True
         self._cancel_goto()
         self._send_velocity(0.0, force=True)
-        self._log("[Calibration] Joystick calibration cancelled")
-        self.joystickCalibrationChanged.emit()
+        self._log("[Calibration] Joystick calibration cancelled; saved calibration retained")
+        self.joystickCalibrationChanged.emit(); self.calibrationChanged.emit(); self.stateChanged.emit()
 
     @Slot()
     def joystickCalibrationBack(self):
@@ -5165,8 +5421,9 @@ class HVP2PBackend(QObject):
         if not target:
             return
         try:
-            for _ in range(3):
-                self._ctrl_display_sock.sendto(b"SRVR_OFFLINE\n", (target, SERVER_BIND_PORT))
+            with self._ctrl_presence_tx_lock:
+                for _ in range(3):
+                    self._ctrl_display_sock.sendto(b"SRVR_OFFLINE\n", (target, SERVER_BIND_PORT))
         except Exception:
             pass
 

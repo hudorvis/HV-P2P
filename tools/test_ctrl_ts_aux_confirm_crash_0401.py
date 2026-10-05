@@ -2,9 +2,9 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TS = (ROOT / 'HV_P2P_CTRL_TS_v26.10.05.06' / 'HV_P2P_CTRL_TS_v26.10.05.06.ino').read_text()
-CTRL = (ROOT / 'HV_P2P_CTRL_EDGEBOX_v26.10.05.06' / 'HV_P2P_CTRL_EDGEBOX_v26.10.05.06.ino').read_text()
-SRVR = (ROOT / 'SRVR_GitHub_v26.10.05.06' / 'backend.py').read_text()
+TS = (ROOT / 'HV_P2P_CTRL_TS_v26.10.05.07' / 'HV_P2P_CTRL_TS_v26.10.05.07.ino').read_text()
+CTRL = (ROOT / 'HV_P2P_CTRL_EDGEBOX_v26.10.05.07' / 'HV_P2P_CTRL_EDGEBOX_v26.10.05.07.ino').read_text()
+SRVR = (ROOT / 'SRVR_GitHub_v26.10.05.07' / 'backend.py').read_text()
 
 # Production face deliberately has no debug label. Any direct LVGL call through
 # that pointer is therefore a crash bug; diagnostic helper must remain null-safe.
@@ -22,7 +22,7 @@ assert 'AUX queue busy - confirm again' in TS
 # Keep low-rate end-to-end diagnostics so bench can prove whether a particular
 # AUX command reached CTRL and what resulting SRVR state was applied.
 assert '|last_event_id=' in CTRL and '|last_event_cmd=' in CTRL
-assert 'g_hmiLastAcceptedEventCmd = cmd.startsWith("AUX") ? cmd : String("OTHER")' in CTRL
+assert 'g_hmiLastAcceptedEventCmd = (cmd.startsWith("AUX") || cmd == "CAL_CANCEL") ? cmd : String("OTHER")' in CTRL
 assert '[CTRL-TS EVENT] CTRL accepted id=' in SRVR
 assert "[AUX] {label}: {action}{result}" in SRVR
 

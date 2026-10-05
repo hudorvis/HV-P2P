@@ -1,3 +1,16 @@
+# v26.10.05.07 — 2026-10-05
+
+- Final CTRL-TS firmware completion now requires a new `boot_id` plus exact target version/SHA; `REBOOT` ACK alone no longer closes the updater transaction. CTRL performs bounded post-ACK reboot enforcement while the touchscreen retains its autonomous verified-image fallback.
+- Rebalanced CTRL-TS AUX/travel geometry so Near/Far distances, REF, skate marker, ramp zones and preset names occupy separate lanes without shrinking below the approved Montserrat 10 minimum font.
+- Renamed Settings -> CTRL-TS `CTRL-TS Link` to `Link` and updated the validator.
+- CTRL-TS calibration uncaptured fields now display ASCII `-`; added acknowledged/retried calibration Cancel through CTRL to SRVR. Joystick captures remain staged and Limit Calibration is now fully transactional, committing Near/Far/Ref/Winch Invert only at final Ref confirmation.
+- Changed W1P status arbitration to validate-before-commit and made PONG liveness-only, preventing one malformed/incomplete telemetry frame from manufacturing a brief red/E-stop state while preserving normal status freshness timeout behavior.
+- Added a 250 ms SRVR background liveness worker for CTRL so macOS window focus does not consume the 750 ms peer-timeout margin. Added a bounded worker-side non-zero VEL refresh bridge for brief Qt scheduling stalls while retaining the normal ~150 ms command cadence and unchanged W1P 500 ms watchdog.
+- Preserved the post-safety joystick-neutral interlock; random Limit Calibration stops are addressed at their false safety/VEL-starvation sources rather than bypassing the re-arm requirement.
+- Added `test_bench_regression_0507.py`, extended PySide backend regressions, and updated source/preflight validation for the new contracts.
+- W1P motion/watchdog firmware logic, Leadshine architecture, AI0/AI1 mapping, predictive/hard limits, firmware ordering and CTRL<->CTRL-TS single-flight EVENT handling remain unchanged apart from release identity.
+- macOS bundle metadata: short version `26.10.5`, build `2610.5.7`.
+
 # v26.10.05.06 — 2026-10-05
 
 - Reordered SRVR AUX Assign choices exactly as requested: general actions alphabetically, then Near, Ref, Far, Preset Recall, Preset Save and Preset Slip groups.

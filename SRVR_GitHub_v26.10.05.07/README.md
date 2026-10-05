@@ -1,8 +1,8 @@
-# HV P2P SRVR v26.10.05.06 — Qt Quick desktop build source
+# HV P2P SRVR v26.10.05.07 — Qt Quick desktop build source
 
-This SRVR source continues from the audited/hardened v26.08.31.08 control baseline. v26.10.05.06 retains the approved **Run** and **Setup** layout while correcting Settings state convergence, firmware-progress readouts, signed service-mode distance display and true W1P-independent Virtual simulation.
+This SRVR source continues from the audited/hardened v26.08.31.08 control baseline. v26.10.05.07 retains the approved **Run** and **Setup** layout while correcting Settings state convergence, firmware-progress readouts, signed service-mode distance display and true W1P-independent Virtual simulation.
 
-## v26.10.05.06 operator revisions
+## v26.10.05.07 operator revisions
 
 ### Run
 
@@ -19,10 +19,10 @@ This SRVR source continues from the audited/hardened v26.08.31.08 control baseli
 - W1P rows: `W1P IP`, `Link`, `RS485`, `E-Stop`, `Firmware`, `Direction`.
 - CTRL and W1P `Firmware` readouts normally show the running ESP32 version and temporarily show the live update phase/percentage while that node is updating.
 - Motion Profiles preserves the existing data/controls with even clearance around the Mode 1/Mode 2 centre divider.
-- The `CTRL-TS` panel now matches CTRL/W1P firmware presentation: `CTRL-TS Link`, a divider, and one `Firmware` readout that normally shows the detected running version and switches to update progress during CTRL-TS firmware activity.
+- The `CTRL-TS` panel now matches CTRL/W1P firmware presentation: `Link`, a divider, and one `Firmware` readout that normally shows the detected running version and switches to update progress during CTRL-TS firmware activity.
 
 
-### v26.10.05.06 transport/display integration
+### v26.10.05.07 transport/display integration
 
 - CTRL now reports its own authority-OTA progress back to SRVR over the existing UDP control link as well as to CTRL-TS; W1P continues to report `FW_PROGRESS` directly to SRVR.
 - CTRL/W1P/CTRL-TS Settings firmware fields therefore use one version-or-progress model.
@@ -92,9 +92,9 @@ Use the repository-root workflow:
 
 `.github/workflows/complete-build.yml`
 
-It builds the matched v26.10.05.06 CTRL-TS, CTRL and W1P firmware, freezes/smoke-tests the Intel (`x86_64`) macOS SRVR application, preserves the original SRVR distribution ZIP, and publishes the complete matched release.
+It builds the matched v26.10.05.07 CTRL-TS, CTRL and W1P firmware, freezes/smoke-tests the Intel (`x86_64`) macOS SRVR application, preserves the original SRVR distribution ZIP, and publishes the complete matched release.
 
-A successful GitHub compile is not powered-motion commissioning approval. Complete the repository `NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.10.05.06.md` before hardware sign-off.
+A successful GitHub compile is not powered-motion commissioning approval. Complete the repository `NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.10.05.07.md` before hardware sign-off.
 
 
 ## Native desktop targets
