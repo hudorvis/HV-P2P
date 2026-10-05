@@ -2,11 +2,11 @@
 from pathlib import Path
 import hashlib, json, sys, tempfile, urllib.request
 ROOT=Path(__file__).resolve().parents[1]
-SRVR=ROOT/'SRVR_GitHub_v26.10.05.10'
+SRVR=ROOT/'SRVR_GitHub_v26.10.05.11'
 sys.path.insert(0,str(SRVR))
 from firmware_authority import FirmwareBundle, FirmwareAuthorityError, FirmwareAuthorityServer, SCHEMA, AUTHORITY
 
-REL='v26.10.05.10'
+REL='v26.10.05.11'
 def sha(b): return hashlib.sha256(b).hexdigest()
 def make_bundle(root:Path):
     ctrl=b'\xe9CTRL_TEST_IMAGE'; w1p=b'\xe9W1P_TEST_IMAGE'

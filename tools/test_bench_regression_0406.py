@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.10.05.10'
+VER='26.10.05.11'
 B=(ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 Q=(ROOT/f'SRVR_GitHub_v{VER}/qml/Main.qml').read_text()
 C=(ROOT/f'HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino').read_text()
@@ -11,7 +11,8 @@ T=(ROOT/f'HV_P2P_CTRL_TS_v{VER}/HV_P2P_CTRL_TS_v{VER}.ino').read_text()
 assert 'g_fwAuthorityFastRetryUntilMs' in C
 assert 'g_fwAuthorityRetryDelayMs = (g_fwAuthorityFastRetryUntilMs' in C
 assert '? 500 : 5000' in C
-assert 'entering fast safe-update discovery' in C
+assert 'if(releaseChanged || newSession)' in C
+assert 'g_fwAuthorityFastRetryUntilMs = millis() + 15000' in C
 
 # Compact state/geometry must self-heal instead of one-shot delivery.
 assert '#define HMI_STATE_KEEPALIVE_MS  1000' in C

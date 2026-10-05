@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.10.05.10'
+VER='26.10.05.11'
 B=(ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 C=(ROOT/f'HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino').read_text()
 
@@ -45,7 +45,7 @@ assert 'self._fw_progress["w1p"]["active"]' in svc and '"update_waiting_safe_idl
 # but stale/absent W1P state must never strand CTRL-TS indefinitely.
 assert 'if not (self._ctrl_fw_match and self._ctrl_authority_fresh()):' in svc
 allow=B[B.index('def _ctrl_ts_update_allowed'):B.index('def _build_controller_display_packet')]
-assert '(now - matched_since) >= 1.0' in allow
+assert '(now_wall - matched_since) >= 1.0' in allow
 assert 'self._fw_progress["w1p"]["active"]' in allow
 assert 'return not w1p_updating' in allow
 assert 'if self.w1p.connected:\n            return False' not in allow

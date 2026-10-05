@@ -1,12 +1,24 @@
+# v26.10.05.11 — 2026-10-05
+
+- Fixed the `.05.10` automatic firmware-update regression without changing the approved `.05.10` UI/calibration fixes. Root cause was a split SRVR architecture: background `SRVR_ALIVE` kept CTRL connected while `SRVR_FW`, W1P release beacons and the final CTRL-TS coordinator grant still depended on the Qt timer.
+- Moved lightweight firmware discovery/order beacons into the background SRVR communications worker at 500 ms while keeping all HTTP/flash work and motion decisions in their existing fail-closed node paths.
+- Added W1P network-thread firmware snapshots (STATUS plus `FW_PROGRESS`) so CTRL -> W1P -> CTRL-TS ordering no longer depends on Qt draining the W1P receive queue and remains aware of W1P during its blocking OTA download.
+- Added a bounded 3 s W1P discovery grace after CTRL convergence and retained a 15 s bounded participating-W1P absence escape so normal ordering is deterministic without permanently stranding CTRL-TS.
+- Made every new SRVR authority session force exact manifest/running-SHA re-verification on CTRL and W1P even for the same semantic version; exact images re-match without reflashing.
+- Closed a shutdown race by re-checking `_stop_evt` under the CTRL presence TX lock so no background `SRVR_FW` can be sent after explicit `SRVR_OFFLINE`.
+- Preserved the `.05.10` staged-Near calibration coordinate, Run/System row geometry and full `Practice Mode` AUX label, plus all `.05.09` updater/reboot, transactional calibration, safety arbitration and macOS communication hardening.
+- Added `test_firmware_background_convergence_0511.py` and updated older brittle contracts to assert the actual preserved timing/state behavior rather than superseded debug text/local variable names.
+- Full source/static/regression/preflight suite passes: 370 EdgeBox checks, all prior bench/update contracts, 53 build-pipeline checks, release/hygiene/Python syntax and SRVR preflight. Native ESP32 and frozen desktop/PySide compilation remain GitHub Actions gates.
+- macOS bundle metadata: short version `26.10.5`, build `2610.5.11`.
+
 # v26.10.05.10 — 2026-10-05
 
-- Bench follow-up built directly from the verified `v26.10.05.09` source; all `.05.09` updater, calibration transaction, safety arbitration, background communications and watchdog protections are retained.
-- Limit Calibration now uses the staged Near capture as a temporary operator-facing `0.00 m` origin. CTRL-TS and the SRVR calibration popup show live distance from Near while travelling toward Far/Ref without mutating the previously valid live calibration before final Ref commit. Hardware uses raw encoder delta when available; Virtual mode uses the staged position delta.
-- Run -> Shortcuts -> System controls now use the same 31 px control-row height as the Limits Save/Recall/Slip controls with tighter 2 px vertical spacing, keeping all five System rows inside the Shortcuts panel.
-- CTRL-TS AUX dynamic fields now allow 40 characters instead of the generic 24-character display-field limit, preventing `Drive Mode | Practice Mode` from being source-truncated to `Practice Mo`. The touchscreen tile font and approved visual style are unchanged.
+- Bench follow-up built from verified `v26.10.05.09`; all `.05.09` updater, calibration transaction, safety arbitration, background communications and watchdog protections were retained.
+- Limit Calibration uses the staged Near capture as a temporary operator-facing `0.00 m` origin. CTRL-TS and the SRVR calibration popup show live distance from Near while travelling toward Far/Ref without mutating the previously valid live calibration before final Ref commit. Hardware uses raw encoder delta when available; Virtual mode uses the staged position delta.
+- Run -> Shortcuts -> System controls use the same 31 px control-row height as the Limits Save/Recall/Slip controls with tighter 2 px vertical spacing, keeping all five System rows inside the Shortcuts panel.
+- CTRL-TS AUX dynamic fields allow 40 characters instead of the generic 24-character display-field limit, preventing `Drive Mode | Practice Mode` from being source-truncated to `Practice Mo`. The touchscreen tile font and approved visual style are unchanged.
 - Added `test_bench_regression_0510.py` plus PySide runtime assertions for calibration-relative position and full AUX label transport.
-- W1P firmware/control logic is unchanged apart from release identity. The independent 500 ms VEL watchdog, ~150 ms normal SRVR refresh, AI0/AI1 mapping, Leadshine velocity architecture, predictive/dynamic limits and hard-limit protections remain unchanged.
-- Source/static/regression/preflight suite passes locally; native ESP32 and frozen desktop compilation remain GitHub Actions gates.
+- W1P firmware/control logic remained unchanged apart from release identity. The independent 500 ms VEL watchdog, ~150 ms normal SRVR refresh, AI0/AI1 mapping, Leadshine velocity architecture, predictive/dynamic limits and hard-limit protections remained unchanged.
 - macOS bundle metadata: short version `26.10.5`, build `2610.5.10`.
 
 # v26.10.05.09 — 2026-10-05

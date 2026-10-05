@@ -49,6 +49,7 @@ VEL_KEEPALIVE_S = 0.15  # ordinary SRVR refresh cadence; W1P watchdog remains 50
 VEL_BACKGROUND_REFRESH_S = 0.18  # sits behind the normal ~150 ms Qt cadence; bridges only a missed interval
 VEL_REFRESH_LEASE_S = 0.22       # short producer lease; expiry stops refresh so the unchanged 500 ms W1P watchdog still wins
 SRVR_ALIVE_INTERVAL_S = 0.25      # process/transport liveness independent of Qt window focus
+FIRMWARE_BEACON_INTERVAL_S = 0.50  # release discovery/order must also be independent of the Qt event loop
 
 # Automatic centre-drift compensation is deliberately conservative. It is a
 # runtime trim only: calibration endpoints and the saved Centre capture are never
@@ -183,10 +184,58 @@ class W1PClient(threading.Thread):
         self._vel_refresh_text = ""
         self._vel_refresh_until = 0.0
         self._vel_refresh_last_tx = 0.0
+        # Firmware-order snapshot is parsed directly in the W1P network thread.
+        # The Qt timer may be delayed on macOS, but CTRL-TS final-stage gating
+        # must still know whether a present W1P has converged to this SRVR.
+        self._fw_snapshot_lock = threading.Lock()
+        self._fw_version = ""
+        self._fw_match = False
+        self._fw_authority = "unknown"
+        self._fw_snapshot_at = 0.0
 
     @property
     def connected(self):
         return self.last_seen > 0 and time.time() - self.last_seen <= WINCH_STATUS_TIMEOUT_S
+
+    def _update_firmware_snapshot(self, line: str) -> None:
+        text = str(line or "").strip()
+        fields = {}
+        if text.startswith("STATUS"):
+            for token in text.split()[1:]:
+                if "=" in token:
+                    key, value = token.split("=", 1)
+                    fields[key.strip()] = value.strip()
+            with self._fw_snapshot_lock:
+                if "FW" in fields:
+                    self._fw_version = fields["FW"]
+                if "FW_MATCH" in fields:
+                    self._fw_match = fields["FW_MATCH"] == "1"
+                if "FW_AUTH" in fields:
+                    self._fw_authority = fields["FW_AUTH"]
+                self._fw_snapshot_at = time.monotonic()
+            return
+
+        if text.startswith("FW_PROGRESS|"):
+            for token in text.split("|")[1:]:
+                if "=" in token:
+                    key, value = token.split("=", 1)
+                    fields[key.strip()] = value.strip()
+            if str(fields.get("device", "W1P")).upper() != "W1P":
+                return
+            active = str(fields.get("active", "1")).lower() in ("1", "true", "on")
+            phase = str(fields.get("phase", "Updating")).strip().lower()
+            with self._fw_snapshot_lock:
+                # Progress is intentionally not allowed to claim FW_MATCH. It
+                # only proves the participating W1P is still alive in its OTA
+                # stage while normal STATUS output may be paused by download.
+                self._fw_match = False
+                self._fw_authority = "updating" if active else ("rebooting" if phase == "complete" else phase)
+                self._fw_snapshot_at = time.monotonic()
+            return
+
+    def firmware_snapshot(self):
+        with self._fw_snapshot_lock:
+            return (self._fw_version, bool(self._fw_match), self._fw_authority, float(self._fw_snapshot_at))
 
     def send(self, text: str):
         try: self.txq.put_nowait(str(text))
@@ -231,6 +280,11 @@ class W1PClient(threading.Thread):
 
     def reconfigure(self, host: str, port: int):
         self.host, self.port, self.last_seen = host, port, 0.0
+        with self._fw_snapshot_lock:
+            self._fw_version = ""
+            self._fw_match = False
+            self._fw_authority = "unknown"
+            self._fw_snapshot_at = 0.0
 
     def run(self):
         while not self.stop_evt.is_set():
@@ -285,6 +339,7 @@ class W1PClient(threading.Thread):
                         line = raw.strip()
                         if line.startswith(("STATUS", "HELLO", "PONG", "OK", "ERR", "FW_PROGRESS", "W1PTS_AUX", "W1P_HMI_STATUS")):
                             self.last_seen = time.time()
+                            self._update_firmware_snapshot(line)
                             try: self.rxq.put_nowait(line)
                             except queue.Full: pass
             except BlockingIOError: pass
@@ -305,7 +360,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.05.10", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.05.11", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -321,12 +376,22 @@ class HVP2PBackend(QObject):
         self._fw_modern_fallback_delay_s = 2.5
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.05.10+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.05.11+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
             "w1p": {"active": False, "phase": "Idle", "pct": 0},
         }
+        # If W1P is present when a release change is discovered, hold the final
+        # CTRL-TS stage until W1P reports this exact release/match. The latch
+        # survives W1P's normal OTA reboot; a genuinely absent W1P never sets it.
+        self._w1p_fw_order_pending = False
+        self._w1p_fw_order_pending_since = 0.0
+        # After CTRL converges, allow a short W1P discovery window before the
+        # final CTRL-TS stage. W1P probes every 250 ms, so 3 s is generous for a
+        # healthy present node but still keeps a genuinely absent W1P bounded.
+        self._w1p_fw_discovery_grace_s = 3.0
+        self._w1p_fw_order_absent_timeout_s = 15.0
         self.started = time.time()
         # A short per-process authority session token is advertised to CTRL/W1P on
         # their existing real-time links. A new SRVR process therefore causes one
@@ -732,24 +797,33 @@ class HVP2PBackend(QObject):
         threading.Thread(target=self._controller_worker, name="HVP2P-CTRL-RX", daemon=True).start()
 
     def _start_srvr_alive_worker(self):
-        """Keep CTRL peer liveness independent of Qt/macOS window scheduling.
+        """Keep CTRL liveness *and firmware discovery* independent of Qt.
 
-        This packet carries no motion or safety state. It only proves that the
-        SRVR process and networking worker are alive. Graceful shutdown sends an
-        explicit SRVR_OFFLINE packet under the same TX lock, so offline always
-        wins the final ordering.
+        v26.10.05.10 kept SRVR_ALIVE on this background worker but still emitted
+        SRVR_FW/firmware-order beacons from the 25 ms Qt timer. On macOS the UI
+        event loop can be delayed while the app is backgrounded, leaving CTRL
+        apparently connected yet unaware that a newer SRVR release exists. A
+        manual CTRL reboot then appeared to "fix" the update because boot-time
+        authority discovery does not depend on Qt.
+
+        This worker now owns both presence and lightweight firmware beacons. It
+        performs no HTTP/flash work and no motion decisions. CTRL/W1P remain the
+        nodes that verify/download the immutable authority image, and shutdown
+        still sets _stop_evt before SRVR_OFFLINE is sent under the same CTRL TX
+        lock, so no background beacon can resurrect a closed desktop session.
         """
         if self._srvr_alive_thread and self._srvr_alive_thread.is_alive():
             return
-        self._srvr_alive_thread = threading.Thread(target=self._srvr_alive_worker, name="HVP2P-SRVR-Alive", daemon=True)
+        self._srvr_alive_thread = threading.Thread(target=self._srvr_alive_worker, name="HVP2P-SRVR-Comms", daemon=True)
         self._srvr_alive_thread.start()
 
     def _srvr_alive_worker(self):
-        next_tx = 0.0
+        next_alive = 0.0
+        next_fw = 0.0
         while not self._stop_evt.is_set():
             now = time.monotonic()
-            if now >= next_tx:
-                next_tx = now + SRVR_ALIVE_INTERVAL_S
+            if now >= next_alive:
+                next_alive = now + SRVR_ALIVE_INTERVAL_S
                 target = str(self.ctrl_ip or "").strip()
                 if target:
                     try:
@@ -758,6 +832,16 @@ class HVP2PBackend(QObject):
                                 self._ctrl_display_sock.sendto(b"SRVR_ALIVE\n", (target, SERVER_BIND_PORT))
                     except Exception:
                         pass
+
+            # Release discovery and the CTRL->W1P->CTRL-TS coordinator grant are
+            # safety/update transport, not UI presentation. Service them here so
+            # window focus, rendering load or a stalled Qt timer cannot be a
+            # prerequisite for automatic firmware convergence.
+            if now >= next_fw and not self._stop_evt.is_set():
+                next_fw = now + FIRMWARE_BEACON_INTERVAL_S
+                self._send_ctrl_firmware_beacon(force=True)
+                self._send_w1p_firmware_beacon(force=True)
+
             self._stop_evt.wait(0.05)
 
     def _controller_worker(self):
@@ -2241,23 +2325,59 @@ class HVP2PBackend(QObject):
         return "System | Active", "green", "", 0
 
     def _ctrl_ts_update_allowed(self) -> bool:
-        """Grant CTRL-TS update once CTRL is current; never strand it on W1P state.
+        """Grant CTRL-TS only after preceding firmware stages have converged.
 
-        CTRL must always converge first because it carries the exact staged
-        CTRL-TS image and owns the RS485 updater. W1P may also update from SRVR,
-        but stale/missing W1P status must not leave an otherwise safe CTRL-TS
-        permanently on ``Waiting for CTRL``. We defer only while a W1P firmware
-        update is actively in progress, then allow the display final stage.
+        CTRL must always converge first. If W1P is actually present for this
+        update session, its network-thread firmware snapshot must also report the
+        current release and an exact authority match before CTRL-TS may start.
+        This ordering no longer depends on Qt draining the W1P receive queue.
+        A W1P that was never present does not block the display; if a participating
+        W1P disappears entirely, a bounded 15 s absence timeout prevents a dead
+        unit from stranding the touchscreen forever.
         """
-        now = time.time()
+        now_wall = time.time()
         if not (self._ctrl_fw_match and self._ctrl_authority_fresh()):
             return False
         matched_since = float(self._ctrl_fw_match_since or 0.0)
-        if not (matched_since and (now - matched_since) >= 1.0):
+        if not (matched_since and (now_wall - matched_since) >= 1.0):
             return False
+
+        w1p_version, w1p_match, w1p_authority, snapshot_at = self.w1p.firmware_snapshot()
+        w1p_present = bool(self.w1p.connected)
+        w1p_current = bool(self._firmware_version_matches_current(w1p_version) and w1p_match)
+        now_mono = time.monotonic()
+        snapshot_fresh = bool(snapshot_at and (now_mono - float(snapshot_at)) <= (WINCH_STATUS_TIMEOUT_S * 2.0))
+
+        # Normal update ordering is CTRL -> W1P -> CTRL-TS. A healthy W1P is
+        # probed every 250 ms, so give it an explicit discovery grace after CTRL
+        # matches instead of allowing CTRL-TS merely because the very first W1P
+        # STATUS has not arrived yet. Virtual/bench operation with no W1P still
+        # proceeds automatically after this bounded grace.
+        if not w1p_present and not snapshot_fresh and (now_wall - matched_since) < self._w1p_fw_discovery_grace_s:
+            return False
+
+        if (w1p_present or snapshot_fresh) and not w1p_current:
+            if not self._w1p_fw_order_pending:
+                self._w1p_fw_order_pending = True
+                self._w1p_fw_order_pending_since = now_mono
+            return False
+
+        if w1p_present and w1p_current:
+            self._w1p_fw_order_pending = False
+            self._w1p_fw_order_pending_since = 0.0
+        elif self._w1p_fw_order_pending:
+            # Preserve ordering across the normal W1P OTA reboot. If it never
+            # returns, eventually treat it as absent so CTRL-TS is not stranded.
+            since = float(self._w1p_fw_order_pending_since or now_mono)
+            if (now_mono - since) < self._w1p_fw_order_absent_timeout_s:
+                return False
+            self._w1p_fw_order_pending = False
+            self._w1p_fw_order_pending_since = 0.0
+
         w1p_updating = bool(
             self._fw_progress["w1p"]["active"]
             or self._w1p_fw_authority in ("updating", "rebooting", "update_waiting_safe_idle")
+            or str(w1p_authority or "") in ("updating", "rebooting", "update_waiting_safe_idle")
         )
         return not w1p_updating
 
@@ -2453,20 +2573,20 @@ class HVP2PBackend(QObject):
             # Display/status telemetry must never disturb the motion/safety loop.
             pass
 
-    def _send_ctrl_firmware_beacon(self) -> None:
+    def _send_ctrl_firmware_beacon(self, force: bool = False) -> None:
         """Advertise SRVR authority over CTRL's existing non-blocking UDP socket.
 
         This is independent of DSP1 layout/change throttling. A matched CTRL only
         compares the announced version/session and never performs HTTP until a
         mismatch has first put the node into its fail-closed authority path.
         """
-        if self.smoke_test:
+        if self.smoke_test or self._stop_evt.is_set():
             return
         target = str(self.ctrl_ip or "").strip()
         if not target:
             return
-        now = time.time()
-        if now - float(self._last_ctrl_fw_beacon or 0.0) < 0.50:
+        now = time.monotonic()
+        if not force and now - float(self._last_ctrl_fw_beacon or 0.0) < FIRMWARE_BEACON_INTERVAL_S:
             return
         self._last_ctrl_fw_beacon = now
         packet = (
@@ -2476,24 +2596,31 @@ class HVP2PBackend(QObject):
         ).encode("ascii", "ignore")
         try:
             with self._ctrl_presence_tx_lock:
+                # shutdown sets _stop_evt before taking this same lock to send
+                # SRVR_OFFLINE. Re-check under the lock so a worker already
+                # waiting here can never emit SRVR_FW after the offline packet.
+                if self._stop_evt.is_set():
+                    return
                 self._ctrl_display_sock.sendto(packet, (target, SERVER_BIND_PORT))
         except Exception:
             pass
 
-    def _send_w1p_firmware_beacon(self) -> None:
+    def _send_w1p_firmware_beacon(self, force: bool = False) -> None:
         """Advertise W1P authority only after CTRL is on this SRVR release.
 
         This makes the coordinated update order deterministic: CTRL first, W1P
         second, CTRL-TS last. A disconnected W1P does not block CTRL-TS later.
         """
-        if self.smoke_test:
+        if self.smoke_test or self._stop_evt.is_set():
             return
         if not (self._ctrl_fw_match and self._ctrl_authority_fresh()):
             return
-        now = time.time()
-        if now - float(self._last_w1p_fw_beacon or 0.0) < 0.50:
+        now = time.monotonic()
+        if not force and now - float(self._last_w1p_fw_beacon or 0.0) < FIRMWARE_BEACON_INTERVAL_S:
             return
         self._last_w1p_fw_beacon = now
+        if self._stop_evt.is_set():
+            return
         self.w1p.send(
             f"SRVR_FW|version={self._current_firmware_version()}|session={self._firmware_authority_session}"
         )
@@ -3168,7 +3295,10 @@ class HVP2PBackend(QObject):
             for _ in range(100):
                 try: self._parse_w1p(self._w1p_rx.get_nowait())
                 except queue.Empty: break
-            self._motion_tick(); self._service_w1p_setting_sync(); self._service_legacy_firmware_push(); self._send_freed(); self._send_ctrl_firmware_beacon(); self._send_controller_display_packet(); self._send_w1p_firmware_beacon()
+            # Firmware authority beacons are deliberately NOT serviced here.
+            # They are owned by _srvr_alive_worker so a stalled/background Qt
+            # event loop cannot prevent CTRL/W1P/CTRL-TS release convergence.
+            self._motion_tick(); self._service_w1p_setting_sync(); self._service_legacy_firmware_push(); self._send_freed(); self._send_controller_display_packet()
             # Keep the 25 ms control/safety cadence, but do not force the whole
             # QML property graph to re-evaluate at 40 Hz. 20 Hz is ample for the
             # desktop display and materially reduces Intel-mac UI load.
@@ -3623,7 +3753,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.05.10 moves the installed joystick polarity correction into CTRL,
+        # v26.10.05.11 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same

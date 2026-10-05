@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.10.05.10'
+VER='26.10.05.11'
 B=(ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 Q=(ROOT/f'SRVR_GitHub_v{VER}/qml/Main.qml').read_text()
 S=(ROOT/f'SRVR_GitHub_v{VER}/qml/components/SpanDiagram.qml').read_text()
@@ -44,7 +44,7 @@ assert 'preset_lbl[i]=make_label(travel_panel,"",0,35,&lv_font_montserrat_10' in
 # Modern update order: CTRL self-pull first, W1P gated behind CTRL, CTRL-TS final.
 assert 'parts <= (26, 10, 1, 1)' in B
 assert 'if not (self._ctrl_fw_match and self._ctrl_authority_fresh()):' in B[B.index('def _send_w1p_firmware_beacon'):B.index('def _legacy_firmware_push_worker')]
-assert 'def _ctrl_ts_update_allowed' in B and '(now - matched_since) >= 1.0' in B
+assert 'def _ctrl_ts_update_allowed' in B and '(now_wall - matched_since) >= 1.0' in B
 assert 'f"fw_ts_allowed={1 if self._ctrl_ts_update_allowed() else 0}"' in B
 assert 'g_hmiTsCoordinatorSeen' in C and 'g_hmiTsUpdateAllowed' in C
 assert 'ts_allowed' in B[B.index('def _send_ctrl_firmware_beacon'):B.index('def _send_w1p_firmware_beacon')]

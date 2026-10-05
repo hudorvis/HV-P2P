@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.10.05.10'
+VER='26.10.05.11'
 B=(ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 C=(ROOT/f'HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino').read_text()
 Q=(ROOT/f'SRVR_GitHub_v{VER}/qml/pages/SetupPage.qml').read_text()
@@ -16,7 +16,7 @@ assert 'allow_modern_fallback=True' in svc
 # CTRL first is mandatory, but W1P state cannot strand the touchscreen forever.
 allow=B[B.index('def _ctrl_ts_update_allowed'):B.index('def _build_controller_display_packet')]
 assert 'self._ctrl_fw_match and self._ctrl_authority_fresh()' in allow
-assert '(now - matched_since) >= 1.0' in allow
+assert '(now_wall - matched_since) >= 1.0' in allow
 assert 'return not w1p_updating' in allow
 assert 'if self.w1p.connected:' not in allow
 
