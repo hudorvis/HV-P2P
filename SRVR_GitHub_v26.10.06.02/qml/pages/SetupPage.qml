@@ -36,8 +36,8 @@ Item {
     }
 
     property var auxChoices: [
-        "Acceleration Mode", "Battery Change Mode", "Drive Mode",
-        "Joystick Calibration", "Limit Calibration", "None", "Winch Calibration",
+        "None", "Acceleration Mode", "Battery Change Mode", "Drive Mode",
+        "Joystick Calibration", "Limit Calibration", "Winch Calibration",
         "Near Limit Recall", "Near Limit Save", "Near Limit Slip",
         "Ref Point Recall", "Ref Point Save", "Ref Point Slip",
         "Far Limit Recall", "Far Limit Save", "Far Limit Slip",

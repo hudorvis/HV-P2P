@@ -285,28 +285,44 @@ ApplicationWindow {
                                     }
 
                                     Column {
-                                        // Match the Limits tab's 31 px control height and tighter row
-                                        // spacing. Five 32 px rows + 5 px gaps overflowed the available
-                                        // shortcut panel by ~8 px and pushed the final boxes outside it.
-                                        visible:window.shortcutTab===3; width:parent.width; spacing:f(2)
-                                        Row { width:parent.width;height:f(31);Text{width:f(150);anchors.verticalCenter:parent.verticalCenter;text:"Acceleration Mode";color:fg;font.pixelSize:f(13)} Item{width:parent.width-f(150);height:parent.height;Row{anchors.fill:parent;spacing:f(7);HVButton{width:(parent.width-f(7))/2;height:parent.height;text:"Power";selected:backend.accelerationMode==="Power";onClicked:{window.cancelShortcutConfirm();backend.setAccelerationMode("Power")}}HVButton{width:(parent.width-f(7))/2;height:parent.height;text:"Speed";selected:backend.accelerationMode==="Speed";onClicked:{window.cancelShortcutConfirm();backend.setAccelerationMode("Speed")}}}} }
-                                        Row { width:parent.width;height:f(31);Text{width:f(150);anchors.verticalCenter:parent.verticalCenter;text:"Battery Change Mode";color:fg;font.pixelSize:f(13)} Item{width:parent.width-f(150);height:parent.height;Row{anchors.fill:parent;spacing:f(7);HVButton{width:(parent.width-f(7))/2;height:parent.height;text:"Off";selected:!backend.batteryChange;onClicked:{window.cancelShortcutConfirm();backend.setBatteryChange(false)}}HVButton{width:(parent.width-f(7))/2;height:parent.height;text:"On";selected:backend.batteryChange;onClicked:{window.cancelShortcutConfirm();backend.setBatteryChange(true)}}}} }
+                                        // Keep System controls on the same locked visual grid as
+                                        // the Preset/Limits shortcut tabs: 31 px rows, 3 px row
+                                        // spacing, 5 px control gaps and the normal component fonts.
+                                        visible:window.shortcutTab===3; width:parent.width; spacing:f(3)
                                         Row {
-                                            width: parent.width; height: f(31)
+                                            width:parent.width; height:f(31)
+                                            Text{width:f(150);anchors.verticalCenter:parent.verticalCenter;text:"Acceleration Mode";color:fg;font.pixelSize:f(13)}
+                                            Item{width:parent.width-f(150);height:parent.height;Row{anchors.fill:parent;spacing:f(5);HVButton{width:(parent.width-f(5))/2;height:parent.height;text:"Power";selected:backend.accelerationMode==="Power";onClicked:{window.cancelShortcutConfirm();backend.setAccelerationMode("Power")}}HVButton{width:(parent.width-f(5))/2;height:parent.height;text:"Speed";selected:backend.accelerationMode==="Speed";onClicked:{window.cancelShortcutConfirm();backend.setAccelerationMode("Speed")}}}}
+                                        }
+                                        Row {
+                                            width:parent.width; height:f(31)
+                                            Text{width:f(150);anchors.verticalCenter:parent.verticalCenter;text:"Battery Change Mode";color:fg;font.pixelSize:f(13)}
+                                            Item{width:parent.width-f(150);height:parent.height;Row{anchors.fill:parent;spacing:f(5);HVButton{width:(parent.width-f(5))/2;height:parent.height;text:"Off";selected:!backend.batteryChange;onClicked:{window.cancelShortcutConfirm();backend.setBatteryChange(false)}}HVButton{width:(parent.width-f(5))/2;height:parent.height;text:"On";selected:backend.batteryChange;onClicked:{window.cancelShortcutConfirm();backend.setBatteryChange(true)}}}}
+                                        }
+                                        Row {
+                                            width:parent.width; height:f(31)
                                             Text { width:f(150); anchors.verticalCenter:parent.verticalCenter; text:"Drive Mode"; color:fg; font.pixelSize:f(13) }
                                             Item {
                                                 width:parent.width-f(150); height:parent.height
                                                 Row {
-                                                    anchors.fill:parent; spacing:f(4)
-                                                    HVButton { width:f(70); height:parent.height; text:"Mode 1"; font.pixelSize:f(11); selected:backend.activeDriveMode===0; onClicked:{window.cancelShortcutConfirm();backend.setDriveMode(0)} }
-                                                    HVField { width:(parent.width-f(70+70+12))/2; height:parent.height; bindModel:true; modelText:backend.driveMode1Name; font.pixelSize:f(11); leftPadding:f(4); rightPadding:f(4); onCommit:function(v){backend.renameDriveMode(0,v)} }
-                                                    HVButton { width:f(70); height:parent.height; text:"Mode 2"; font.pixelSize:f(11); selected:backend.activeDriveMode===1; onClicked:{window.cancelShortcutConfirm();backend.setDriveMode(1)} }
-                                                    HVField { width:(parent.width-f(70+70+12))/2; height:parent.height; bindModel:true; modelText:backend.driveMode2Name; font.pixelSize:f(11); leftPadding:f(4); rightPadding:f(4); onCommit:function(v){backend.renameDriveMode(1,v)} }
+                                                    anchors.fill:parent; spacing:f(5)
+                                                    HVButton { width:f(70); height:parent.height; text:"Mode 1"; selected:backend.activeDriveMode===0; onClicked:{window.cancelShortcutConfirm();backend.setDriveMode(0)} }
+                                                    HVField { width:(parent.width-f(70+70+15))/2; height:parent.height; bindModel:true; modelText:backend.driveMode1Name; leftPadding:f(4); rightPadding:f(4); onCommit:function(v){backend.renameDriveMode(0,v)} }
+                                                    HVButton { width:f(70); height:parent.height; text:"Mode 2"; selected:backend.activeDriveMode===1; onClicked:{window.cancelShortcutConfirm();backend.setDriveMode(1)} }
+                                                    HVField { width:(parent.width-f(70+70+15))/2; height:parent.height; bindModel:true; modelText:backend.driveMode2Name; leftPadding:f(4); rightPadding:f(4); onCommit:function(v){backend.renameDriveMode(1,v)} }
                                                 }
                                             }
                                         }
-                                        Row { width:parent.width;height:f(31);Text{width:f(150);anchors.verticalCenter:parent.verticalCenter;text:"Calibration Mode";color:fg;font.pixelSize:f(13)}Item{width:parent.width-f(150);height:parent.height;Row{anchors.fill:parent;spacing:f(7);HVButton{width:(parent.width-f(14))/3;height:parent.height;text:"Joystick Calibration";onClicked:{window.cancelShortcutConfirm();backend.openJoystickCalibration()}}HVButton{width:(parent.width-f(14))/3;height:parent.height;text:"Limit Calibration";onClicked:{window.cancelShortcutConfirm();backend.openLimitCalibration()}}HVButton{width:(parent.width-f(14))/3;height:parent.height;text:"Winch Calibration";onClicked:{window.cancelShortcutConfirm();backend.openWinchCalibration()}}}} }
-                                        Row { width:parent.width;height:f(31);Text{width:f(150);anchors.verticalCenter:parent.verticalCenter;text:"Preset Names";color:fg;font.pixelSize:f(13)}Item{width:parent.width-f(150);height:parent.height;Row{anchors.fill:parent;spacing:f(7);HVButton{width:(parent.width-f(7))/2;height:parent.height;text:"Short Names";selected:backend.presetNameMode==="Short Names";onClicked:{window.cancelShortcutConfirm();backend.setPresetNameMode("Short Names")}}HVButton{width:(parent.width-f(7))/2;height:parent.height;text:"Long Names";selected:backend.presetNameMode==="Long Names";onClicked:{window.cancelShortcutConfirm();backend.setPresetNameMode("Long Names")}}}} }
+                                        Row {
+                                            width:parent.width; height:f(31)
+                                            Text{width:f(150);anchors.verticalCenter:parent.verticalCenter;text:"Calibration Mode";color:fg;font.pixelSize:f(13)}
+                                            Item{width:parent.width-f(150);height:parent.height;Row{anchors.fill:parent;spacing:f(5);HVButton{width:(parent.width-f(10))/3;height:parent.height;text:"Joystick";onClicked:{window.cancelShortcutConfirm();backend.openJoystickCalibration()}}HVButton{width:(parent.width-f(10))/3;height:parent.height;text:"Limit";onClicked:{window.cancelShortcutConfirm();backend.openLimitCalibration()}}HVButton{width:(parent.width-f(10))/3;height:parent.height;text:"Winch";onClicked:{window.cancelShortcutConfirm();backend.openWinchCalibration()}}}}
+                                        }
+                                        Row {
+                                            width:parent.width; height:f(31)
+                                            Text{width:f(150);anchors.verticalCenter:parent.verticalCenter;text:"Preset Names";color:fg;font.pixelSize:f(13)}
+                                            Item{width:parent.width-f(150);height:parent.height;Row{anchors.fill:parent;spacing:f(5);HVButton{width:(parent.width-f(5))/2;height:parent.height;text:"Short Names";selected:backend.presetNameMode==="Short Names";onClicked:{window.cancelShortcutConfirm();backend.setPresetNameMode("Short Names")}}HVButton{width:(parent.width-f(5))/2;height:parent.height;text:"Long Names";selected:backend.presetNameMode==="Long Names";onClicked:{window.cancelShortcutConfirm();backend.setPresetNameMode("Long Names")}}}}
+                                        }
                                     }
                                 }
                             }

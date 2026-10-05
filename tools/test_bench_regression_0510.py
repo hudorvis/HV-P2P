@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""v26.10.06.01 bench regressions: calibration origin, System layout, AUX label width."""
+"""v26.10.06.02 bench regressions: calibration origin, System layout, AUX label width."""
 from pathlib import Path
 import re
 ROOT = Path(__file__).resolve().parents[1]
-BE = (ROOT / "SRVR_GitHub_v26.10.06.01" / "backend.py").read_text()
-QML = (ROOT / "SRVR_GitHub_v26.10.06.01" / "qml" / "Main.qml").read_text()
-TS = (ROOT / "HV_P2P_CTRL_TS_v26.10.06.01" / "HV_P2P_CTRL_TS_v26.10.06.01.ino").read_text()
+BE = (ROOT / "SRVR_GitHub_v26.10.06.02" / "backend.py").read_text()
+QML = (ROOT / "SRVR_GitHub_v26.10.06.02" / "qml" / "Main.qml").read_text()
+TS = (ROOT / "HV_P2P_CTRL_TS_v26.10.06.02" / "HV_P2P_CTRL_TS_v26.10.06.02.ino").read_text()
 
 # Limit Calibration must re-zero its operator-facing coordinate after staged Near.
 helper = BE[BE.index("def _limit_calibration_display_position"):BE.index("def _build_controller_display_packet")]
@@ -19,13 +19,13 @@ assert "currentPosition:backend.limitCalibrationPosition" in QML
 
 # System shortcut controls must use the same 31 px control height as Limits and
 # fit inside the panel instead of overflowing its bottom edge.
-sys_start = QML.index("// Match the Limits tab's 31 px control height")
+sys_start = QML.index("// Keep System controls on the same locked visual grid")
 sys_end = QML.index("                                }\n                            }", sys_start)
 system = QML[sys_start:sys_end]
-assert "spacing:f(2)" in system
+assert "spacing:f(3)" in system
 assert system.count("height:f(31)") >= 4
 assert "height:f(32)" not in system
-for label in ("Power", "Speed", "Off", "On", "Joystick Calibration", "Limit Calibration", "Short Names", "Long Names"):
+for label in ("Power", "Speed", "Off", "On", "Joystick", "Limit", "Winch", "Short Names", "Long Names"):
     assert f'text:"{label}"' in system
 
 # Practice Mode was source-truncated by the 24-character display-field default;

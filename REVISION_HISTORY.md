@@ -1,12 +1,14 @@
-# v26.10.06.01 — 2026-10-06
+# v26.10.06.02 — 2026-10-06
 
-- Corrected the GitHub PySide backend regression introduced by `.05.11`: production `_ctrl_ts_update_allowed()` correctly calls `W1PClient.firmware_snapshot()`, but `tools.test_backend_logic.FakeW1P` still exposed the pre-`.05.11` interface and raised `AttributeError` during display-packet construction.
-- Updated `FakeW1P` to mirror the production four-field firmware snapshot interface with a fresh current/matched test snapshot. Production firmware-update behavior is not weakened or bypassed.
-- Added `test_backend_test_double_contract_0601.py` to the source/protocol suite so W1P updater-interface drift between production code and the PySide test double is caught in the earliest Ubuntu CI stage.
-- Preserved `.05.11` background firmware discovery, CTRL -> W1P -> CTRL-TS ordering, session re-verification, shutdown ordering, CTRL-TS reboot convergence and all earlier calibration/UI/safety fixes unchanged apart from release identity.
-- Re-audited all Fake/Mock W1P objects and all `firmware_snapshot()` call sites; there is only one W1P test double in the SRVR regression tree.
-- Full source/static/regression/preflight suite passes: 370 EdgeBox checks, all prior bench/update contracts, new `.06.01` test-double contract, 53 build-pipeline checks, release/hygiene, 55-file Python syntax and SRVR preflight. Native ESP32 and PySide/frozen desktop builds remain GitHub Actions gates.
-- macOS bundle metadata: short version `26.10.6`, build `2610.6.1`.
+- Locked `v26.10.06.01` as the production baseline; functional production edits are restricted to the five requested bench/UI items.
+- Limit Calibration steady-motion hardening: fresh CTRL packets may renew the existing short background VEL bridge only while the physical joystick remains coherent with the command and CTRL reports no relevant safety/interface fault. Normal ~150 ms VEL cadence and the independent W1P 500 ms watchdog are unchanged; the joystick-neutral interlock remains unchanged for real safety interruptions.
+- Run -> Shortcuts -> System calibration button captions shortened to **Joystick / Limit / Winch** without changing backend actions.
+- Settings AUX Assign now lists **None** first while retaining all existing assignment values.
+- CTRL-TS travel marker now renders smoothly from its local UI loop using bounded 180 ms signed-speed interpolation between verified HMM1 position samples. Numeric Current Position remains verified telemetry; smoothing is display-only.
+- Run -> Shortcuts -> System now uses the same 31 px row height, 3 px row spacing, 5 px inner gaps and standard component fonts as the neighbouring shortcut tabs while retaining the locked label/action-column allocation.
+- Added `test_bench_regression_0602.py` and updated only older assertions directly superseded by these requested UI/marker changes. Full source runner passes: 370 EdgeBox checks, all historical regressions, 53 build-pipeline checks, release/hygiene, 56-file Python syntax and SRVR preflight.
+- CTRL/W1P production firmware logic remains unchanged apart from release identity. Native ESP32, PySide runtime and frozen desktop builds remain GitHub Actions gates.
+- macOS bundle metadata: short version `26.10.6`, build `2610.6.2`.
 
 # v26.10.05.11 — 2026-10-05
 

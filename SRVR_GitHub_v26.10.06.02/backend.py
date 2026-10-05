@@ -48,6 +48,7 @@ HMI_DISPLAY_KEEPALIVE_S = 3.0
 VEL_KEEPALIVE_S = 0.15  # ordinary SRVR refresh cadence; W1P watchdog remains 500 ms
 VEL_BACKGROUND_REFRESH_S = 0.18  # sits behind the normal ~150 ms Qt cadence; bridges only a missed interval
 VEL_REFRESH_LEASE_S = 0.22       # short producer lease; expiry stops refresh so the unchanged 500 ms W1P watchdog still wins
+VEL_REFRESH_AXIS_TOL = 0.035      # raw CTRL-axis coherence window for background lease renewal
 SRVR_ALIVE_INTERVAL_S = 0.25      # process/transport liveness independent of Qt window focus
 FIRMWARE_BEACON_INTERVAL_S = 0.50  # release discovery/order must also be independent of the Qt event loop
 
@@ -184,6 +185,7 @@ class W1PClient(threading.Thread):
         self._vel_refresh_text = ""
         self._vel_refresh_until = 0.0
         self._vel_refresh_last_tx = 0.0
+        self._vel_refresh_source_axis = None
         # Firmware-order snapshot is parsed directly in the W1P network thread.
         # The Qt timer may be delayed on macOS, but CTRL-TS final-stage gating
         # must still know whether a present W1P has converged to this SRVR.
@@ -241,20 +243,54 @@ class W1PClient(threading.Thread):
         try: self.txq.put_nowait(str(text))
         except queue.Full: pass
 
-    def arm_velocity_refresh(self, text: str):
+    def arm_velocity_refresh(self, text: str, source_axis=None):
         text = str(text or "").strip()
         with self._vel_refresh_lock:
             if not text or text == "VEL 0":
                 self._vel_refresh_text = ""
                 self._vel_refresh_until = 0.0
+                self._vel_refresh_source_axis = None
                 return
             self._vel_refresh_text = text
+            try:
+                self._vel_refresh_source_axis = float(source_axis) if source_axis is not None else None
+            except Exception:
+                self._vel_refresh_source_axis = None
             self._vel_refresh_until = time.monotonic() + VEL_REFRESH_LEASE_S
+
+    def renew_velocity_refresh_from_controller(self, source_axis, unsafe: bool = False):
+        """Keep the existing non-zero VEL bridge alive only from coherent CTRL input.
+
+        The Qt motion loop remains the producer of the actual velocity command.
+        Fresh CTRL packets may only renew that command's short worker lease when
+        the raw joystick has not materially moved since the command was produced.
+        A safety flag or changed stick position immediately stops lease renewal,
+        leaving W1P's unchanged 500 ms VEL watchdog as the independent stop.
+        """
+        with self._vel_refresh_lock:
+            if unsafe or not self._vel_refresh_text or self._vel_refresh_source_axis is None:
+                if unsafe:
+                    self._vel_refresh_text = ""
+                    self._vel_refresh_until = 0.0
+                    self._vel_refresh_source_axis = None
+                return False
+            try:
+                coherent = abs(float(source_axis) - float(self._vel_refresh_source_axis)) <= VEL_REFRESH_AXIS_TOL
+            except Exception:
+                coherent = False
+            if not coherent:
+                self._vel_refresh_text = ""
+                self._vel_refresh_until = 0.0
+                self._vel_refresh_source_axis = None
+                return False
+            self._vel_refresh_until = time.monotonic() + VEL_REFRESH_LEASE_S
+            return True
 
     def clear_velocity_refresh(self):
         with self._vel_refresh_lock:
             self._vel_refresh_text = ""
             self._vel_refresh_until = 0.0
+            self._vel_refresh_source_axis = None
 
     def emergency_stop(self):
         """Send STOP + Servo Enable inhibit immediately, bypassing any TX backlog.
@@ -360,7 +396,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.06.01", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.06.02", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -376,7 +412,7 @@ class HVP2PBackend(QObject):
         self._fw_modern_fallback_delay_s = 2.5
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.06.01+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.06.02+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -898,6 +934,23 @@ class HVP2PBackend(QObject):
             if cal_cancel_now and not self._ctrl_cal_cancel_rx_last:
                 self._ctrl_cal_cancel_pending = True
             self._ctrl_cal_cancel_rx_last = cal_cancel_now
+
+            # The motion command itself still belongs to _motion_tick().  This
+            # receive-thread path only keeps its short background refresh lease
+            # alive while independent CTRL packets prove that the physical stick
+            # has not moved and CTRL has no safety/interface fault. That prevents
+            # a Qt rendering pause during a long Limit Calibration move from
+            # manufacturing a VEL-watchdog stop, without relaxing W1P's 500 ms
+            # watchdog or allowing a changed joystick to keep a stale command alive.
+            refresh_unsafe = bool(flags_now & (
+                FLAG_ESTOP_PRESSED | FLAG_ADS1115_FAULT |
+                FLAG_CTRL_HMI_FAULT | FLAG_CTRL_FW_FAULT
+            ))
+            try:
+                self.w1p.renew_velocity_refresh_from_controller(msg[1], unsafe=refresh_unsafe)
+            except Exception:
+                pass
+
             with self._lock:
                 self._ctrl_last_seen = now
                 self._ctrl_rx_times.append(now)
@@ -2128,7 +2181,7 @@ class HVP2PBackend(QObject):
             if abs(vel) < .001:
                 self.w1p.clear_velocity_refresh()
             else:
-                self.w1p.arm_velocity_refresh(cmd)
+                self.w1p.arm_velocity_refresh(cmd, source_axis=self._ctrl_axis)
 
         now = time.time()
         same = abs(vel-self.last_sent_vel) < .01
@@ -3753,7 +3806,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.06.01 moves the installed joystick polarity correction into CTRL,
+        # v26.10.06.02 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same

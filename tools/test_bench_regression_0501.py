@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.10.06.01'
+VER='26.10.06.02'
 B=(ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 Q=(ROOT/f'SRVR_GitHub_v{VER}/qml/Main.qml').read_text()
 S=(ROOT/f'SRVR_GitHub_v{VER}/qml/components/SpanDiagram.qml').read_text()
@@ -33,7 +33,9 @@ assert '#define HMI_MOTION_MIN_MS          80' in C
 assert 'String out = "HMM1"' in C and 'buildHmiMotionPacketFromSrvr' in C
 assert '(now - g_lastHmiMotionTxMs) >= HMI_MOTION_MIN_MS' in C
 assert 'line.startsWith("HMM1|")' in T and 'motion_only' in T
-assert 'lv_anim_set_time(&a, 90);' in T
+assert 'service_progress_marker_smooth();' in T
+assert 'min(age_ms, (uint32_t)180)' in T
+assert 'g_progress_display_frac += err * 0.45f' in T
 assert '#define DISPLAY_FORWARD_MIN_MS 250' in C
 
 # Smallest dashboard data font is Montserrat 10, including presets and limits.

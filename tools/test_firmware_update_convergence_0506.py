@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.10.06.01'
+VER='26.10.06.02'
 B=(ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 C=(ROOT/f'HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino').read_text()
 Q=(ROOT/f'SRVR_GitHub_v{VER}/qml/pages/SetupPage.qml').read_text()
@@ -39,7 +39,7 @@ assert 'HMI_FW_WAIT_REBOOT_ACK) ? 8U' in timeout
 
 # Exact requested AUX ordering.
 choices=Q[Q.index('property var auxChoices:'):Q.index('    ]', Q.index('property var auxChoices:'))]
-order=['Acceleration Mode','Battery Change Mode','Drive Mode','Joystick Calibration','Limit Calibration','None','Winch Calibration',
+order=['None','Acceleration Mode','Battery Change Mode','Drive Mode','Joystick Calibration','Limit Calibration','Winch Calibration',
        'Near Limit Recall','Near Limit Save','Near Limit Slip','Ref Point Recall','Ref Point Save','Ref Point Slip',
        'Far Limit Recall','Far Limit Save','Far Limit Slip','Preset 1 Recall','Preset 1 Save','Preset 1 Slip']
 idx=[choices.index(f'"{x}"') for x in order]

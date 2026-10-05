@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.10.06.01'
+VER='26.10.06.02'
 p=ROOT/f'HV_P2P_CTRL_TS_v{VER}/HV_P2P_CTRL_TS_v{VER}.ino'
 s=p.read_text(errors='replace')
 assert 'static HVP2PRS485::Parser g_rs485Parser;' in s

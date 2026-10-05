@@ -2,7 +2,7 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.10.06.01'
+VER = '26.10.06.02'
 B = (ROOT / f'SRVR_GitHub_v{VER}' / 'backend.py').read_text()
 M = (ROOT / f'SRVR_GitHub_v{VER}' / 'qml' / 'Main.qml').read_text()
 S = (ROOT / f'SRVR_GitHub_v{VER}' / 'qml' / 'pages' / 'SetupPage.qml').read_text()
@@ -38,10 +38,10 @@ assert 'BAR_LIMIT_LEFT = 8' in T
 assert 'BAR_LIMIT_RIGHT = 772' in T
 
 # Run Shortcuts: paired mode rows use full available width and calibration exposes all three wizards.
-assert 'text:"Joystick Calibration";onClicked:{window.cancelShortcutConfirm();backend.openJoystickCalibration()}' in M
-assert 'text:"Limit Calibration";onClicked:{window.cancelShortcutConfirm();backend.openLimitCalibration()}' in M
-assert 'text:"Winch Calibration";onClicked:{window.cancelShortcutConfirm();backend.openWinchCalibration()}' in M
-assert M.count('width:(parent.width-f(7))/2') >= 6
+assert 'text:"Joystick";onClicked:{window.cancelShortcutConfirm();backend.openJoystickCalibration()}' in M
+assert 'text:"Limit";onClicked:{window.cancelShortcutConfirm();backend.openLimitCalibration()}' in M
+assert 'text:"Winch";onClicked:{window.cancelShortcutConfirm();backend.openWinchCalibration()}' in M
+assert M.count('width:(parent.width-f(5))/2') >= 4
 
 # Settings calibration buttons are alphabetical top-to-bottom.
 j = S.index('text:"JOYSTICK CALIBRATION"')
@@ -55,8 +55,8 @@ choices_start = S.index('property var auxChoices:')
 choices_end = S.index('    ]', choices_start)
 choices = S[choices_start:choices_end]
 expected = [
-    'Acceleration Mode','Battery Change Mode','Drive Mode',
-    'Joystick Calibration','Limit Calibration','None','Winch Calibration',
+    'None','Acceleration Mode','Battery Change Mode','Drive Mode',
+    'Joystick Calibration','Limit Calibration','Winch Calibration',
     'Near Limit Recall','Near Limit Save','Near Limit Slip',
     'Ref Point Recall','Ref Point Save','Ref Point Slip',
     'Far Limit Recall','Far Limit Save','Far Limit Slip',

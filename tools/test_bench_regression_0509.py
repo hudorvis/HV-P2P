@@ -3,7 +3,7 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.10.06.01'
+VER = '26.10.06.02'
 B = (ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 Q = (ROOT/f'SRVR_GitHub_v{VER}/qml/pages/SetupPage.qml').read_text()
 C = (ROOT/f'HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino').read_text()
@@ -110,9 +110,9 @@ assert 'VEL_KEEPALIVE_S = 0.15' in B
 assert 'VEL_BACKGROUND_REFRESH_S = 0.18' in B
 assert 'VEL_REFRESH_LEASE_S = 0.22' in B
 assert '_vel_refresh_last_tx = time.monotonic()' in B  # normal queued VEL suppresses duplicate worker refresh
-assert 'def arm_velocity_refresh(self, text: str):' in B
+assert 'def arm_velocity_refresh(self, text: str, source_axis=None):' in B
 assert 'mono_now < self._vel_refresh_until' in B
-assert 'self.w1p.arm_velocity_refresh(cmd)' in B
+assert 'self.w1p.arm_velocity_refresh(cmd, source_axis=self._ctrl_axis)' in B
 assert 'self.w1p.clear_velocity_refresh()' in B
 assert 'static const uint32_t W1P_VEL_COMMAND_TIMEOUT_MS = 500;' in W
 assert '(now - lastVelocityCommandMs) <= W1P_VEL_COMMAND_TIMEOUT_MS' in W

@@ -5,7 +5,7 @@ import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.10.06.01'
+VER = '26.10.06.02'
 backend_path = ROOT / f'SRVR_GitHub_v{VER}' / 'backend.py'
 test_path = ROOT / f'SRVR_GitHub_v{VER}' / 'tools' / 'test_backend_logic.py'
 backend = backend_path.read_text(encoding='utf-8')
@@ -13,7 +13,7 @@ test_src = test_path.read_text(encoding='utf-8')
 
 # The production gate relies on this interface. If it changes, the regression
 # test double must change in the same revision so PySide CI cannot fail later.
-required = {'firmware_snapshot', 'send', 'arm_velocity_refresh', 'clear_velocity_refresh', 'reconfigure', 'close'}
+required = {'firmware_snapshot', 'send', 'arm_velocity_refresh', 'renew_velocity_refresh_from_controller', 'clear_velocity_refresh', 'reconfigure', 'close'}
 assert 'self.w1p.firmware_snapshot()' in backend, 'production W1P snapshot gate missing'
 
 tree = ast.parse(test_src, filename=str(test_path))
