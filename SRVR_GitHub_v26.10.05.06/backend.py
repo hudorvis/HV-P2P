@@ -248,7 +248,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.05.05", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.05.06", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -261,10 +261,10 @@ class HVP2PBackend(QObject):
         # upload endpoint as a bounded fallback.  This removes any dependence on
         # a manual ESP32 reboot to start an update.
         self._fw_mismatch_since = {"ctrl": 0.0, "w1p": 0.0}
-        self._fw_modern_fallback_delay_s = 4.0
+        self._fw_modern_fallback_delay_s = 2.5
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.05.05+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.05.06+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -2077,21 +2077,25 @@ class HVP2PBackend(QObject):
         return "System | Active", "green", "", 0
 
     def _ctrl_ts_update_allowed(self) -> bool:
-        """Grant CTRL-TS update only after CTRL is current and W1P had discovery time.
+        """Grant CTRL-TS update once CTRL is current; never strand it on W1P state.
 
-        A fresh SRVR can hear CTRL before the first W1P STATUS packet. Waiting a
-        short discovery window prevents the touchscreen from jumping ahead of a
-        physically-present W1P merely because W1P had not announced itself yet.
+        CTRL must always converge first because it carries the exact staged
+        CTRL-TS image and owns the RS485 updater. W1P may also update from SRVR,
+        but stale/missing W1P status must not leave an otherwise safe CTRL-TS
+        permanently on ``Waiting for CTRL``. We defer only while a W1P firmware
+        update is actively in progress, then allow the display final stage.
         """
         now = time.time()
         if not (self._ctrl_fw_match and self._ctrl_authority_fresh()):
             return False
-        if self._w1p_fw_match and self._w1p_status_fresh():
-            return True
-        if self.w1p.connected:
-            return False
         matched_since = float(self._ctrl_fw_match_since or 0.0)
-        return bool(matched_since and (now - matched_since) >= 2.0)
+        if not (matched_since and (now - matched_since) >= 1.0):
+            return False
+        w1p_updating = bool(
+            self._fw_progress["w1p"]["active"]
+            or self._w1p_fw_authority in ("updating", "rebooting", "update_waiting_safe_idle")
+        )
+        return not w1p_updating
 
     def _build_controller_display_packet(self) -> str:
         """Build the proven DSP1 SRVR->CTRL display/status packet.
@@ -2419,6 +2423,8 @@ class HVP2PBackend(QObject):
         ctrl_target = ("ctrl", str(self.ctrl_ip or "").strip(), str(self._ctrl_fw_version or "").strip(), ctrl_present)
         ctrl_older = self._firmware_version_is_older(ctrl_target[2])
         if ctrl_older:
+            if not self._fw_mismatch_since.get("ctrl", 0.0):
+                self._fw_mismatch_since["ctrl"] = now
             self._send_velocity(0.0, force=True)
             if self._legacy_firmware_push_required(ctrl_target[2]):
                 self._try_start_legacy_firmware_push(*ctrl_target)
@@ -2436,6 +2442,8 @@ class HVP2PBackend(QObject):
         w1p_target = ("w1p", str(self.w1p_ip or "").strip(), str(self._w1p_fw_version or "").strip(), bool(self.w1p.connected))
         w1p_older = self._firmware_version_is_older(w1p_target[2])
         if w1p_older:
+            if not self._fw_mismatch_since.get("w1p", 0.0):
+                self._fw_mismatch_since["w1p"] = now
             self._send_velocity(0.0, force=True)
             if self._legacy_firmware_push_required(w1p_target[2]):
                 self._try_start_legacy_firmware_push(*w1p_target)
@@ -3400,7 +3408,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.05.05 moves the installed joystick polarity correction into CTRL,
+        # v26.10.05.06 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same

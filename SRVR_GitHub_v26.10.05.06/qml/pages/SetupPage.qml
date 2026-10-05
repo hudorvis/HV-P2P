@@ -37,14 +37,14 @@ Item {
 
     property var auxChoices: [
         "Acceleration Mode", "Battery Change Mode", "Drive Mode",
+        "Joystick Calibration", "Limit Calibration", "None", "Winch Calibration",
+        "Near Limit Recall", "Near Limit Save", "Near Limit Slip",
+        "Ref Point Recall", "Ref Point Save", "Ref Point Slip",
         "Far Limit Recall", "Far Limit Save", "Far Limit Slip",
-        "Joystick Calibration", "Limit Calibration",
-        "Near Limit Recall", "Near Limit Save", "Near Limit Slip", "None",
-        "Ref Point Recall", "Ref Point Save", "Ref Point Slip", "Winch Calibration",
-        "Preset 1 Save", "Preset 2 Save", "Preset 3 Save", "Preset 4 Save", "Preset 5 Save",
-        "Preset 6 Save", "Preset 7 Save", "Preset 8 Save", "Preset 9 Save", "Preset 10 Save",
         "Preset 1 Recall", "Preset 2 Recall", "Preset 3 Recall", "Preset 4 Recall", "Preset 5 Recall",
         "Preset 6 Recall", "Preset 7 Recall", "Preset 8 Recall", "Preset 9 Recall", "Preset 10 Recall",
+        "Preset 1 Save", "Preset 2 Save", "Preset 3 Save", "Preset 4 Save", "Preset 5 Save",
+        "Preset 6 Save", "Preset 7 Save", "Preset 8 Save", "Preset 9 Save", "Preset 10 Save",
         "Preset 1 Slip", "Preset 2 Slip", "Preset 3 Slip", "Preset 4 Slip", "Preset 5 Slip",
         "Preset 6 Slip", "Preset 7 Slip", "Preset 8 Slip", "Preset 9 Slip", "Preset 10 Slip"
     ]

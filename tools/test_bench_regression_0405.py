@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.10.05.05'
+VER='26.10.05.06'
 B=(ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 Q=(ROOT/f'SRVR_GitHub_v{VER}/qml/Main.qml').read_text()
 C=(ROOT/f'HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino').read_text()

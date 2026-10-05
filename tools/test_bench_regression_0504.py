@@ -2,7 +2,7 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.10.05.05'
+VER = '26.10.05.06'
 B = (ROOT / f'SRVR_GitHub_v{VER}' / 'backend.py').read_text()
 M = (ROOT / f'SRVR_GitHub_v{VER}' / 'qml' / 'Main.qml').read_text()
 S = (ROOT / f'SRVR_GitHub_v{VER}' / 'qml' / 'pages' / 'SetupPage.qml').read_text()
@@ -49,20 +49,22 @@ l = S.index('text:"LIMIT CALIBRATION"')
 w = S.index('text:"WINCH CALIBRATION"')
 assert j < l < w
 
-# Non-preset AUX choices are alphabetical; preset Save/Recall/Slip groups remain last.
+# AUX order: general actions alphabetically, then Near, Ref, Far, followed by
+# Preset Recall, Preset Save and Preset Slip groups.
 choices_start = S.index('property var auxChoices:')
 choices_end = S.index('    ]', choices_start)
 choices = S[choices_start:choices_end]
-expected_nonpreset = [
+expected = [
     'Acceleration Mode','Battery Change Mode','Drive Mode',
+    'Joystick Calibration','Limit Calibration','None','Winch Calibration',
+    'Near Limit Recall','Near Limit Save','Near Limit Slip',
+    'Ref Point Recall','Ref Point Save','Ref Point Slip',
     'Far Limit Recall','Far Limit Save','Far Limit Slip',
-    'Joystick Calibration','Limit Calibration',
-    'Near Limit Recall','Near Limit Save','Near Limit Slip','None',
-    'Ref Point Recall','Ref Point Save','Ref Point Slip','Winch Calibration'
+    'Preset 1 Recall','Preset 1 Save','Preset 1 Slip'
 ]
-positions = [choices.index(f'"{x}"') for x in expected_nonpreset]
+positions = [choices.index(f'"{x}"') for x in expected]
 assert positions == sorted(positions)
-assert choices.index('"Preset 1 Save"') > positions[-1]
-assert choices.index('"Preset 1 Save"') < choices.index('"Preset 1 Recall"') < choices.index('"Preset 1 Slip"')
+assert choices.index('"Preset 10 Recall"') < choices.index('"Preset 1 Save"')
+assert choices.index('"Preset 10 Save"') < choices.index('"Preset 1 Slip"')
 
 print('BENCH_REGRESSION_0504_PASS')

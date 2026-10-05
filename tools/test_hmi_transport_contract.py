@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-C=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.05.05/HV_P2P_CTRL_EDGEBOX_v26.10.05.05.ino').read_text()
-T=(ROOT/'HV_P2P_CTRL_TS_v26.10.05.05/HV_P2P_CTRL_TS_v26.10.05.05.ino').read_text()
+C=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.05.06/HV_P2P_CTRL_EDGEBOX_v26.10.05.06.ino').read_text()
+T=(ROOT/'HV_P2P_CTRL_TS_v26.10.05.06/HV_P2P_CTRL_TS_v26.10.05.06.ino').read_text()
 assert 'HMI_FW_BLOCK_DATA = 1024' in C
 assert 'HMI_FW_REPLY_TIMEOUT_MS = 3000' in C
 assert 'HMI_RS485_TURNAROUND_US = 2500' in C
@@ -10,7 +10,9 @@ assert 'HMI.setRxBufferSize(4096)' in C and 'HMI.setRxBufferSize(4096)' in T
 assert 'RS485_SLAVE_TURNAROUND_US = 2500' in T
 assert 'delayMicroseconds(HMI_RS485_TURNAROUND_US)' in C
 assert 'delayMicroseconds(RS485_SLAVE_TURNAROUND_US)' in T
-assert 'if((now-g_hmiFwLastTxMs) < HMI_FW_REPLY_TIMEOUT_MS) return;' in C
+assert 'const uint32_t replyTimeout = (g_hmiFwState == HMI_FW_WAIT_REBOOT_ACK) ? 750U : HMI_FW_REPLY_TIMEOUT_MS;' in C
+assert 'const uint8_t maxRetries = (g_hmiFwState == HMI_FW_WAIT_REBOOT_ACK) ? 8U : HMI_FW_MAX_RETRIES;' in C
+assert 'if((now-g_hmiFwLastTxMs) < replyTimeout) return;' in C
 assert 'FW_RX_TIMEOUT_MS = 5000' in T
 assert 'frame.seq != g_hmiFwSeq' in C and 'ignored stale response' in C
 assert 'reported != expectedNext' in C

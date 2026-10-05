@@ -1,3 +1,20 @@
+# v26.10.05.06 — 2026-10-05
+
+- Reordered SRVR AUX Assign choices exactly as requested: general actions alphabetically, then Near, Ref, Far, Preset Recall, Preset Save and Preset Slip groups.
+- Hardened automatic firmware convergence after bench testing still required manual CTRL/CTRL-TS reboots: modern pull-first fallback reduced to 2.5 s and mismatch timing self-establishes from any fresh older node identity.
+- CTRL-TS final-stage authorization now requires CTRL current first but cannot be held false indefinitely by stale/missing W1P status; only active W1P updating briefly defers the display stage.
+- Added a CTRL safe-update continuation latch after the first authorised `fw_safe_reboot_retry`, carrying the exact update across `.04.07`'s display-off reboot without depending on a transient coordinator grant. New SRVR sessions/offline state invalidate the latch.
+- Final CTRL-TS verified-image REBOOT handshake retries at 750 ms up to eight times for older safe_ota=2 receivers; other firmware traffic retains the conservative 3 s / five-retry policy.
+- Added `test_firmware_update_convergence_0506.py` and updated coordinator/transport/AUX-order regressions.
+- W1P 500 ms VEL watchdog, Leadshine motion architecture, E-stop/hard-limit protections, predictive stopping and safe headless touchscreen flash architecture remain unchanged.
+- macOS bundle metadata: short version `26.10.5`, build `2610.5.6`.
+
+# v26.10.05.05 — 2026-10-05
+
+- Restored signed speed in DSP1/HMM1 transport after the `.05.04` positive-speed UI change had moved `abs()` too early into the wire packet. SRVR and CTRL-TS continue displaying Current Speed as a positive magnitude while control/transport direction stays signed.
+- Updated the corresponding regression contract; no QML layout, updater coordination, W1P watchdog, Leadshine, calibration or safety behavior changed.
+- macOS bundle metadata: short version `26.10.5`, build `2610.5.5`.
+
 # v26.10.05.04 — 2026-10-05
 
 - Bench follow-up after `.05.03` corrected calibration service-entry timing, CTRL-TS calibration presentation, post-self-update recovery, positive speed presentation, full-width travel geometry and requested SRVR shortcut/settings ordering.

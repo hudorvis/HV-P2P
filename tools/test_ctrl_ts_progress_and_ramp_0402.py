@@ -3,8 +3,8 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-ctrl = next((ROOT / 'HV_P2P_CTRL_EDGEBOX_v26.10.05.05').glob('*.ino')).read_text()
-ts = next((ROOT / 'HV_P2P_CTRL_TS_v26.10.05.05').glob('*.ino')).read_text()
+ctrl = next((ROOT / 'HV_P2P_CTRL_EDGEBOX_v26.10.05.06').glob('*.ino')).read_text()
+ts = next((ROOT / 'HV_P2P_CTRL_TS_v26.10.05.06').glob('*.ino')).read_text()
 
 # CTRL firmware progress must bypass only the *compatibility* gate, not bus serialization.
 assert 'static bool hmiSendFirmwareStatusText' in ctrl

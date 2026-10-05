@@ -11,7 +11,7 @@ with tempfile.TemporaryDirectory() as td:
     d=Path(td); c=d/'c.bin'; w=d/'w.bin'; out=d/'bundle'
     c.write_bytes(b'\xe9CTRL'); w.write_bytes(b'\xe9W1P')
     doc=m.make_firmware_bundle(c,w,out)
-    assert set(doc['images'])=={'ctrl','w1p'} and doc['release']=='v26.10.05.05'
+    assert set(doc['images'])=={'ctrl','w1p'} and doc['release']=='v26.10.05.06'
     assert (out/'ctrl.bin').read_bytes()==b'\xe9CTRL' and (out/'w1p.bin').read_bytes()==b'\xe9W1P'
     for key in ('ctrl','w1p'):
         meta=doc['images'][key]; data=(out/meta['file']).read_bytes()
