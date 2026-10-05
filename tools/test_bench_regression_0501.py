@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.10.05.02'
+VER='26.10.05.03'
 B=(ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 Q=(ROOT/f'SRVR_GitHub_v{VER}/qml/Main.qml').read_text()
 S=(ROOT/f'SRVR_GitHub_v{VER}/qml/components/SpanDiagram.qml').read_text()
@@ -46,7 +46,8 @@ assert 'parts <= (26, 10, 1, 1)' in B
 assert 'if not (self._ctrl_fw_match and self._ctrl_authority_fresh()):' in B[B.index('def _send_w1p_firmware_beacon'):B.index('def _legacy_firmware_push_worker')]
 assert 'def _ctrl_ts_update_allowed' in B and '(now - matched_since) >= 2.0' in B
 assert 'f"fw_ts_allowed={1 if self._ctrl_ts_update_allowed() else 0}"' in B
-assert 'const bool tsAllowed = haveCoordinator && hvGetPipeField(g_latestDisplayPacket, "fw_ts_allowed") == "1";' in C
+assert 'g_hmiTsCoordinatorSeen' in C and 'g_hmiTsUpdateAllowed' in C
+assert 'ts_allowed' in B[B.index('def _send_ctrl_firmware_beacon'):B.index('def _send_w1p_firmware_beacon')]
 # CTRL authority download must quiesce the HMI bus so FWSTAT is not suppressed by a stuck POLL.
 assert 'g_ctrlAuthorityUpdatePending = true;' in C
 assert 'if(g_hmiPollOutstanding || hmiBusRecoveryQuiet())' in C

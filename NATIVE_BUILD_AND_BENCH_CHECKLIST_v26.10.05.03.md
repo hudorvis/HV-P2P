@@ -1,25 +1,27 @@
-# HV P2P v26.10.05.02 Native Build and Bench Checklist
+# HV P2P v26.10.05.03 Native Build and Bench Checklist
 
 ## Release gate order
 
 1. Require `ALL_SOURCE_CHECKS_PASS` from the repository source suite.
 2. Run GitHub Actions native firmware/desktop jobs; GitHub/native compilation is authoritative.
-3. Use only matching `.05.02` STAGED_SOURCE / firmware / desktop artifacts.
+3. Use only matching `.05.03` STAGED_SOURCE / firmware / desktop artifacts.
 4. Bench-test CTRL/CTRL-TS/W1P with the winch unable to move.
 5. Only after display/update/safety gates pass, continue to unloaded then loaded motion commissioning.
 
 ## 1. Automatic firmware convergence and update order — highest priority
 
-Start with compatible `v26.10.04.07` CTRL, W1P and CTRL-TS already running. Then launch the newer `.05.02` SRVR. Do **not** manually reboot any ESP32.
+Start with compatible `v26.10.04.07` CTRL, W1P and CTRL-TS already running. Then launch the newer `.05.03` SRVR. Do **not** manually reboot any ESP32.
 
 Expected order/behavior:
 
 - CTRL detects SRVR authority and begins its update without a manual reboot.
+- If CTRL does not enter its own pull update within about 4 seconds of a proven older-version mismatch, SRVR must start the asynchronous verified fallback upload automatically; still do not reboot the node manually.
 - Before CTRL's blocking download begins, the CTRL↔CTRL-TS normal transaction must quiesce; no outstanding POLL may remain.
 - SRVR CTRL Firmware field must show CTRL update phase/percentage.
 - CTRL-TS must show CTRL firmware progress while its normal display is available.
 - W1P authority/update is advertised only after CTRL is current/fresh. If W1P is connected and old, verify W1P then updates and its phase/percentage appears on SRVR and CTRL-TS.
 - CTRL-TS self-update permission must remain false until CTRL is current and W1P has either converged or the no-W1P discovery window has elapsed.
+- Once final-stage permission becomes true, CTRL must begin a safe-OTA-capable mismatched CTRL-TS transfer from fresh HELLO identity without requiring another power/software reboot.
 - Immediately before its own safe reboot, CTRL-TS should show `Preparing safe updater - SRVR shows self-flash progress`.
 - During CTRL-TS **own actual flash**, the panel is intentionally black. SRVR must continue showing the exact CTRL-TS percentage. Do not reject the release because of this intentional headless phase.
 - After verified CTRL-TS reboot, the normal UI must repopulate promptly with current status, AUX assignments, position/speed, geometry, REF and presets.
@@ -171,7 +173,7 @@ Archive:
 
 - successful GitHub Actions native firmware and desktop logs;
 - Complete Release/checksum manifests;
-- SRVR/CTRL/CTRL-TS logs for a no-manual-reboot `.04.07` → `.05.02` update;
+- SRVR/CTRL/CTRL-TS logs for a no-manual-reboot `.05.02` → `.05.03` CTRL update followed by `.04.07` → `.05.03` CTRL-TS convergence;
 - video/screenshots of aligned canonical statuses;
 - smooth CTRL-TS live marker/geometry test;
 - Limit Calibration wizard visual/function test;

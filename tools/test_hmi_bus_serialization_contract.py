@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-C=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.05.02/HV_P2P_CTRL_EDGEBOX_v26.10.05.02.ino').read_text()
-T=(ROOT/'HV_P2P_CTRL_TS_v26.10.05.02/HV_P2P_CTRL_TS_v26.10.05.02.ino').read_text()
+C=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.05.03/HV_P2P_CTRL_EDGEBOX_v26.10.05.03.ino').read_text()
+T=(ROOT/'HV_P2P_CTRL_TS_v26.10.05.03/HV_P2P_CTRL_TS_v26.10.05.03.ino').read_text()
 
 # Source contracts: single-flight POLL, explicit timeout, and bulk TX gate.
 assert '#define HMI_POLL_RESPONSE_TIMEOUT_MS 250' in C

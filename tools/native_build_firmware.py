@@ -22,7 +22,7 @@ import subprocess
 import sys
 import tempfile
 
-VER = "26.10.05.02"
+VER = "26.10.05.03"
 SEMVER = f"v{VER}"
 CTRL_SLOT = 0x600000
 HMI_SLOT = 0x380000

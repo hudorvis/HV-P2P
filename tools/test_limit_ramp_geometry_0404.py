@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-B=(ROOT/'SRVR_GitHub_v26.10.05.02'/'backend.py').read_text()
-Q=(ROOT/'SRVR_GitHub_v26.10.05.02'/'qml'/'pages'/'SetupPage.qml').read_text()
-M=(ROOT/'SRVR_GitHub_v26.10.05.02'/'qml'/'Main.qml').read_text()
-S=(ROOT/'SRVR_GitHub_v26.10.05.02'/'qml'/'components'/'SpanDiagram.qml').read_text()
-T=(ROOT/'HV_P2P_CTRL_TS_v26.10.05.02'/'HV_P2P_CTRL_TS_v26.10.05.02.ino').read_text()
+B=(ROOT/'SRVR_GitHub_v26.10.05.03'/'backend.py').read_text()
+Q=(ROOT/'SRVR_GitHub_v26.10.05.03'/'qml'/'pages'/'SetupPage.qml').read_text()
+M=(ROOT/'SRVR_GitHub_v26.10.05.03'/'qml'/'Main.qml').read_text()
+S=(ROOT/'SRVR_GitHub_v26.10.05.03'/'qml'/'components'/'SpanDiagram.qml').read_text()
+T=(ROOT/'HV_P2P_CTRL_TS_v26.10.05.03'/'HV_P2P_CTRL_TS_v26.10.05.03.ino').read_text()
 
 # Settings ComboBoxes must have persistent live bindings so AUX/external changes
 # re-select the visible value even after the control has been used locally.

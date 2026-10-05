@@ -3,8 +3,8 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-ctrl = next((ROOT / 'HV_P2P_CTRL_EDGEBOX_v26.10.05.02').glob('*.ino')).read_text()
-ts = next((ROOT / 'HV_P2P_CTRL_TS_v26.10.05.02').glob('*.ino')).read_text()
+ctrl = next((ROOT / 'HV_P2P_CTRL_EDGEBOX_v26.10.05.03').glob('*.ino')).read_text()
+ts = next((ROOT / 'HV_P2P_CTRL_TS_v26.10.05.03').glob('*.ino')).read_text()
 
 # CTRL firmware progress must bypass only the *compatibility* gate, not bus serialization.
 assert 'static bool hmiSendFirmwareStatusText' in ctrl
@@ -16,7 +16,7 @@ assert '(void)hmiSendText(msg);' not in ctrl.split('static void reportCtrlAuthor
 
 # CTRL-TS must remain the progress display for CTRL/W1P before its own safe update.
 start = ctrl.split('static void hmiFwStart()',1)[1].split('static bool hmiFwHandleFrame',1)[0]
-assert 'fw_ts_allowed' in start and 'const bool tsAllowed' in start
+assert 'g_hmiTsCoordinatorSeen' in start and 'g_hmiTsUpdateAllowed' in start
 assert 'CTRL-TS update deferred until SRVR coordinator grants final-stage update' in start
 
 # Firmware state belongs in compact HMS1; sparse ramp/Ref geometry belongs in HMG1.

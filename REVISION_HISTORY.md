@@ -1,3 +1,13 @@
+# v26.10.05.03 — 2026-10-05
+
+- Firmware-convergence hotfix after bench testing showed CTRL/CTRL-TS updates could require manual ESP32 reboots and CTRL-TS could remain on `.04.07` at `Waiting for CTRL` after CTRL became current.
+- Moved CTRL-TS final-stage permission into the repeated lightweight `SRVR_FW` firmware-coordinator beacon (`ts_allowed`) while retaining the DSP1 mirror for compatibility. CTRL stores the grant independently of presentation traffic and invalidates stale grants on every new SRVR authority session.
+- Added fresh-HELLO proactive CTRL-TS update start so an approved safe-OTA mismatched peer begins as soon as SRVR grants the final stage; the grant and HELLO no longer need to coincide in one display-packet cycle.
+- Added pull-first modern OTA fallback: if an older CTRL/W1P remains mismatched for 4 s without entering its own update state, SRVR asynchronously uploads the already-verified authority image through the proven `/update/app` endpoint. This removes manual reboot as an update-start dependency while preserving upgrade-only version ordering.
+- Update order remains CTRL -> W1P -> CTRL-TS; safe headless CTRL-TS self-flash, W1P 500 ms watchdog, ~150 ms SRVR non-zero VEL refresh and all Leadshine/E-stop/limit protections remain unchanged.
+- Added `test_firmware_coordinator_0503.py` and updated updater regressions to enforce the new coordinator/fallback contract.
+- macOS bundle metadata: short version `26.10.5`, build `2610.5.3`.
+
 # v26.10.05.02 — 2026-10-05
 
 - Corrected the macOS/PySide backend runtime regression for the canonical startup status priority.

@@ -248,16 +248,23 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.05.02", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.05.03", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
         self._firmware_bundle = firmware_bundle
         self._legacy_fw_push_active = {"ctrl": False, "w1p": False}
         self._legacy_fw_push_last_attempt = {"ctrl": 0.0, "w1p": 0.0}
+        # Modern nodes normally pull from the SRVR authority themselves.  If a
+        # proven older node remains mismatched for several seconds without
+        # entering its pull/update state, SRVR uses the existing verified HTTP
+        # upload endpoint as a bounded fallback.  This removes any dependence on
+        # a manual ESP32 reboot to start an update.
+        self._fw_mismatch_since = {"ctrl": 0.0, "w1p": 0.0}
+        self._fw_modern_fallback_delay_s = 4.0
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.05.02+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.05.03+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -811,6 +818,11 @@ class HVP2PBackend(QObject):
             self._ctrl_fw_match_since = now
         elif not self._ctrl_fw_match:
             self._ctrl_fw_match_since = 0.0
+        if (not self._ctrl_fw_match) and self._firmware_version_is_older(self._ctrl_fw_version):
+            if not self._fw_mismatch_since["ctrl"]:
+                self._fw_mismatch_since["ctrl"] = now
+        else:
+            self._fw_mismatch_since["ctrl"] = 0.0
         if reported_match and not self._ctrl_fw_match:
             self._ctrl_fw_authority = "stale_release_report"
         self._ctrl_ts_version = str(fields.get("version", ""))
@@ -1193,6 +1205,11 @@ class HVP2PBackend(QObject):
             reported_w1p_match = str(fields.get("FW_MATCH", "0")).strip() == "1"
             self._w1p_fw_match = bool(reported_w1p_match and self._firmware_version_matches_current(self._w1p_fw_version))
             self._w1p_fw_authority = str(fields.get("FW_AUTH", "unknown"))
+            if (not self._w1p_fw_match) and self._firmware_version_is_older(self._w1p_fw_version):
+                if not self._fw_mismatch_since["w1p"]:
+                    self._fw_mismatch_since["w1p"] = time.time()
+            else:
+                self._fw_mismatch_since["w1p"] = 0.0
             if reported_w1p_match and not self._w1p_fw_match:
                 self._w1p_fw_authority = "stale_release_report"
             if "IP" in fields: self.w1p_reported_ip = str(fields["IP"])
@@ -2237,7 +2254,8 @@ class HVP2PBackend(QObject):
         self._last_ctrl_fw_beacon = now
         packet = (
             f"SRVR_FW|version={self._current_firmware_version()}|"
-            f"session={self._firmware_authority_session}\n"
+            f"session={self._firmware_authority_session}|"
+            f"ts_allowed={1 if self._ctrl_ts_update_allowed() else 0}\n"
         ).encode("ascii", "ignore")
         try:
             self._ctrl_display_sock.sendto(packet, (target, SERVER_BIND_PORT))
@@ -2330,20 +2348,22 @@ class HVP2PBackend(QObject):
         finally:
             self._legacy_fw_push_active[role] = False
 
-    def _try_start_legacy_firmware_push(self, role: str, host: str, reported: str, connected: bool) -> bool:
-        """Start one background legacy OTA attempt as soon as old firmware is proven.
+    def _try_start_legacy_firmware_push(self, role: str, host: str, reported: str, connected: bool, *, allow_modern_fallback: bool = False) -> bool:
+        """Start one background verified OTA upload to an older field node.
 
-        This is safe to call from receiver or UI threads. The worker itself owns
-        all HTTP/file I/O; the caller only atomically reserves the role and starts
-        the daemon thread. A short retry interval makes startup convergence robust
-        without blocking telemetry or motion processing.
+        Pre-authority releases use this immediately as their compatibility bridge.
+        Modern releases normally pull from SRVR themselves; ``allow_modern_fallback``
+        is used only after a bounded mismatch grace period if that pull never starts.
+        All HTTP/file I/O remains on the daemon worker, never the motion/UI thread.
         """
         role = "w1p" if str(role).lower().startswith("w1p") else "ctrl"
         host = str(host or "").strip()
         reported = str(reported or "").strip()
         if self.smoke_test or self._firmware_bundle is None or not host or not connected:
             return False
-        if not reported or not self._legacy_firmware_push_required(reported):
+        legacy_required = self._legacy_firmware_push_required(reported)
+        modern_fallback = bool(allow_modern_fallback and self._firmware_version_is_older(reported))
+        if not reported or not (legacy_required or modern_fallback):
             return False
         now = time.monotonic()
         with self._lock:
@@ -2353,9 +2373,10 @@ class HVP2PBackend(QObject):
                 return False
             self._legacy_fw_push_last_attempt[role] = now
             self._legacy_fw_push_active[role] = True
+        mode = "legacy-compatible" if legacy_required else "modern fallback"
         self._log(
             f"[FW AUTO] {role.upper()} {reported} != {self._current_firmware_version()}; "
-            "starting legacy-compatible push"
+            f"starting {mode} push"
         )
         threading.Thread(
             target=self._legacy_firmware_push_worker, args=(role, host),
@@ -2376,22 +2397,36 @@ class HVP2PBackend(QObject):
         # A fresh HMI_STATUS proves CTRL is alive even if the high-rate control
         # datagram stream has just rolled across its timeout boundary. Treat either
         # signal as sufficient presence for the legacy firmware bridge.
+        now = time.time()
         ctrl_present = bool(self._ctrl_connected() or self._ctrl_authority_fresh())
         ctrl_target = ("ctrl", str(self.ctrl_ip or "").strip(), str(self._ctrl_fw_version or "").strip(), ctrl_present)
-        if self._legacy_firmware_push_required(ctrl_target[2]):
+        ctrl_older = self._firmware_version_is_older(ctrl_target[2])
+        if ctrl_older:
             self._send_velocity(0.0, force=True)
-            self._try_start_legacy_firmware_push(*ctrl_target)
-            return
+            if self._legacy_firmware_push_required(ctrl_target[2]):
+                self._try_start_legacy_firmware_push(*ctrl_target)
+                return
+            mismatch_since = float(self._fw_mismatch_since.get("ctrl", 0.0) or 0.0)
+            pull_active = bool(self._fw_progress["ctrl"]["active"] or self._ctrl_fw_authority in ("updating", "rebooting"))
+            if mismatch_since and (now - mismatch_since) >= self._fw_modern_fallback_delay_s and not pull_active:
+                self._try_start_legacy_firmware_push(*ctrl_target, allow_modern_fallback=True)
+                return
 
-        # Never start a W1P legacy bridge while CTRL is still converging. Modern
-        # W1P firmware uses the normal pull/verify authority path after the same
-        # CTRL-current gate in _send_w1p_firmware_beacon().
+        # Never update W1P while CTRL is still converging.  Once CTRL is current,
+        # W1P gets the same pull-first / bounded-push-fallback treatment.
         if not (self._ctrl_fw_match and self._ctrl_authority_fresh()):
             return
         w1p_target = ("w1p", str(self.w1p_ip or "").strip(), str(self._w1p_fw_version or "").strip(), bool(self.w1p.connected))
-        if self._legacy_firmware_push_required(w1p_target[2]):
+        w1p_older = self._firmware_version_is_older(w1p_target[2])
+        if w1p_older:
             self._send_velocity(0.0, force=True)
-            self._try_start_legacy_firmware_push(*w1p_target)
+            if self._legacy_firmware_push_required(w1p_target[2]):
+                self._try_start_legacy_firmware_push(*w1p_target)
+                return
+            mismatch_since = float(self._fw_mismatch_since.get("w1p", 0.0) or 0.0)
+            pull_active = bool(self._fw_progress["w1p"]["active"] or self._w1p_fw_authority in ("updating", "rebooting", "update_waiting_safe_idle"))
+            if mismatch_since and (now - mismatch_since) >= self._fw_modern_fallback_delay_s and not pull_active:
+                self._try_start_legacy_firmware_push(*w1p_target, allow_modern_fallback=True)
 
     def _motion_tick(self):
         self._virtual_motion_step()
@@ -3348,7 +3383,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.05.02 moves the installed joystick polarity correction into CTRL,
+        # v26.10.05.03 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same
