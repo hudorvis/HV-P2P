@@ -360,3 +360,8 @@
   2.0 ms Modbus inter-frame margin, 38400 8N2 read-only factory diagnostic,
   independent velocity freshness watchdog, OTA/service safety gates and
   continued CTRL-TS automatic convergence.
+
+## v26.10.05.05
+- Corrected the display-speed layering exposed by the GitHub PySide runtime regression: DSP1/HMM1 retain signed speed for direction-aware transport/debug semantics, while SRVR and CTRL-TS continue rendering Current Speed as an absolute positive magnitude.
+- Updated the bench regression to enforce signed transport plus magnitude-only operator presentation, preventing this contract from drifting again.
+- No W1P motion/safety architecture changes.

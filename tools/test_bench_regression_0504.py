@@ -2,7 +2,7 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.10.05.04'
+VER = '26.10.05.05'
 B = (ROOT / f'SRVR_GitHub_v{VER}' / 'backend.py').read_text()
 M = (ROOT / f'SRVR_GitHub_v{VER}' / 'qml' / 'Main.qml').read_text()
 S = (ROOT / f'SRVR_GitHub_v{VER}' / 'qml' / 'pages' / 'SetupPage.qml').read_text()
@@ -16,8 +16,8 @@ assert 'self.w1p.send(f"SERVICE_MODE {enabled}")' in B
 assert 'self._mark_w1p_settings_pending(("SERVICE",))' in B
 
 # Operator-facing current speed is magnitude-only; signed internal velocity is retained.
+assert 'speed = float(self.current_speed_mps or 0.0)' in B
 assert 'def currentSpeed(self): return abs(float(self.current_speed_mps))' in B
-assert 'speed = abs(float(self.current_speed_mps or 0.0))' in B
 assert 'String(fabsf(g_speed_mps), 1)' in T
 assert 'String(fabsf(g_speed_kmh), 1)' in T
 

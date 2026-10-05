@@ -1,4 +1,5 @@
-HV P2P v26.10.05.04 - READ THIS FIRST
+HV P2P v26.10.05.05 - READ THIS FIRST
+- Restores signed DSP1/HMM1 speed transport while keeping SRVR/CTRL-TS Current Speed displays magnitude-only, matching the PySide runtime contract.
 
 This is the 2026-10-05 bench-follow-up release based directly on the authoritative
 HV P2P v26.10.04.07 GitHub-ready source.

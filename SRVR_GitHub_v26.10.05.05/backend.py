@@ -248,7 +248,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.05.04", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.05.05", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -264,7 +264,7 @@ class HVP2PBackend(QObject):
         self._fw_modern_fallback_delay_s = 4.0
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.05.04+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.05.05+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -2178,9 +2178,9 @@ class HVP2PBackend(QObject):
             preset_abs.append("" if absolute is None else f"{float(absolute):.2f}")
             preset_vis.append("1" if (rel is not None and bool(self.preset_visible[i])) else "0")
 
-        # Direction belongs to position/command semantics; operator-facing
-        # Current Speed is magnitude only on both SRVR and CTRL-TS.
-        speed = abs(float(self.current_speed_mps or 0.0))
+        # Keep direction on the wire for transport/debug semantics. Operator-facing
+        # Current Speed is rendered as a positive magnitude by SRVR/CTRL-TS.
+        speed = float(self.current_speed_mps or 0.0)
         fields = [
             "DSP1", f"pos={pos_rel:.2f}", f"to_near={to_near:.2f}", f"to_far={to_far:.2f}",
             f"speed_mps={speed:.2f}", f"speed_kmh={speed*3.6:.2f}",
@@ -3400,7 +3400,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.05.04 moves the installed joystick polarity correction into CTRL,
+        # v26.10.05.05 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same
