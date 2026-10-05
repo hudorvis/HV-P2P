@@ -2,8 +2,8 @@
 """Source contract for the startup safety vs. uncalibrated runtime regression."""
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
-backend = (ROOT / 'SRVR_GitHub_v26.10.05.03' / 'backend.py').read_text()
-test = (ROOT / 'SRVR_GitHub_v26.10.05.03' / 'tools' / 'test_backend_logic.py').read_text()
+backend = (ROOT / 'SRVR_GitHub_v26.10.05.04' / 'backend.py').read_text()
+test = (ROOT / 'SRVR_GitHub_v26.10.05.04' / 'tools' / 'test_backend_logic.py').read_text()
 # Production must remain fail-safe until live safety evaluation runs.
 assert 'estop_active: bool = True' in backend
 # E-stop/fault status must retain priority over yellow service/unreferenced states.
@@ -12,7 +12,7 @@ assert 'if self.state.estop_active:' in resolver
 assert resolver.index('if self.state.estop_active:') < resolver.index('if self._not_calibrated:')
 # The fresh-backend persistence regression must isolate the synthetic startup
 # safety latch before asking for the yellow Uncalibrated banner.
-needle = 'b2 = HVP2PBackend(version="26.10.05.03", smoke_test=True)'
+needle = 'b2 = HVP2PBackend(version="26.10.05.04", smoke_test=True)'
 start = test.index(needle)
 block = test[start:start+900]
 assert 'assert b2._not_calibrated' in block

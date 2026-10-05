@@ -1,7 +1,7 @@
 #pragma once
 #include <Arduino.h>
 
-// HV P2P v26.10.05.03 BUILD GUARD
+// HV P2P v26.10.05.04 BUILD GUARD
 // ---------------------------------
 // This file is intentionally NOT a flashable placeholder. The commissioning
 // build pipeline MUST replace it with the generated header produced from the

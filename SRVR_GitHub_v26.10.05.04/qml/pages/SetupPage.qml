@@ -36,11 +36,11 @@ Item {
     }
 
     property var auxChoices: [
-        "None", "Drive Mode", "Acceleration Mode", "Battery Change Mode",
-        "Limit Calibration", "Winch Calibration", "Joystick Calibration",
-        "Near Limit Save", "Near Limit Recall", "Near Limit Slip",
-        "Far Limit Save", "Far Limit Recall", "Far Limit Slip",
-        "Ref Point Save", "Ref Point Recall", "Ref Point Slip",
+        "Acceleration Mode", "Battery Change Mode", "Drive Mode",
+        "Far Limit Recall", "Far Limit Save", "Far Limit Slip",
+        "Joystick Calibration", "Limit Calibration",
+        "Near Limit Recall", "Near Limit Save", "Near Limit Slip", "None",
+        "Ref Point Recall", "Ref Point Save", "Ref Point Slip", "Winch Calibration",
         "Preset 1 Save", "Preset 2 Save", "Preset 3 Save", "Preset 4 Save", "Preset 5 Save",
         "Preset 6 Save", "Preset 7 Save", "Preset 8 Save", "Preset 9 Save", "Preset 10 Save",
         "Preset 1 Recall", "Preset 2 Recall", "Preset 3 Recall", "Preset 4 Recall", "Preset 5 Recall",
@@ -243,9 +243,9 @@ Item {
                         Column {
                             width:root.f(230);height:parent.height;spacing:root.f(12)
                             Text{text:"⌾  CALIBRATION";color:root.cyan;font.pixelSize:root.f(16);font.weight:Font.Medium}
+                            HVButton{width:parent.width;height:root.f(42);text:"JOYSTICK CALIBRATION";accent:root.cyan;onClicked:backend.openJoystickCalibration()}
                             HVButton{width:parent.width;height:root.f(42);text:"LIMIT CALIBRATION";accent:root.cyan;onClicked:backend.openLimitCalibration()}
                             HVButton{width:parent.width;height:root.f(42);text:"WINCH CALIBRATION";accent:root.cyan;onClicked:backend.openWinchCalibration()}
-                            HVButton{width:parent.width;height:root.f(42);text:"JOYSTICK CALIBRATION";accent:root.cyan;onClicked:backend.openJoystickCalibration()}
                         }
                         Rectangle{width:1;height:parent.height-root.f(22);anchors.verticalCenter:parent.verticalCenter;color:root.line}
                         Repeater {

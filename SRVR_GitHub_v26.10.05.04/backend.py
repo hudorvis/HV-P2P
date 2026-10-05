@@ -248,7 +248,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.05.03", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.05.04", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -264,7 +264,7 @@ class HVP2PBackend(QObject):
         self._fw_modern_fallback_delay_s = 4.0
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.05.03+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.05.04+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -1533,9 +1533,18 @@ class HVP2PBackend(QObject):
             return
         self._last_service_mode_sent = enabled
         if not self.smoke_test:
+            # SERVICE changes the permitted motion envelope itself. When a wizard
+            # explicitly opens/closes, put that command on the wire immediately
+            # rather than allowing an unrelated paced SET_* transaction to hold
+            # the old Near/Far envelope for another cycle. The ordinary convergent
+            # settings path remains armed below and retries until STATUS confirms it.
+            if force and self.w1p.connected:
+                now = time.monotonic()
+                self.w1p.send(f"SERVICE_MODE {enabled}")
+                self._w1p_setting_last_tx["SERVICE"] = now
+                self._w1p_setting_last_value["SERVICE"] = enabled
+                self._w1p_setting_last_any_tx = now
             self._mark_w1p_settings_pending(("SERVICE",))
-            # SERVICE affects the permitted motion envelope, so request it on the
-            # next paced sync opportunity rather than waiting for another edit.
             self._service_w1p_setting_sync()
 
     def _update_battery_change_auto_cancel(self):
@@ -2152,6 +2161,9 @@ class HVP2PBackend(QObject):
         def _cal_value(name):
             value = self._limit_cal_pending.get(name)
             return "" if value is None else f"{float(value):.2f}"
+        def _joy_cal_value(name):
+            value = self._joystick_cal_pending.get(name)
+            return "" if value is None else f"{float(value):.4f}"
 
         mode = self.drive_modes[self.active_drive_mode]
         max_mps = float(mode.get("max_speed_mps", self.max_speed_mps))
@@ -2166,7 +2178,9 @@ class HVP2PBackend(QObject):
             preset_abs.append("" if absolute is None else f"{float(absolute):.2f}")
             preset_vis.append("1" if (rel is not None and bool(self.preset_visible[i])) else "0")
 
-        speed = float(self.current_speed_mps or 0.0)
+        # Direction belongs to position/command semantics; operator-facing
+        # Current Speed is magnitude only on both SRVR and CTRL-TS.
+        speed = abs(float(self.current_speed_mps or 0.0))
         fields = [
             "DSP1", f"pos={pos_rel:.2f}", f"to_near={to_near:.2f}", f"to_far={to_far:.2f}",
             f"speed_mps={speed:.2f}", f"speed_kmh={speed*3.6:.2f}",
@@ -2195,6 +2209,9 @@ class HVP2PBackend(QObject):
             f"cal_instruction={self._display_field(cal_instruction, 64, replace_comma=False)}",
             f"cal_pos={cal_pos:.2f}", f"cal_near={_cal_value('near')}",
             f"cal_ref={_cal_value('ref')}", f"cal_far={_cal_value('far')}",
+            f"cal_joy={float(self._ctrl_axis):.4f}",
+            f"cal_left={_joy_cal_value('left')}", f"cal_centre={_joy_cal_value('centre')}",
+            f"cal_right={_joy_cal_value('right')}",
             f"aux1={labels[0]}", f"aux2={labels[1]}", f"aux3={labels[2]}", f"aux4={labels[3]}", f"aux5={labels[4]}",
             f"max_mps={max_mps:.2f}", f"max_kmh={max_mps*3.6:.2f}", f"mode={mode_name}",
             f"drive_mode={mode_name}", f"accel_mode={self._display_field(self.acceleration_mode)}",
@@ -3383,7 +3400,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.05.03 moves the installed joystick polarity correction into CTRL,
+        # v26.10.05.04 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same
@@ -3927,7 +3944,7 @@ class HVP2PBackend(QObject):
     @Property(float, notify=stateChanged)
     def position(self): return float(self.state.pos_m or 0.0)
     @Property(float, notify=stateChanged)
-    def currentSpeed(self): return float(self.current_speed_mps)
+    def currentSpeed(self): return abs(float(self.current_speed_mps))
     @Property(float, notify=stateChanged)
     def maxSpeed(self): return float(self.max_speed_mps)
     @Property(float, notify=stateChanged)

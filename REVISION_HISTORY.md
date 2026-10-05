@@ -1,3 +1,16 @@
+# v26.10.05.04 — 2026-10-05
+
+- Bench follow-up after `.05.03` corrected calibration service-entry timing, CTRL-TS calibration presentation, post-self-update recovery, positive speed presentation, full-width travel geometry and requested SRVR shortcut/settings ordering.
+- Limit/Winch service-mode transitions now transmit `SERVICE_MODE` immediately on explicit wizard open/close while retaining the convergent W1P STATUS-confirmed retry path, preventing an old limit envelope from momentarily catching the skate during recalibration.
+- CTRL-TS Limit and Joystick calibration overlays now share three captured-value boxes plus a dedicated live current row (`Near / Ref / Far + Current Winch Position` and `Left / Centre / Right + Current Joystick Position`).
+- Successful headless CTRL-TS OTA now has a 2.5 s autonomous verified-image reboot fallback if CTRL's final REBOOT/ACK exchange is lost; an explicit REBOOT still shortens the restart to 250 ms.
+- Operator-facing Current Speed is magnitude-only on SRVR and CTRL-TS while signed internal velocity/motion direction remains unchanged.
+- CTRL-TS Near↔Far track now spans the full usable 780 px travel panel width.
+- Run Shortcuts mode buttons use the full available row width; Calibration Mode exposes Joystick / Limit / Winch Calibration. Settings calibration buttons are alphabetic and non-preset AUX options are alphabetized while preset action groups remain at the bottom.
+- Added `test_bench_regression_0504.py` and updated older static contracts that intentionally encoded the superseded calibration/AUX ordering UI.
+- W1P 500 ms velocity freshness watchdog, SRVR ~150 ms non-zero VEL refresh, Leadshine motion architecture, predictive stopping and E-stop/hard-limit protections remain unchanged.
+- macOS bundle metadata: short version `26.10.5`, build `2610.5.4`.
+
 # v26.10.05.03 — 2026-10-05
 
 - Firmware-convergence hotfix after bench testing showed CTRL/CTRL-TS updates could require manual ESP32 reboots and CTRL-TS could remain on `.04.07` at `Waiting for CTRL` after CTRL became current.

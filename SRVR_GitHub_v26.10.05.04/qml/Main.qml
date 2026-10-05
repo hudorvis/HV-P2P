@@ -286,8 +286,8 @@ ApplicationWindow {
 
                                     Column {
                                         visible:window.shortcutTab===3; width:parent.width; spacing:f(5)
-                                        Row { width:parent.width;height:f(32);Text{width:f(150);anchors.verticalCenter:parent.verticalCenter;text:"Acceleration Mode";color:fg;font.pixelSize:f(13)} Item{width:parent.width-f(150);height:parent.height;Row{anchors.fill:parent;HVButton{width:f(80);height:parent.height;text:"Power";selected:backend.accelerationMode==="Power";onClicked:{window.cancelShortcutConfirm();backend.setAccelerationMode("Power")}}HVButton{width:f(80);height:parent.height;text:"Speed";selected:backend.accelerationMode==="Speed";onClicked:{window.cancelShortcutConfirm();backend.setAccelerationMode("Speed")}}}} }
-                                        Row { width:parent.width;height:f(32);Text{width:f(150);anchors.verticalCenter:parent.verticalCenter;text:"Battery Change Mode";color:fg;font.pixelSize:f(13)} Item{width:parent.width-f(150);height:parent.height;Row{anchors.fill:parent;HVButton{width:f(80);height:parent.height;text:"Off";selected:!backend.batteryChange;onClicked:{window.cancelShortcutConfirm();backend.setBatteryChange(false)}}HVButton{width:f(80);height:parent.height;text:"On";selected:backend.batteryChange;onClicked:{window.cancelShortcutConfirm();backend.setBatteryChange(true)}}}} }
+                                        Row { width:parent.width;height:f(32);Text{width:f(150);anchors.verticalCenter:parent.verticalCenter;text:"Acceleration Mode";color:fg;font.pixelSize:f(13)} Item{width:parent.width-f(150);height:parent.height;Row{anchors.fill:parent;spacing:f(7);HVButton{width:(parent.width-f(7))/2;height:parent.height;text:"Power";selected:backend.accelerationMode==="Power";onClicked:{window.cancelShortcutConfirm();backend.setAccelerationMode("Power")}}HVButton{width:(parent.width-f(7))/2;height:parent.height;text:"Speed";selected:backend.accelerationMode==="Speed";onClicked:{window.cancelShortcutConfirm();backend.setAccelerationMode("Speed")}}}} }
+                                        Row { width:parent.width;height:f(32);Text{width:f(150);anchors.verticalCenter:parent.verticalCenter;text:"Battery Change Mode";color:fg;font.pixelSize:f(13)} Item{width:parent.width-f(150);height:parent.height;Row{anchors.fill:parent;spacing:f(7);HVButton{width:(parent.width-f(7))/2;height:parent.height;text:"Off";selected:!backend.batteryChange;onClicked:{window.cancelShortcutConfirm();backend.setBatteryChange(false)}}HVButton{width:(parent.width-f(7))/2;height:parent.height;text:"On";selected:backend.batteryChange;onClicked:{window.cancelShortcutConfirm();backend.setBatteryChange(true)}}}} }
                                         Row {
                                             width: parent.width; height: f(32)
                                             Text { width:f(150); anchors.verticalCenter:parent.verticalCenter; text:"Drive Mode"; color:fg; font.pixelSize:f(13) }
@@ -302,7 +302,7 @@ ApplicationWindow {
                                                 }
                                             }
                                         }
-                                        Row { width:parent.width;height:f(32);Text{width:f(150);anchors.verticalCenter:parent.verticalCenter;text:"Calibration Mode";color:fg;font.pixelSize:f(13)}Item{width:parent.width-f(150);height:parent.height;Row{anchors.fill:parent;spacing:f(7);HVButton{width:(parent.width-f(7))/2;height:parent.height;text:"Limit Calibration";onClicked:{window.cancelShortcutConfirm();backend.openLimitCalibration()}}HVButton{width:(parent.width-f(7))/2;height:parent.height;text:"Winch Calibration";onClicked:{window.cancelShortcutConfirm();backend.openWinchCalibration()}}}} }
+                                        Row { width:parent.width;height:f(32);Text{width:f(150);anchors.verticalCenter:parent.verticalCenter;text:"Calibration Mode";color:fg;font.pixelSize:f(13)}Item{width:parent.width-f(150);height:parent.height;Row{anchors.fill:parent;spacing:f(7);HVButton{width:(parent.width-f(14))/3;height:parent.height;text:"Joystick Calibration";onClicked:{window.cancelShortcutConfirm();backend.openJoystickCalibration()}}HVButton{width:(parent.width-f(14))/3;height:parent.height;text:"Limit Calibration";onClicked:{window.cancelShortcutConfirm();backend.openLimitCalibration()}}HVButton{width:(parent.width-f(14))/3;height:parent.height;text:"Winch Calibration";onClicked:{window.cancelShortcutConfirm();backend.openWinchCalibration()}}}} }
                                         Row { width:parent.width;height:f(32);Text{width:f(150);anchors.verticalCenter:parent.verticalCenter;text:"Preset Names";color:fg;font.pixelSize:f(13)}Item{width:parent.width-f(150);height:parent.height;Row{anchors.fill:parent;spacing:f(7);HVButton{width:(parent.width-f(7))/2;height:parent.height;text:"Short Names";selected:backend.presetNameMode==="Short Names";onClicked:{window.cancelShortcutConfirm();backend.setPresetNameMode("Short Names")}}HVButton{width:(parent.width-f(7))/2;height:parent.height;text:"Long Names";selected:backend.presetNameMode==="Long Names";onClicked:{window.cancelShortcutConfirm();backend.setPresetNameMode("Long Names")}}}} }
                                     }
                                 }
@@ -669,7 +669,7 @@ ApplicationWindow {
                             }
                         }
                     }
-                    Text { width:parent.width;text:"Current position:  "+String(backend.limitCalibrationCaptures.current);color:muted;font.pixelSize:f(12);horizontalAlignment:Text.AlignHCenter }
+                    Text { width:parent.width;text:"Current Winch Position:  "+String(backend.limitCalibrationCaptures.current);color:muted;font.pixelSize:f(12);horizontalAlignment:Text.AlignHCenter }
                 }
 
                 Rectangle {
@@ -787,7 +787,7 @@ ApplicationWindow {
                             }
                         }
                     }
-                    Text { width:parent.width; text:"Current raw value:  "+Number(backend.joystickRawValue).toFixed(4); color:muted; font.pixelSize:f(12); horizontalAlignment:Text.AlignHCenter }
+                    Text { width:parent.width; text:"Current Joystick Position:  "+Number(backend.joystickRawValue).toFixed(4); color:muted; font.pixelSize:f(12); horizontalAlignment:Text.AlignHCenter }
                     Text { visible:backend.joystickCalibrationError!==""; width:parent.width; text:backend.joystickCalibrationError; color:red; font.pixelSize:f(12); horizontalAlignment:Text.AlignHCenter; wrapMode:Text.WordWrap }
                 }
 

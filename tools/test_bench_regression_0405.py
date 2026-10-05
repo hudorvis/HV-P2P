@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.10.05.03'
+VER='26.10.05.04'
 B=(ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 Q=(ROOT/f'SRVR_GitHub_v{VER}/qml/Main.qml').read_text()
 C=(ROOT/f'HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino').read_text()
@@ -20,9 +20,10 @@ assert 'setupJoystickPercentage' in B and '_operator_joystick_axis(self._setup_p
 assert 'self._limit_cal_pending = {"near": None, "ref": None, "far": None}' in B
 for key in ('cal_pos=', 'cal_near=', 'cal_ref=', 'cal_far='):
     assert key in B, key
-assert 'limitCalibrationCaptures' in B and 'CURRENT POSITION' in Q
-assert 'g_cal_positions_lbl' in T and 'CURRENT POSITION' in T
-assert 'kind == "Limit"' in T
+assert 'limitCalibrationCaptures' in B and 'Current Winch Position' in Q
+assert 'g_cal_value_box[3]' in T and 'g_cal_value_text[3]' in T and 'g_cal_current_lbl' in T
+assert 'Current Winch Position' in T and 'Current Joystick Position' in T
+assert 'kind == "Limit"' in T and 'kind == "Joystick"' in T
 
 # Virtual calibration starts from a defined local coordinate and does not require W1P.
 open_limit=B[B.index('def openLimitCalibration'):B.index('def openWinchCalibration')]
