@@ -1,3 +1,13 @@
+# v26.10.06.01 — 2026-10-06
+
+- Corrected the GitHub PySide backend regression introduced by `.05.11`: production `_ctrl_ts_update_allowed()` correctly calls `W1PClient.firmware_snapshot()`, but `tools.test_backend_logic.FakeW1P` still exposed the pre-`.05.11` interface and raised `AttributeError` during display-packet construction.
+- Updated `FakeW1P` to mirror the production four-field firmware snapshot interface with a fresh current/matched test snapshot. Production firmware-update behavior is not weakened or bypassed.
+- Added `test_backend_test_double_contract_0601.py` to the source/protocol suite so W1P updater-interface drift between production code and the PySide test double is caught in the earliest Ubuntu CI stage.
+- Preserved `.05.11` background firmware discovery, CTRL -> W1P -> CTRL-TS ordering, session re-verification, shutdown ordering, CTRL-TS reboot convergence and all earlier calibration/UI/safety fixes unchanged apart from release identity.
+- Re-audited all Fake/Mock W1P objects and all `firmware_snapshot()` call sites; there is only one W1P test double in the SRVR regression tree.
+- Full source/static/regression/preflight suite passes: 370 EdgeBox checks, all prior bench/update contracts, new `.06.01` test-double contract, 53 build-pipeline checks, release/hygiene, 55-file Python syntax and SRVR preflight. Native ESP32 and PySide/frozen desktop builds remain GitHub Actions gates.
+- macOS bundle metadata: short version `26.10.6`, build `2610.6.1`.
+
 # v26.10.05.11 — 2026-10-05
 
 - Fixed the `.05.10` automatic firmware-update regression without changing the approved `.05.10` UI/calibration fixes. Root cause was a split SRVR architecture: background `SRVR_ALIVE` kept CTRL connected while `SRVR_FW`, W1P release beacons and the final CTRL-TS coordinator grant still depended on the Qt timer.
@@ -9,7 +19,7 @@
 - Preserved the `.05.10` staged-Near calibration coordinate, Run/System row geometry and full `Practice Mode` AUX label, plus all `.05.09` updater/reboot, transactional calibration, safety arbitration and macOS communication hardening.
 - Added `test_firmware_background_convergence_0511.py` and updated older brittle contracts to assert the actual preserved timing/state behavior rather than superseded debug text/local variable names.
 - Full source/static/regression/preflight suite passes: 370 EdgeBox checks, all prior bench/update contracts, 53 build-pipeline checks, release/hygiene/Python syntax and SRVR preflight. Native ESP32 and frozen desktop/PySide compilation remain GitHub Actions gates.
-- macOS bundle metadata: short version `26.10.5`, build `2610.5.11`.
+- macOS bundle metadata used by the `.05.11` workflow: short version `26.10.5`, build `2610.5.10` (the duplicate `.05.10` CFBundleVersion was a release-metadata oversight; corrected in the next dated release).
 
 # v26.10.05.10 — 2026-10-05
 

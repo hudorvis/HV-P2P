@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""v26.10.05.11 bench regressions: calibration origin, System layout, AUX label width."""
+"""v26.10.06.01 bench regressions: calibration origin, System layout, AUX label width."""
 from pathlib import Path
 import re
 ROOT = Path(__file__).resolve().parents[1]
-BE = (ROOT / "SRVR_GitHub_v26.10.05.11" / "backend.py").read_text()
-QML = (ROOT / "SRVR_GitHub_v26.10.05.11" / "qml" / "Main.qml").read_text()
-TS = (ROOT / "HV_P2P_CTRL_TS_v26.10.05.11" / "HV_P2P_CTRL_TS_v26.10.05.11.ino").read_text()
+BE = (ROOT / "SRVR_GitHub_v26.10.06.01" / "backend.py").read_text()
+QML = (ROOT / "SRVR_GitHub_v26.10.06.01" / "qml" / "Main.qml").read_text()
+TS = (ROOT / "HV_P2P_CTRL_TS_v26.10.06.01" / "HV_P2P_CTRL_TS_v26.10.06.01.ino").read_text()
 
 # Limit Calibration must re-zero its operator-facing coordinate after staged Near.
 helper = BE[BE.index("def _limit_calibration_display_position"):BE.index("def _build_controller_display_packet")]
