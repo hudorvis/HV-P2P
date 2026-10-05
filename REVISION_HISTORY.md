@@ -1,3 +1,14 @@
+# v26.10.05.10 — 2026-10-05
+
+- Bench follow-up built directly from the verified `v26.10.05.09` source; all `.05.09` updater, calibration transaction, safety arbitration, background communications and watchdog protections are retained.
+- Limit Calibration now uses the staged Near capture as a temporary operator-facing `0.00 m` origin. CTRL-TS and the SRVR calibration popup show live distance from Near while travelling toward Far/Ref without mutating the previously valid live calibration before final Ref commit. Hardware uses raw encoder delta when available; Virtual mode uses the staged position delta.
+- Run -> Shortcuts -> System controls now use the same 31 px control-row height as the Limits Save/Recall/Slip controls with tighter 2 px vertical spacing, keeping all five System rows inside the Shortcuts panel.
+- CTRL-TS AUX dynamic fields now allow 40 characters instead of the generic 24-character display-field limit, preventing `Drive Mode | Practice Mode` from being source-truncated to `Practice Mo`. The touchscreen tile font and approved visual style are unchanged.
+- Added `test_bench_regression_0510.py` plus PySide runtime assertions for calibration-relative position and full AUX label transport.
+- W1P firmware/control logic is unchanged apart from release identity. The independent 500 ms VEL watchdog, ~150 ms normal SRVR refresh, AI0/AI1 mapping, Leadshine velocity architecture, predictive/dynamic limits and hard-limit protections remain unchanged.
+- Source/static/regression/preflight suite passes locally; native ESP32 and frozen desktop compilation remain GitHub Actions gates.
+- macOS bundle metadata: short version `26.10.5`, build `2610.5.10`.
+
 # v26.10.05.09 — 2026-10-05
 
 - Rebuilt directly from the user-supplied authoritative `v26.10.05.06` source.

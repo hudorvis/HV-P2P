@@ -2,8 +2,8 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-B = (ROOT / 'SRVR_GitHub_v26.10.05.09' / 'backend.py').read_text()
-T = (ROOT / 'SRVR_GitHub_v26.10.05.09' / 'tools' / 'test_backend_logic.py').read_text()
+B = (ROOT / 'SRVR_GitHub_v26.10.05.10' / 'backend.py').read_text()
+T = (ROOT / 'SRVR_GitHub_v26.10.05.10' / 'tools' / 'test_backend_logic.py').read_text()
 
 # Backend must refuse delayed/duplicate confirmation after any wizard closes.
 needle = '''    def calibrationNext(self):\n        # Calibration confirmation is edge/event driven from both SRVR and\n'''

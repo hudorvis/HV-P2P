@@ -9,7 +9,7 @@ Native compilation and real-hardware timing remain GitHub/bench gates.
 """
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
-VER = "26.10.05.09"
+VER = "26.10.05.10"
 T = (ROOT/f"HV_P2P_CTRL_TS_v{VER}"/f"HV_P2P_CTRL_TS_v{VER}.ino").read_text()
 C = (ROOT/f"HV_P2P_CTRL_EDGEBOX_v{VER}"/f"HV_P2P_CTRL_EDGEBOX_v{VER}.ino").read_text()
 P = (ROOT/'tools'/'prepare_waveshare_library.py').read_text()

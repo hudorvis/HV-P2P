@@ -1,4 +1,4 @@
-# HV P2P v26.10.05.09 native-build and bench checklist
+# HV P2P v26.10.05.10 native-build and bench checklist
 
 ## 1. GitHub native build gate
 
@@ -69,3 +69,10 @@ Limit Calibration:
 - Virtual Position Source never emits physical non-zero W1P velocity.
 - Current Speed is positive magnitude on SRVR/CTRL-TS while reverse wire velocity
   remains negative.
+
+## v26.10.05.10 targeted bench checks
+
+1. **Limit Calibration relative position** — Start with any non-zero existing position (for example ~9.5 m), open Limit Calibration and capture Near. Both SRVR and CTRL-TS must immediately show Current Winch Position `0.00 m`. Move toward Far and verify the displayed value increases by the actual distance travelled from staged Near. Move back toward Ref and verify the value represents distance from staged Near.
+2. **Shortcuts/System geometry** — On Run -> Shortcuts -> System, verify Power/Speed, Off/On, Drive Mode/name fields, Calibration Mode and Preset Names controls all remain fully inside the Shortcuts panel. Their control height/style should match the Limits Save/Recall/Slip controls.
+3. **Practice Mode AUX value** — Name a Drive Mode `Practice Mode`, assign an AUX to Drive Mode and verify CTRL-TS displays the complete `Practice Mode` value with no `Practice Mo` truncation.
+4. Re-run the `.05.09` updater, calibration Cancel, background-SRVR and Limit Calibration movement checks to confirm no regression.

@@ -305,7 +305,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.05.09", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.05.10", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -321,7 +321,7 @@ class HVP2PBackend(QObject):
         self._fw_modern_fallback_delay_s = 2.5
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.05.09+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.05.10+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -2261,6 +2261,30 @@ class HVP2PBackend(QObject):
         )
         return not w1p_updating
 
+    def _limit_calibration_display_position(self) -> float:
+        """Return the operator-facing Limit Calibration coordinate.
+
+        Before Near is captured, preserve the current live coordinate. After the
+        Near capture, show distance from that staged point without mutating the
+        authoritative live Near/Far/Ref calibration. Raw encoder delta is preferred
+        on hardware so an old/mismatched logical origin cannot leak into the wizard;
+        Virtual mode falls back to the staged position delta.
+        """
+        pos_now = float(self.state.pos_m or 0.0)
+        if not (self.calibration_open and self.calibration_type == "Limit"):
+            return pos_now
+        if self._limit_cal_pending.get("near") is None:
+            return pos_now
+        cap = self._limit_cal_capture
+        near_raw = cap.get("near_raw")
+        raw_now = None if self.position_source == "Virtual" else getattr(self, "_last_raw_pos", None)
+        if near_raw is not None and raw_now is not None:
+            return abs(float(int(raw_now) - int(near_raw)) / max(1.0, float(self.winch_units_per_m)))
+        near_pos = cap.get("near_pos")
+        if near_pos is not None:
+            return abs(pos_now - float(near_pos))
+        return 0.0
+
     def _build_controller_display_packet(self) -> str:
         """Build the proven DSP1 SRVR->CTRL display/status packet.
 
@@ -2323,9 +2347,12 @@ class HVP2PBackend(QObject):
             cal_kind, cal_step, cal_title, cal_instruction = "", 0, "", ""
 
         # Limit-calibration telemetry is intentionally small and is also carried
-        # through CTRL's priority HMI state. It makes Virtual calibration visibly
-        # live on both UIs and keeps captured Near/Ref/Far points on screen.
-        cal_pos = float(self.state.pos_m or 0.0)
+        # through CTRL's priority HMI state. Once Near has been staged, the wizard
+        # position is deliberately re-zeroed to that capture so the operator sees
+        # actual travel away from Near while moving toward Far/Ref. The live
+        # calibrated coordinate remains untouched until the final transactional
+        # commit at Ref.
+        cal_pos = self._limit_calibration_display_position() if (self.calibration_open and self.calibration_type == "Limit") else float(self.state.pos_m or 0.0)
         def _cal_value(name):
             value = self._limit_cal_pending.get(name)
             return "" if value is None else f"{float(value):.2f}"
@@ -2336,7 +2363,11 @@ class HVP2PBackend(QObject):
         mode = self.drive_modes[self.active_drive_mode]
         max_mps = float(mode.get("max_speed_mps", self.max_speed_mps))
         mode_name = self._display_field(mode.get("name", f"Mode {self.active_drive_mode+1}"))
-        labels = [self._display_field(self._aux_action_label(i, source="ctrl")) for i in range(5)]
+        # AUX labels may contain both an action and a user-defined value/name.
+        # "Drive Mode | Practice Mode" is 26 characters, so the old default
+        # 24-character field limit truncated it to "Practice Mo" before CTRL-TS
+        # ever saw the packet. Keep a bounded but sufficient field width.
+        labels = [self._display_field(self._aux_action_label(i, source="ctrl"), 40) for i in range(5)]
         preset_names, preset_pos, preset_abs, preset_vis = [], [], [], []
         for i in range(10):
             preset_names.append(self._display_field(self._preset_display_name(i), 24))
@@ -3592,7 +3623,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.05.09 moves the installed joystick polarity correction into CTRL,
+        # v26.10.05.10 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same
@@ -4453,6 +4484,9 @@ class HVP2PBackend(QObject):
     def calibrationOpen(self): return self.calibration_open
     @Property(str, notify=calibrationChanged)
     def calibrationTitle(self): return self.calibration_title
+    @Property(float, notify=stateChanged)
+    def limitCalibrationPosition(self):
+        return float(self._limit_calibration_display_position())
     @Property('QVariantMap', notify=stateChanged)
     def limitCalibrationCaptures(self):
         def shown(name):
@@ -4462,7 +4496,7 @@ class HVP2PBackend(QObject):
             "near": shown("near"),
             "ref": shown("ref"),
             "far": shown("far"),
-            "current": f"{float(self.state.pos_m or 0.0):.2f} m",
+            "current": f"{self._limit_calibration_display_position():.2f} m",
         }
     @Property(bool, notify=joystickCalibrationChanged)
     def joystickCalibrationOpen(self): return bool(self.joystick_calibration_open)
