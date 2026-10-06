@@ -1,3 +1,13 @@
+# v26.10.06.06 — 2026-10-06
+
+- CI/runtime-test fixture hotfix built from locked `v26.10.06.05`; no intentional production behavior change apart from release identity.
+- Fixed the macOS PySide `tools.test_backend_logic` failure introduced when `.06.05` added valid yellow Near Limit / Far Limit / Ramping states: the first `System | Active` assertion now explicitly creates a healthy stationary mid-span fixture instead of inheriting position/velocity state from earlier tests.
+- Kept the Active assertion strict (`systemStatusLevel == 0`, `systemReady`, exact `System | Active`) rather than weakening the new status behavior.
+- Added `test_backend_status_fixture_contract_0606.py` to the source runner so the PySide fixture reset is verified even when PySide6 is unavailable locally.
+- Normalized production diff confirms CTRL, W1P, CTRL-TS, SRVR backend, QML and firmware-authority logic are unchanged from `.06.05` apart from release identity.
+- Preserved all `.06.05` confirmation/status changes and `.06.04` automatic-update recovery.
+- macOS bundle metadata: short version `26.10.6`, build `2610.6.6`.
+
 # v26.10.06.05 — 2026-10-06
 
 - Locked `v26.10.06.04`; production changes are restricted to CTRL-TS confirmation/touch handling and SRVR status presentation.

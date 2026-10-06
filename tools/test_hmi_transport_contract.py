@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-C=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.06.05/HV_P2P_CTRL_EDGEBOX_v26.10.06.05.ino').read_text()
-T=(ROOT/'HV_P2P_CTRL_TS_v26.10.06.05/HV_P2P_CTRL_TS_v26.10.06.05.ino').read_text()
+C=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.06.06/HV_P2P_CTRL_EDGEBOX_v26.10.06.06.ino').read_text()
+T=(ROOT/'HV_P2P_CTRL_TS_v26.10.06.06/HV_P2P_CTRL_TS_v26.10.06.06.ino').read_text()
 assert 'HMI_FW_BLOCK_DATA = 1024' in C
 assert 'HMI_FW_REPLY_TIMEOUT_MS = 3000' in C
 assert 'HMI_RS485_TURNAROUND_US = 2500' in C
