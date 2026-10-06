@@ -14,7 +14,7 @@
 #include <esp_system.h>
 #include <esp_attr.h>
 
-#define CTRL_TS_SEMVER "v26.10.06.04"
+#define CTRL_TS_SEMVER "v26.10.06.05"
 #define CTRL_TS_VERSION "HV P2P CTRL-TS " CTRL_TS_SEMVER
 #define CTRL_TS_HW_ID "WS-ESP32S3-7"
 #define HMI_BAUD 115200
@@ -229,10 +229,9 @@ static const int BAR_LIMIT_RIGHT = 772;
 static const int BAR_LIMIT_WIDTH = BAR_LIMIT_RIGHT - BAR_LIMIT_LEFT;
 static uint32_t g_last_aux_physical_ms[AUX_COUNT] = {0,0,0,0,0};
 static uint32_t g_last_aux_touch_ms[AUX_COUNT] = {0,0,0,0,0};
-static uint32_t g_aux_suppress_until_ms[AUX_COUNT] = {0,0,0,0,0};
 static uint32_t g_selected_aux_ms = 0;
 static const uint32_t AUX_PENDING_TIMEOUT_MS = 3000;
-static const uint32_t AUX_TOUCH_CONFIRM_GAP_MS = 250;
+static const uint32_t AUX_TOUCH_DEBOUNCE_MS = 35;
 static int g_current_marker_x = -1;
 static String g_last_mode = "";
 static String g_last_preset_names_field = "";
@@ -253,7 +252,7 @@ static float g_last_ramp_near_draw = -999999.0f;
 static float g_last_ramp_far_draw = -999999.0f;
 
 // -------------------- CTRL-TS Settings page --------------------
-// Safe v26.10.06.04 approach: no backlight/brightness writes. This page only
+// Safe v26.10.06.05 approach: no backlight/brightness writes. This page only
 // edits CTRL network settings over UART and therefore should preserve the known
 // Keep the proven splash/boot path; do not write to the backlight controller.
 static lv_obj_t *settings_overlay = nullptr;
@@ -301,7 +300,7 @@ static void force_screen_refresh(){
 }
 
 static void screen_keepalive(){
-  // v26.10.06.04: no periodic full-screen or left-strip invalidation or brightness writes.
+  // v26.10.06.05: no periodic full-screen or left-strip invalidation or brightness writes.
   // The Waveshare/LVGL port refreshes changed objects itself; forcing a full
   // screen refresh every second caused the visible 1-second flicker/glitch.
   if(!g_ui_ready) return;
@@ -578,12 +577,19 @@ static bool ack_hmi_event(uint16_t eventId){
 }
 static bool queue_aux_touch(uint8_t idx){
   if(idx >= AUX_COUNT) return false;
+  // LVGL CLICKED already represents one complete press/release. Debounce only
+  // pathological duplicate callbacks here, before the event enters the queue.
+  // Two deliberate taps may therefore arrive back-to-back and are both kept,
+  // even if the main loop services them in the same iteration.
+  const uint32_t now_ms = millis();
+  if(g_last_aux_touch_ms[idx] && (now_ms - g_last_aux_touch_ms[idx]) < AUX_TOUCH_DEBOUNCE_MS) return false;
   bool ok = false;
   portENTER_CRITICAL(&g_aux_touch_mux);
   uint8_t next = uint8_t((g_aux_touch_head + 1) % 8);
   if(next != g_aux_touch_tail){
     g_aux_touch_queue[g_aux_touch_head] = idx;
     g_aux_touch_head = next;
+    g_last_aux_touch_ms[idx] = now_ms;
     ok = true;
   }
   portEXIT_CRITICAL(&g_aux_touch_mux);
@@ -1189,11 +1195,6 @@ static void confirm_aux_idx(int idx, bool send_command){
   char msg[40];
   if(idx < 0 || idx >= AUX_COUNT) return;
   uint32_t now_ms = millis();
-  if(g_aux_suppress_until_ms[idx] && now_ms < g_aux_suppress_until_ms[idx]) return;
-  if(send_command){
-    if(now_ms - g_last_aux_touch_ms[idx] < AUX_TOUCH_CONFIRM_GAP_MS) return;
-    g_last_aux_touch_ms[idx] = now_ms;
-  }
   if(selected_aux != -1 && selected_aux != idx){
     style_aux(selected_aux,false,false);
     selected_aux = -1;
@@ -1209,12 +1210,13 @@ static void confirm_aux_idx(int idx, bool send_command){
     set_touch_debug(msg);
     return;
   }
-  if((now_ms - g_selected_aux_ms) < AUX_TOUCH_CONFIRM_GAP_MS) return;
+  // The second distinct CLICKED event is the confirmation. Do not impose a
+  // processing-time delay here: two fast taps can legitimately be queued before
+  // the main loop runs and must still complete the deliberate two-step action.
   selected_aux = -1;
   g_selected_aux_ms = 0;
   confirmed_aux = idx;
-  clear_confirm_at = now_ms + 2000;  // v26.10.06.04: confirmed AUX tile stays lit for 2 seconds
-  g_aux_suppress_until_ms[idx] = now_ms + 400;
+  clear_confirm_at = now_ms + 2000;  // v26.10.06.05: confirmed AUX tile stays lit for 2 seconds
   style_aux(idx,false,true);
   snprintf(msg,sizeof(msg),"AUX %d Confirmed", idx+1);
   set_touch_debug(msg);
@@ -1237,16 +1239,20 @@ static void confirm_aux_idx(int idx, bool send_command){
 }
 
 static void apply_flags_to_aux(uint16_t flags){
+  // AUX1..AUX5 on the current EdgeBox CTRL are touchscreen-only. The AUX bits
+  // returned by CTRL are therefore acknowledgement/transport echoes of a
+  // command that originated here, not a new operator press. Feeding those bits
+  // back into confirm_aux_idx() created a timing race: a delayed echo could
+  // become the first press of the next calibration step, making that step appear
+  // to need only one touchscreen tap. Keep the flags for diagnostics/state
+  // tracking, but only local CLICKED events may advance the two-step UI.
   const uint16_t masks[AUX_COUNT] = {0x0020, 0x0040, 0x0080, 0x0100, 0x0400};
-  uint32_t now_ms = millis();
+  const uint32_t now_ms = millis();
   for(int i=0;i<AUX_COUNT;i++){
-    bool was = (g_last_flags & masks[i]) != 0;
-    bool now = (flags & masks[i]) != 0;
+    const bool was = (g_last_flags & masks[i]) != 0;
+    const bool now = (flags & masks[i]) != 0;
     if(now && !was && (now_ms - g_last_aux_physical_ms[i] >= AUX_PHYSICAL_DEBOUNCE_MS)){
       g_last_aux_physical_ms[i] = now_ms;
-      if(!(g_aux_suppress_until_ms[i] && now_ms < g_aux_suppress_until_ms[i])){
-        confirm_aux_idx(i, false);
-      }
     }
   }
   g_last_flags = flags;
@@ -1288,7 +1294,7 @@ static void style_w1p_status_pill(int state){
 }
 
 static void style_estop_pill(bool active){
-  // v26.10.06.04: the middle status banner follows the SRVR-resolved state.
+  // v26.10.06.05: the middle status banner follows the SRVR-resolved state.
   // A local CTRL-TS UART/display gap must not invent "E-Stop CTRL" while SRVR
   // is still sending Status | Active. Real CTRL/W1P E-Stops are still shown
   // immediately when SRVR sends status=E-Stop... / status_level=red.
@@ -1339,7 +1345,7 @@ static void refresh_status_ui(){
   style_status_pill_cached(0,pill_ctrl,lbl_ctrl,"CTRL",g_ctrl_ok);
   if(pill_srvr && lbl_srvr) style_status_pill_cached(1,pill_srvr,lbl_srvr,"SRVR",g_srvr_ok);
   style_w1p_status_pill(g_w1p_health);
-  // v26.10.06.04: do not turn the main middle box red purely because the
+  // v26.10.06.05: do not turn the main middle box red purely because the
   // CTRL-TS local UART/display link hiccuped. The SRVR status packet is the
   // authoritative source for Active / Un-Calibrated / E-Stop display state.
   bool stopped_visual = (g_status_level >= 2) || g_estop_active;
@@ -1480,9 +1486,11 @@ static bool apply_calibration_overlay_fields(const String &line){
   if(!title.length()) title = kind.length() ? kind + " Calibration" : "Calibration";
   if(!instruction.length()) instruction = "Set the requested position, then press Confirm";
   if(kind != g_last_cal_overlay_kind || step != g_last_cal_overlay_step){
-    // A completed AUX confirmation has opened/advanced the wizard. The title is
-    // constant across Joystick/Limit steps, so step identity—not title text—is
-    // the authoritative transition. Return the assigned tile to Ready at once.
+    // Every wizard step starts from a clean confirmation state. Neither a stale
+    // Confirm? selection nor the previous Confirmed state may carry across a
+    // Joystick / Limit / Winch step transition. This guarantees two fresh local
+    // touchscreen taps for every Confirm -> Confirm? action.
+    if(selected_aux >= 0){ style_aux(selected_aux, false, false); selected_aux = -1; g_selected_aux_ms = 0; }
     if(confirmed_aux >= 0){ style_aux(confirmed_aux, false, false); confirmed_aux = -1; clear_confirm_at = 0; }
     g_last_cal_overlay_kind = kind;
     g_last_cal_overlay_step = step;
@@ -1976,7 +1984,7 @@ static void apply_hmi_packet(const String &line){
     else g_status_level = 0;
   }
 
-  // v26.10.06.04: if SRVR sends explicit status/status_level, trust it as
+  // v26.10.06.05: if SRVR sends explicit status/status_level, trust it as
   // the authoritative display state. Do not override it locally with a CTRL
   // error just because the touchscreen/CTRL UART side saw a transient gap.
   if(status_packet){
@@ -2133,7 +2141,7 @@ static void apply_hmi_packet(const String &line){
   if(mode_changed || (prev_status_text != g_status_text) || (prev_status_level != g_status_level) || (prev_estop != g_estop_active) || (prev_estop_source != g_estop_source) || (prev_ctrl != g_ctrl_ok) || (prev_srvr != g_srvr_ok) || (prev_w1p != g_w1p_ok) || (prev_w1p_health != g_w1p_health)) {
     refresh_status_ui();
   }
-  // v26.10.06.04: no left-strip/full-screen invalidation on packets; progress marker animates locally.
+  // v26.10.06.05: no left-strip/full-screen invalidation on packets; progress marker animates locally.
 }
 
 
@@ -2142,7 +2150,7 @@ static void apply_layout_packet(const String &line){
   // on CTRL cannot overwrite the screen title/version or trigger header redraws.
   String hint = getField(line, "hint");
   if(lbl_title) set_label_text_if_changed(lbl_title, "HV P2P\nCTRL-TS");
-  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.06.04");
+  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.06.05");
   if(hint.length() && hint.startsWith("ERROR")) set_touch_debug(hint.c_str());
   // UIL1 is presentation-only. AUX assignment/value ownership belongs solely to
   // live SRVR HMI state, so an old layout persisted in CTRL NVS cannot overwrite
@@ -2661,7 +2669,7 @@ static void create_ui(){
   lv_obj_t *brand=make_panel(frame,SX,HEADER_Y,70,HEADER_H,C_BG,0x63d84e,7);
   lbl_title=make_label(brand,"HV P2P\nCTRL-TS",0,6,&lv_font_montserrat_12,lv_color_hex(C_FG),70);
   lv_obj_set_style_text_line_space(lbl_title,-2,0);
-  lbl_subtitle=make_label(frame,"v26.10.06.04",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
+  lbl_subtitle=make_label(frame,"v26.10.06.05",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
 
   pill_ctrl=make_panel(frame,255,HEADER_Y,126,HEADER_H,C_PANEL,C_BORDER,5);
   dot_ctrl=lv_obj_create(pill_ctrl); lv_obj_set_pos(dot_ctrl,9,15); lv_obj_set_size(dot_ctrl,8,8); lv_obj_set_style_radius(dot_ctrl,LV_RADIUS_CIRCLE,0); lv_obj_set_style_border_width(dot_ctrl,0,0); lv_obj_set_style_bg_color(dot_ctrl,lv_color_hex(0xef5757),0); lv_obj_clear_flag(dot_ctrl,LV_OBJ_FLAG_SCROLLABLE);
@@ -2863,7 +2871,7 @@ static void service_link_state(){
 
   bool link_alive = last_hmi_rx && ((millis() - last_hmi_rx) <= HMI_TIMEOUT_MS);
   if(!link_alive) {
-    // v26.10.06.04: local UART/display timeout is a CTRL-TS link warning, not
+    // v26.10.06.05: local UART/display timeout is a CTRL-TS link warning, not
     // proof of a real CTRL E-Stop. Keep the last SRVR-resolved status banner so
     // the touchscreen cannot randomly show "Status | E-Stop CTRL" while SRVR
     // remains "Status | Active". The CTRL status pill can still show ERROR.

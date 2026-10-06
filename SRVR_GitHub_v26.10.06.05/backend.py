@@ -73,6 +73,8 @@ JOY_CENTRE_DRIFT_TAU_S = 20.0
 PREDICTIVE_LIMIT_REACTION_S = 0.20
 PREDICTIVE_LIMIT_MARGIN_M = 0.05
 PREDICTIVE_LIMIT_DECEL_FACTOR = 0.75
+LIMIT_STATUS_DISTANCE_M = 1.0       # operator Near/Far status window from either calibrated endpoint
+RAMP_STATUS_SPEED_EPS_MPS = 0.03    # ignore stationary/noise-level feedback when reporting Ramping
 CTRL_AUX_BITS = (FLAG_AUX1, FLAG_AUX2, FLAG_AUX3, FLAG_AUX4, FLAG_AUX5)
 
 
@@ -399,7 +401,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.06.04", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.06.05", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -415,7 +417,7 @@ class HVP2PBackend(QObject):
         self._fw_modern_fallback_delay_s = 2.5
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.06.04+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.06.05+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -2414,6 +2416,58 @@ class HVP2PBackend(QObject):
             parts.append("W1P")
         return "E-Stop | " + (" & ".join(parts) if parts else "SRVR")
 
+    def _normal_motion_zone_status(self):
+        """Return the normal-operation Near/Far/Ramping operator state, if any.
+
+        This is presentation-only state derived from the same calibrated limits,
+        ramp geometry and signed line velocity already used by motion control. It
+        never changes a limit, velocity command or safety decision.
+        """
+        try:
+            if self.state.pos_m is None:
+                return None
+            pos = float(self.state.pos_m)
+            near = float(self.state.near_limit.position_m)
+            far = float(self.state.far_limit.position_m)
+        except Exception:
+            return None
+
+        # Near/Far are more specific than Ramping. Use the requested 1 m window
+        # and resolve pathological short spans by whichever endpoint is closer.
+        near_d = abs(pos - near)
+        far_d = abs(far - pos)
+        within_near = near_d <= LIMIT_STATUS_DISTANCE_M
+        within_far = far_d <= LIMIT_STATUS_DISTANCE_M
+        if within_near or within_far:
+            if within_near and within_far:
+                return "System | Near Limit" if near_d <= far_d else "System | Far Limit"
+            return "System | Near Limit" if within_near else "System | Far Limit"
+
+        # Report Ramping only while actually travelling toward an endpoint whose
+        # configured ramp zone contains the current position. Signed feedback is
+        # preferred; the last signed command covers the short feedback-zero edge.
+        motion = float(self.current_speed_mps or 0.0)
+        if abs(motion) <= RAMP_STATUS_SPEED_EPS_MPS:
+            motion = float(self.last_sent_vel or 0.0)
+        if abs(motion) <= RAMP_STATUS_SPEED_EPS_MPS:
+            return None
+
+        lo, hi = (near, far) if near <= far else (far, near)
+        span = max(0.0, hi - lo)
+        if span <= 1e-9:
+            return None
+        near_ramp = self._ramp_distance(self.state.near_limit, span)
+        far_ramp = self._ramp_distance(self.state.far_limit, span)
+        # Normal calibrated operation stores Near at the low coordinate and Far
+        # at the high coordinate. Keep the guard explicit if a legacy config is
+        # reversed rather than inventing an opposite direction silently.
+        if near <= far:
+            if motion < 0.0 and near_ramp > 0.0 and pos <= near + near_ramp:
+                return "System | Ramping"
+            if motion > 0.0 and far_ramp > 0.0 and pos >= far - far_ramp:
+                return "System | Ramping"
+        return None
+
     def _resolved_system_status(self):
         """One canonical status description for SRVR and CTRL-TS."""
         if self.state.estop_active:
@@ -2429,6 +2483,9 @@ class HVP2PBackend(QObject):
             return "System | Battery Change Mode", "yellow", "", 0
         if self._not_calibrated:
             return "System | Uncalibrated", "yellow", "", 0
+        zone_status = self._normal_motion_zone_status()
+        if zone_status:
+            return zone_status, "yellow", "", 0
         return "System | Active", "green", "", 0
 
     def _set_ctrl_ts_gate_reason(self, reason: str) -> None:
@@ -3954,7 +4011,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.06.04 moves the installed joystick polarity correction into CTRL,
+        # v26.10.06.05 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same

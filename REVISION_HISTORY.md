@@ -1,3 +1,16 @@
+# v26.10.06.05 — 2026-10-06
+
+- Locked `v26.10.06.04`; production changes are restricted to CTRL-TS confirmation/touch handling and SRVR status presentation.
+- Fixed intermittent one-press calibration steps by preventing reflected CTRL AUX flag pulses from entering the touchscreen's local Confirm/Confirm? state machine.
+- Every Joystick, Limit and Winch calibration step now clears both Selected and Confirmed state and requires two fresh local touchscreen taps.
+- Removed the old 250 ms select-to-confirm delay; distinct LVGL clicks may be processed back-to-back with only a 35 ms duplicate-callback debounce at capture.
+- Removed the obsolete 400 ms returned-AUX suppression timer.
+- Added canonical yellow `System | Ramping`, `System | Near Limit` and `System | Far Limit` states. Near/Far trigger within 1.0 m; Ramping is shown while moving toward an endpoint inside its configured ramp zone.
+- Preserved red fault/E-stop priority and existing calibration/Battery Change/Uncalibrated yellow priority.
+- Added `test_bench_regression_0605.py` and included `.06.04`/`.06.05` regressions in the full source runner.
+- Preserved `.06.04` auto-update recovery, W1P 500 ms VEL watchdog, ~150 ms SRVR VEL refresh, AI0/AI1 mapping, predictive/hard limits and Leadshine velocity architecture.
+- macOS bundle metadata: short version `26.10.6`, build `2610.6.5`.
+
 # v26.10.06.04 — 2026-10-06
 
 - Locked `v26.10.06.03` and changed only automatic firmware-update recovery/diagnostics plus release identity.
