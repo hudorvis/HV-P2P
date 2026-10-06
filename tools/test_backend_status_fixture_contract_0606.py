@@ -2,7 +2,7 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TEST = ROOT / 'SRVR_GitHub_v26.10.06.08' / 'tools' / 'test_backend_logic.py'
+TEST = ROOT / 'SRVR_GitHub_v26.10.06.09' / 'tools' / 'test_backend_logic.py'
 text = TEST.read_text()
 
 active_assert = 'assert b.systemStatusLevel == 0 and b.systemReady and b.bannerText == "System | Active"'

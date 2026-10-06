@@ -1,12 +1,13 @@
-# v26.10.06.08 — 2026-10-06
+# v26.10.06.09 — 2026-10-06
 
-- Locked `v26.10.06.07`; production changes are restricted to CTRL-TS progress-marker rendering and canonical SRVR Ramping-status presentation.
-- Replaced the `.06.07` speed-based forward predictor with verified sample-to-sample interpolation at the local 16 ms display-service cadence. This removes high-speed overshoot/back-correction while leaving numeric/authoritative position and all control calculations unchanged.
-- `System | Ramping` is now a physical ramp-zone state and remains yellow while stopped inside either configured end ramp. `Near Limit` / `Far Limit` keep priority inside their 1.0 m windows.
-- Audited W1P Encoder / Leadshine EL7-RS Modbus path end-to-end. No W1P production change was required; EdgeBox RS485 mapping, drive-register contract, feedback/configuration gates and independent 500 ms VEL watchdog remain unchanged.
-- Added `test_bench_regression_0608.py`; updated only historical assertions directly superseded by the requested no-prediction marker and stationary-Ramping semantics.
-- Full source suite passes: 370 EdgeBox checks, all historical updater/RS485/calibration/motion regressions, 53 build-pipeline checks, release/hygiene/Python syntax and SRVR preflight. Native firmware and frozen desktop builds remain GitHub Actions gates.
-- macOS bundle metadata: short version `26.10.6`, build `2610.6.8`.
+- Locked `v26.10.06.08`; no production behavior change beyond release identity.
+- Fixed Windows/macOS PySide runtime test contamination in the E-stop banner fixture. The test had expected CTRL-only loss while W1P could still carry stale/fail-safe state from earlier cases.
+- The fixture now establishes explicit fully healthy validated CTRL + W1P snapshots before simulating CTRL-only, W1P-only and combined connection loss.
+- Production E-stop resolver remains unchanged and fail-safe; validated STATUS freshness, firmware match, W1P internal safety and RS485 health continue to participate in W1P fault reporting.
+- Added `test_estop_banner_fixture_contract_0609.py` to the source runner so the PySide fixture requirement is checked before desktop CI.
+- Normalized production diff against `.06.08`: zero functional changes.
+- Source runner reaches `ALL_SOURCE_CHECKS_PASS`: 370 EdgeBox checks, all historical regressions, 53 build-pipeline checks, release/hygiene/Python syntax and SRVR preflight.
+- macOS bundle metadata: short version `26.10.6`, build `2610.6.9`.
 
 # v26.10.06.05 — 2026-10-06
 
