@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-T=(ROOT/'HV_P2P_CTRL_TS_v26.10.06.09/HV_P2P_CTRL_TS_v26.10.06.09.ino').read_text()
+T=(ROOT/'HV_P2P_CTRL_TS_v26.10.06.10/HV_P2P_CTRL_TS_v26.10.06.10.ino').read_text()
 for tok in ('boot_render_splash_fit','const bool rotate = (boot_decode_h > boot_decode_w) && (boot_w > boot_h)','const float scale = sx < sy ? sx : sy','without crop','2200000ULL'):
     assert tok in T,tok
 

@@ -1,13 +1,13 @@
-# v26.10.06.09 — 2026-10-06
+# v26.10.06.10 — 2026-10-06
 
-- Locked `v26.10.06.08`; no production behavior change beyond release identity.
-- Fixed Windows/macOS PySide runtime test contamination in the E-stop banner fixture. The test had expected CTRL-only loss while W1P could still carry stale/fail-safe state from earlier cases.
-- The fixture now establishes explicit fully healthy validated CTRL + W1P snapshots before simulating CTRL-only, W1P-only and combined connection loss.
-- Production E-stop resolver remains unchanged and fail-safe; validated STATUS freshness, firmware match, W1P internal safety and RS485 health continue to participate in W1P fault reporting.
-- Added `test_estop_banner_fixture_contract_0609.py` to the source runner so the PySide fixture requirement is checked before desktop CI.
-- Normalized production diff against `.06.08`: zero functional changes.
-- Source runner reaches `ALL_SOURCE_CHECKS_PASS`: 370 EdgeBox checks, all historical regressions, 53 build-pipeline checks, release/hygiene/Python syntax and SRVR preflight.
-- macOS bundle metadata: short version `26.10.6`, build `2610.6.9`.
+- Locked `v26.10.06.09`; production change is restricted to SRVR -> CTRL DSP1 display transport.
+- Bench symptom matched CTRL's neutral fallback HMI exactly: SRVR still received joystick/control and saw CTRL/CTRL-TS, while CTRL-TS showed `System | Active`, `Aux 1..5`, no presets and no live position/speed data.
+- Removed DSP1 dependence on SRVR's separate unbound UDP socket. The latest display snapshot is now coalesced and transmitted by the controller worker through its proven bound UDP/5000 socket, the same network return path used by CTRL heartbeat/control traffic.
+- Worker services staged display data with a 25 ms receive timeout; failed sends retain the latest snapshot for retry without blocking motion/safety.
+- Updated PySide transport fixture and added `test_hmi_display_bound_transport_0610.py`.
+- Normalized production diff against `.06.09`: SRVR `backend.py` only; CTRL, W1P, CTRL-TS, QML and firmware authority unchanged apart from release identity.
+- 370 EdgeBox checks, all historical source regressions, 53 build-pipeline checks, wire/motion contracts, release consistency, hygiene, Python syntax and SRVR preflight pass locally.
+- macOS bundle metadata: short version `26.10.6`, build `2610.6.10`.
 
 # v26.10.06.05 — 2026-10-06
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""v26.10.06.09 locked-scope regression: marker smoothing, persistent ramp status, W1P encoder path."""
+"""v26.10.06.10 locked-scope regression: marker smoothing, persistent ramp status, W1P encoder path."""
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.10.06.09'
+VER='26.10.06.10'
 T=(ROOT/f'HV_P2P_CTRL_TS_v{VER}/HV_P2P_CTRL_TS_v{VER}.ino').read_text()
 B=(ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 W=(ROOT/f'HV_P2P_W1P_EDGEBOX_v{VER}/HV_P2P_W1P_EDGEBOX_v{VER}.ino').read_text()

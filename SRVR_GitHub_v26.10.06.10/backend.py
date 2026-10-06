@@ -401,7 +401,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.06.09", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.06.10", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -417,7 +417,7 @@ class HVP2PBackend(QObject):
         self._fw_modern_fallback_delay_s = 2.5
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.06.09+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.06.10+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -623,11 +623,19 @@ class HVP2PBackend(QObject):
         self._w1p_ts_connected_reported = False
         self._w1p_ts_version = ""
         self._w1p_ts_age_ms = 999999
-        # The CTRL firmware accepts DSP1 UDP packets from SRVR and forwards them
-        # to CTRL-TS as HMI1. Use an independent unbound socket so the listener
-        # remains the sole owner of UDP/5000 locally.
+        # Lightweight presence/firmware/shutdown packets retain the independent
+        # socket, but DSP1 display telemetry is staged onto the controller worker's
+        # *bound UDP/5000 socket*. That is the exact return path already proven by
+        # CTRL heartbeats. Keeping DSP1 off an unbound ephemeral source removes a
+        # multi-NIC/source-route failure mode where joystick/heartbeat traffic was
+        # healthy while CTRL silently rejected one-way display packets from a
+        # different local source address and therefore showed its fallback HMI.
         self._ctrl_display_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._ctrl_presence_tx_lock = threading.Lock()
+        self._ctrl_bound_display_lock = threading.Lock()
+        self._ctrl_bound_display_pending = None
+        self._ctrl_bound_display_tx = 0
+        self._ctrl_bound_display_tx_errors = 0
         self._srvr_alive_thread = None
         self._last_ctrl_display_packet = b""
         self._last_ctrl_display_change_tx = 0.0
@@ -918,17 +926,54 @@ class HVP2PBackend(QObject):
 
             self._stop_evt.wait(0.05)
 
+    def _stage_ctrl_display_datagram(self, packet: bytes, target: str) -> bool:
+        """Coalesce DSP1 onto the proven bound CTRL UDP/5000 return path.
+
+        Only the latest display snapshot matters. The controller worker owns the
+        bound socket, so staging rather than sending from the Qt thread preserves
+        one socket owner and guarantees the same source address/port as heartbeat
+        ACKs that CTRL already accepts.
+        """
+        if not packet or not target or self._stop_evt.is_set():
+            return False
+        with self._ctrl_bound_display_lock:
+            self._ctrl_bound_display_pending = (bytes(packet), (str(target), SERVER_BIND_PORT))
+        return True
+
+    def _flush_ctrl_display_datagram(self, sock) -> None:
+        pending = None
+        with self._ctrl_bound_display_lock:
+            if self._ctrl_bound_display_pending is not None:
+                pending = self._ctrl_bound_display_pending
+                self._ctrl_bound_display_pending = None
+        if pending is None or self._stop_evt.is_set():
+            return
+        payload, target = pending
+        try:
+            sock.sendto(payload, target)
+            self._ctrl_bound_display_tx += 1
+        except Exception:
+            self._ctrl_bound_display_tx_errors += 1
+            # Preserve the latest snapshot for the next worker pass unless a newer
+            # one has already replaced it. Never block motion/safety on display IO.
+            with self._ctrl_bound_display_lock:
+                if self._ctrl_bound_display_pending is None and not self._stop_evt.is_set():
+                    self._ctrl_bound_display_pending = pending
+
     def _controller_worker(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(("0.0.0.0", SERVER_BIND_PORT))
-            sock.settimeout(0.25)
+            # Service staged DSP1 at up to 40 Hz without creating a second owner
+            # for the bound socket. CTRL heartbeats still receive immediate ACKs.
+            sock.settimeout(0.025)
         except OSError as exc:
             self._log(f"[SRVR] Controller UDP bind failed 0.0.0.0:{SERVER_BIND_PORT} -> {exc}")
             return
         last_heartbeat_fw_reply = 0.0
         while not self._stop_evt.is_set():
+            self._flush_ctrl_display_datagram(sock)
             try: data, addr = sock.recvfrom(2048)
             except socket.timeout: continue
             except OSError: break
@@ -2786,16 +2831,15 @@ class HVP2PBackend(QObject):
                 return
             if (not changed) and (now - self._last_ctrl_display_keepalive_tx) < HMI_DISPLAY_KEEPALIVE_S:
                 return
-        try:
-            with self._ctrl_presence_tx_lock:
-                self._ctrl_display_sock.sendto(packet, (target, SERVER_BIND_PORT))
+        # DSP1 must use the controller worker's bound UDP/5000 return path. The
+        # joystick/control stream and heartbeat ACK already prove that path works;
+        # staging the latest display snapshot there prevents a one-way unbound
+        # socket/source-route mismatch from leaving CTRL-TS on fallback data.
+        if self._stage_ctrl_display_datagram(packet, target):
             self._last_ctrl_display_packet = packet
             self._last_ctrl_display_keepalive_tx = now
             if changed:
                 self._last_ctrl_display_change_tx = now
-        except Exception:
-            # Display/status telemetry must never disturb the motion/safety loop.
-            pass
 
     def _send_ctrl_firmware_beacon(self, force: bool = False) -> None:
         """Advertise SRVR authority over CTRL's existing non-blocking UDP socket.
@@ -4025,7 +4069,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.06.09 moves the installed joystick polarity correction into CTRL,
+        # v26.10.06.10 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same

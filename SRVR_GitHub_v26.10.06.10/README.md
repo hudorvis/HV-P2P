@@ -1,14 +1,14 @@
-# HV P2P SRVR v26.10.06.09 — Qt Quick desktop build source
+# HV P2P SRVR v26.10.06.10 — Qt Quick desktop build source
 
-This SRVR source continues from the audited/hardened v26.08.31.08 control baseline. v26.10.06.09 retains the approved **Run** and **Setup** layout while correcting Settings state convergence, firmware-progress readouts, signed service-mode distance display and true W1P-independent Virtual simulation.
+This SRVR source continues from the audited/hardened v26.08.31.08 control baseline. v26.10.06.10 retains the approved **Run** and **Setup** layout while correcting Settings state convergence, firmware-progress readouts, signed service-mode distance display and true W1P-independent Virtual simulation.
 
-## v26.10.06.09 automatic-update recovery
+## v26.10.06.10 automatic-update recovery
 
 This revision keeps the `.06.02` operator/motion/UI changes locked and changes only SRVR firmware coordination/recovery. The normal background `SRVR_FW` node-pull path remains first choice, but the verified HTTP fallback is now evaluated by the background communications worker as well as the Qt path, so a stale CTRL/W1P no longer needs a manual reboot merely because the primary pull was missed.
 
 CTRL remains the mandatory first stage and W1P is attempted second. A present W1P that is actively flashing receives a long completion window; a W1P that cannot converge (for example `update_waiting_safe_idle`) receives a bounded ordered recovery window and remains fail-closed, while the independent CTRL-TS final stage is eventually released instead of remaining at `Waiting` forever. The CTRL-TS safe RS485 flash/reboot protocol itself is unchanged.
 
-## v26.10.06.09 operator revisions
+## v26.10.06.10 operator revisions
 
 ### Run
 
@@ -28,7 +28,7 @@ CTRL remains the mandatory first stage and W1P is attempted second. A present W1
 - The `CTRL-TS` panel now matches CTRL/W1P firmware presentation: `Link`, a divider, and one `Firmware` readout that normally shows the detected running version and switches to update progress during CTRL-TS firmware activity.
 
 
-### v26.10.06.09 transport/display integration
+### v26.10.06.10 transport/display integration
 
 - CTRL now reports its own authority-OTA progress back to SRVR over the existing UDP control link as well as to CTRL-TS; W1P continues to report `FW_PROGRESS` directly to SRVR.
 - CTRL/W1P/CTRL-TS Settings firmware fields therefore use one version-or-progress model.
@@ -98,9 +98,9 @@ Use the repository-root workflow:
 
 `.github/workflows/complete-build.yml`
 
-It builds the matched v26.10.06.09 CTRL-TS, CTRL and W1P firmware, freezes/smoke-tests the Intel (`x86_64`) macOS SRVR application, preserves the original SRVR distribution ZIP, and publishes the complete matched release.
+It builds the matched v26.10.06.10 CTRL-TS, CTRL and W1P firmware, freezes/smoke-tests the Intel (`x86_64`) macOS SRVR application, preserves the original SRVR distribution ZIP, and publishes the complete matched release.
 
-A successful GitHub compile is not powered-motion commissioning approval. Complete the repository `NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.10.06.09.md` before hardware sign-off.
+A successful GitHub compile is not powered-motion commissioning approval. Complete the repository `NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.10.06.10.md` before hardware sign-off.
 
 
 ## Native desktop targets
