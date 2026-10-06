@@ -401,7 +401,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.06.07", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.06.08", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -417,7 +417,7 @@ class HVP2PBackend(QObject):
         self._fw_modern_fallback_delay_s = 2.5
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.06.07+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.06.08+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -2439,8 +2439,8 @@ class HVP2PBackend(QObject):
         """Return the normal-operation Near/Far/Ramping operator state, if any.
 
         This is presentation-only state derived from the same calibrated limits,
-        ramp geometry and signed line velocity already used by motion control. It
-        never changes a limit, velocity command or safety decision.
+        ramp geometry already used by motion control. It never changes a limit,
+        velocity command or safety decision.
         """
         try:
             if self.state.pos_m is None:
@@ -2462,29 +2462,24 @@ class HVP2PBackend(QObject):
                 return "System | Near Limit" if near_d <= far_d else "System | Far Limit"
             return "System | Near Limit" if within_near else "System | Far Limit"
 
-        # Report Ramping only while actually travelling toward an endpoint whose
-        # configured ramp zone contains the current position. Signed feedback is
-        # preferred; the last signed command covers the short feedback-zero edge.
-        motion = float(self.current_speed_mps or 0.0)
-        if abs(motion) <= RAMP_STATUS_SPEED_EPS_MPS:
-            motion = float(self.last_sent_vel or 0.0)
-        if abs(motion) <= RAMP_STATUS_SPEED_EPS_MPS:
-            return None
-
+        # Ramping is a position-zone state, not a motion-only state. Once the
+        # skate is inside either configured end ramp, keep the yellow Ramping
+        # indication even after velocity reaches zero. Near/Far Limit remain more
+        # specific and therefore win inside their 1 m endpoint windows above.
         lo, hi = (near, far) if near <= far else (far, near)
         span = max(0.0, hi - lo)
         if span <= 1e-9:
             return None
         near_ramp = self._ramp_distance(self.state.near_limit, span)
         far_ramp = self._ramp_distance(self.state.far_limit, span)
-        # Normal calibrated operation stores Near at the low coordinate and Far
-        # at the high coordinate. Keep the guard explicit if a legacy config is
-        # reversed rather than inventing an opposite direction silently.
         if near <= far:
-            if motion < 0.0 and near_ramp > 0.0 and pos <= near + near_ramp:
-                return "System | Ramping"
-            if motion > 0.0 and far_ramp > 0.0 and pos >= far - far_ramp:
-                return "System | Ramping"
+            in_near_ramp = near_ramp > 0.0 and pos <= near + near_ramp
+            in_far_ramp = far_ramp > 0.0 and pos >= far - far_ramp
+        else:
+            in_near_ramp = near_ramp > 0.0 and pos >= near - near_ramp
+            in_far_ramp = far_ramp > 0.0 and pos <= far + far_ramp
+        if in_near_ramp or in_far_ramp:
+            return "System | Ramping"
         return None
 
     def _resolved_system_status(self):
@@ -4030,7 +4025,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.06.07 moves the installed joystick polarity correction into CTRL,
+        # v26.10.06.08 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same

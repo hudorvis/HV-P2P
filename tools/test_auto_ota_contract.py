@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-C=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.06.07/HV_P2P_CTRL_EDGEBOX_v26.10.06.07.ino').read_text()
-W=(ROOT/'HV_P2P_W1P_EDGEBOX_v26.10.06.07/HV_P2P_W1P_EDGEBOX_v26.10.06.07.ino').read_text()
-H=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.06.07/HV_P2P_SRVR_Authority_OTA.h').read_text()
-B=(ROOT/'SRVR_GitHub_v26.10.06.07/backend.py').read_text()
-M=(ROOT/'SRVR_GitHub_v26.10.06.07/main.py').read_text()
+C=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.06.08/HV_P2P_CTRL_EDGEBOX_v26.10.06.08.ino').read_text()
+W=(ROOT/'HV_P2P_W1P_EDGEBOX_v26.10.06.08/HV_P2P_W1P_EDGEBOX_v26.10.06.08.ino').read_text()
+H=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.06.08/HV_P2P_SRVR_Authority_OTA.h').read_text()
+B=(ROOT/'SRVR_GitHub_v26.10.06.08/backend.py').read_text()
+M=(ROOT/'SRVR_GitHub_v26.10.06.08/main.py').read_text()
 for role,src in [('CTRL',C),('W1P',W)]:
-    assert f'HV_P2P_FW_ROLE={role};HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.06.07;' in src
+    assert f'HV_P2P_FW_ROLE={role};HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.06.08;' in src
     assert 'serviceSrvrFirmwareAuthority' in src and 'newer_than_srvr_no_downgrade' in src
     assert 'hashRunningPrefix' in src and 'downloadAndStage' in src
 assert 'out.schema == "hv-p2p-firmware-manifest-v1"' in H

@@ -14,7 +14,7 @@
 #include <esp_system.h>
 #include <esp_attr.h>
 
-#define CTRL_TS_SEMVER "v26.10.06.07"
+#define CTRL_TS_SEMVER "v26.10.06.08"
 #define CTRL_TS_VERSION "HV P2P CTRL-TS " CTRL_TS_SEMVER
 #define CTRL_TS_HW_ID "WS-ESP32S3-7"
 #define HMI_BAUD 115200
@@ -199,13 +199,17 @@ static float g_pos=0.0f, g_near=0.0f, g_ref=50.0f, g_far=100.0f, g_to_near=0.0f,
 // the CTRL-TS travel markers cannot diverge from the SRVR Top/Side views through
 // local coordinate interpretation or stale absolute/relative limits.
 static float g_pos_frac=0.0f, g_ref_frac=0.5f;
-// Display-only motion interpolation. Control/safety always uses verified SRVR/W1P
-// telemetry; these values only make the travel marker fluid between ~10 Hz HMM1
-// samples. Prediction is tightly bounded so a stale link cannot visually run away.
+// Display-only verified-sample interpolation. Control/safety always uses SRVR/W1P
+// telemetry. The marker deliberately does NOT predict ahead of the latest sample:
+// prediction could overshoot at high speed and then visibly correct backwards when
+// the next real sample arrived. Instead, traverse each verified sample-to-sample
+// segment over the observed HMM1 interval (~10 Hz) at the local LVGL service rate.
 static float g_motion_sample_frac=0.0f;
-static float g_motion_sample_speed_mps=0.0f;
 static float g_progress_display_frac=0.0f;
+static float g_progress_segment_start_frac=0.0f;
 static uint32_t g_motion_sample_ms=0;
+static uint32_t g_progress_segment_start_ms=0;
+static uint32_t g_progress_segment_duration_ms=100;
 static uint32_t g_progress_service_ms=0;
 static bool g_motion_sample_valid=false;
 static bool g_progress_display_valid=false;
@@ -257,7 +261,7 @@ static float g_last_ramp_near_draw = -999999.0f;
 static float g_last_ramp_far_draw = -999999.0f;
 
 // -------------------- CTRL-TS Settings page --------------------
-// Safe v26.10.06.07 approach: no backlight/brightness writes. This page only
+// Safe v26.10.06.08 approach: no backlight/brightness writes. This page only
 // edits CTRL network settings over UART and therefore should preserve the known
 // Keep the proven splash/boot path; do not write to the backlight controller.
 static lv_obj_t *settings_overlay = nullptr;
@@ -305,7 +309,7 @@ static void force_screen_refresh(){
 }
 
 static void screen_keepalive(){
-  // v26.10.06.07: no periodic full-screen or left-strip invalidation or brightness writes.
+  // v26.10.06.08: no periodic full-screen or left-strip invalidation or brightness writes.
   // The Waveshare/LVGL port refreshes changed objects itself; forcing a full
   // screen refresh every second caused the visible 1-second flicker/glitch.
   if(!g_ui_ready) return;
@@ -1221,7 +1225,7 @@ static void confirm_aux_idx(int idx, bool send_command){
   selected_aux = -1;
   g_selected_aux_ms = 0;
   confirmed_aux = idx;
-  clear_confirm_at = now_ms + 2000;  // v26.10.06.07: confirmed AUX tile stays lit for 2 seconds
+  clear_confirm_at = now_ms + 2000;  // v26.10.06.08: confirmed AUX tile stays lit for 2 seconds
   style_aux(idx,false,true);
   snprintf(msg,sizeof(msg),"AUX %d Confirmed", idx+1);
   set_touch_debug(msg);
@@ -1299,7 +1303,7 @@ static void style_w1p_status_pill(int state){
 }
 
 static void style_estop_pill(bool active){
-  // v26.10.06.07: the middle status banner follows the SRVR-resolved state.
+  // v26.10.06.08: the middle status banner follows the SRVR-resolved state.
   // A local CTRL-TS UART/display gap must not invent "E-Stop CTRL" while SRVR
   // is still sending Status | Active. Real CTRL/W1P E-Stops are still shown
   // immediately when SRVR sends status=E-Stop... / status_level=red.
@@ -1350,7 +1354,7 @@ static void refresh_status_ui(){
   style_status_pill_cached(0,pill_ctrl,lbl_ctrl,"CTRL",g_ctrl_ok);
   if(pill_srvr && lbl_srvr) style_status_pill_cached(1,pill_srvr,lbl_srvr,"SRVR",g_srvr_ok);
   style_w1p_status_pill(g_w1p_health);
-  // v26.10.06.07: do not turn the main middle box red purely because the
+  // v26.10.06.08: do not turn the main middle box red purely because the
   // CTRL-TS local UART/display link hiccuped. The SRVR status packet is the
   // authoritative source for Active / Un-Calibrated / E-Stop display state.
   bool stopped_visual = (g_status_level >= 2) || g_estop_active;
@@ -1756,47 +1760,60 @@ static void set_progress_marker_fraction(float frac){
 }
 
 static void update_progress_marker(){
-  // Cache the newest verified sample. Do not snap an already-running marker to
-  // it; service_progress_marker_smooth() converges smoothly at the local 50 Hz
-  // UI rate while staying anchored to these authoritative samples.
-  g_motion_sample_frac = constrain(g_pos_frac, 0.0f, 1.0f);
-  g_motion_sample_speed_mps = g_speed_mps;
-  g_motion_sample_ms = millis();
-  g_motion_sample_valid = true;
-  if(!g_progress_display_valid){
-    g_progress_display_frac = g_motion_sample_frac;
+  const uint32_t now = millis();
+  float next_frac = constrain(g_pos_frac, 0.0f, 1.0f);
+
+  if(!g_motion_sample_valid || !g_progress_display_valid){
+    g_motion_sample_frac = next_frac;
+    g_progress_display_frac = next_frac;
+    g_progress_segment_start_frac = next_frac;
+    g_motion_sample_ms = now;
+    g_progress_segment_start_ms = now;
+    g_progress_segment_duration_ms = 100;
+    g_motion_sample_valid = true;
     g_progress_display_valid = true;
     set_progress_marker_fraction(g_progress_display_frac);
+    return;
   }
+
+  // Use the actual observed verified-sample spacing rather than assuming a fixed
+  // frame rate. Lightly filter/clamp it so UDP/RS485 jitter does not change the
+  // visual marker speed abruptly from one segment to the next.
+  uint32_t sample_interval_ms = now - g_motion_sample_ms;
+  sample_interval_ms = constrain(sample_interval_ms, (uint32_t)60, (uint32_t)180);
+  g_progress_segment_duration_ms = constrain(
+    ((g_progress_segment_duration_ms * 3U) + sample_interval_ms) / 4U,
+    (uint32_t)70, (uint32_t)160);
+
+  g_progress_segment_start_frac = g_progress_display_frac;
+
+  // A verified encoder sample can dither by a count or two. While measured
+  // velocity has a clear direction, never animate a tiny opposite-direction
+  // correction. With no forward prediction this can only be telemetry jitter;
+  // when speed reaches zero the exact verified sample is allowed to settle.
+  if(g_speed_mps > 0.03f && next_frac < g_progress_segment_start_frac){
+    next_frac = g_progress_segment_start_frac;
+  } else if(g_speed_mps < -0.03f && next_frac > g_progress_segment_start_frac){
+    next_frac = g_progress_segment_start_frac;
+  }
+
+  g_motion_sample_frac = next_frac;
+  g_motion_sample_ms = now;
+  g_progress_segment_start_ms = now;
+  g_motion_sample_valid = true;
 }
 
 static void service_progress_marker_smooth(){
-  if(!current_marker || !g_motion_sample_valid || g_calibration_overlay_active) return;
+  if(!current_marker || !g_motion_sample_valid || !g_progress_display_valid || g_calibration_overlay_active) return;
   const uint32_t now = millis();
   if(g_progress_service_ms && (now - g_progress_service_ms) < 16) return;
   g_progress_service_ms = now;
 
-  float target = g_motion_sample_frac;
-  const float span = fabsf(g_far - g_near);
-  // HMM1 normally arrives about every 100 ms. Extrapolate no more than 180 ms
-  // from the latest verified sample, then hold until fresh telemetry arrives.
-  // Signed measured speed preserves direction; the prediction is presentation
-  // only and is continuously corrected by the next verified pos_frac sample.
-  const uint32_t age_ms = now - g_motion_sample_ms;
-  const float dt = min(age_ms, (uint32_t)180) / 1000.0f;
-  if(span > 0.001f && fabsf(g_motion_sample_speed_mps) > 0.001f){
-    target += (g_motion_sample_speed_mps / span) * dt;
-  }
-  target = constrain(target, 0.0f, 1.0f);
-
-  if(!g_progress_display_valid){
-    g_progress_display_frac = target;
-    g_progress_display_valid = true;
-  } else {
-    const float err = target - g_progress_display_frac;
-    if(fabsf(err) < 0.00015f) g_progress_display_frac = target;
-    else g_progress_display_frac += err * 0.45f;
-  }
+  const uint32_t duration = max((uint32_t)1, g_progress_segment_duration_ms);
+  const uint32_t elapsed = now - g_progress_segment_start_ms;
+  const float t = constrain(float(elapsed) / float(duration), 0.0f, 1.0f);
+  g_progress_display_frac = g_progress_segment_start_frac +
+                            (g_motion_sample_frac - g_progress_segment_start_frac) * t;
   set_progress_marker_fraction(g_progress_display_frac);
 }
 
@@ -1995,7 +2012,7 @@ static void apply_hmi_packet(const String &line){
     else g_status_level = 0;
   }
 
-  // v26.10.06.07: if SRVR sends explicit status/status_level, trust it as
+  // v26.10.06.08: if SRVR sends explicit status/status_level, trust it as
   // the authoritative display state. Do not override it locally with a CTRL
   // error just because the touchscreen/CTRL UART side saw a transient gap.
   if(status_packet){
@@ -2152,7 +2169,7 @@ static void apply_hmi_packet(const String &line){
   if(mode_changed || (prev_status_text != g_status_text) || (prev_status_level != g_status_level) || (prev_estop != g_estop_active) || (prev_estop_source != g_estop_source) || (prev_ctrl != g_ctrl_ok) || (prev_srvr != g_srvr_ok) || (prev_w1p != g_w1p_ok) || (prev_w1p_health != g_w1p_health)) {
     refresh_status_ui();
   }
-  // v26.10.06.07: no left-strip/full-screen invalidation on packets; progress marker animates locally.
+  // v26.10.06.08: no left-strip/full-screen invalidation on packets; progress marker animates locally.
 }
 
 
@@ -2161,7 +2178,7 @@ static void apply_layout_packet(const String &line){
   // on CTRL cannot overwrite the screen title/version or trigger header redraws.
   String hint = getField(line, "hint");
   if(lbl_title) set_label_text_if_changed(lbl_title, "HV P2P\nCTRL-TS");
-  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.06.07");
+  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.06.08");
   if(hint.length() && hint.startsWith("ERROR")) set_touch_debug(hint.c_str());
   // UIL1 is presentation-only. AUX assignment/value ownership belongs solely to
   // live SRVR HMI state, so an old layout persisted in CTRL NVS cannot overwrite
@@ -2690,7 +2707,7 @@ static void create_ui(){
   lv_obj_t *brand=make_panel(frame,SX,HEADER_Y,70,HEADER_H,C_BG,0x63d84e,7);
   lbl_title=make_label(brand,"HV P2P\nCTRL-TS",0,6,&lv_font_montserrat_12,lv_color_hex(C_FG),70);
   lv_obj_set_style_text_line_space(lbl_title,-2,0);
-  lbl_subtitle=make_label(frame,"v26.10.06.07",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
+  lbl_subtitle=make_label(frame,"v26.10.06.08",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
 
   pill_ctrl=make_panel(frame,255,HEADER_Y,126,HEADER_H,C_PANEL,C_BORDER,5);
   dot_ctrl=lv_obj_create(pill_ctrl); lv_obj_set_pos(dot_ctrl,9,15); lv_obj_set_size(dot_ctrl,8,8); lv_obj_set_style_radius(dot_ctrl,LV_RADIUS_CIRCLE,0); lv_obj_set_style_border_width(dot_ctrl,0,0); lv_obj_set_style_bg_color(dot_ctrl,lv_color_hex(0xef5757),0); lv_obj_clear_flag(dot_ctrl,LV_OBJ_FLAG_SCROLLABLE);
@@ -2900,7 +2917,7 @@ static void service_link_state(){
 
   bool link_alive = last_hmi_rx && ((millis() - last_hmi_rx) <= HMI_TIMEOUT_MS);
   if(!link_alive) {
-    // v26.10.06.07: local UART/display timeout is a CTRL-TS link warning, not
+    // v26.10.06.08: local UART/display timeout is a CTRL-TS link warning, not
     // proof of a real CTRL E-Stop. Keep the last SRVR-resolved status banner so
     // the touchscreen cannot randomly show "Status | E-Stop CTRL" while SRVR
     // remains "Status | Active". The CTRL status pill can still show ERROR.

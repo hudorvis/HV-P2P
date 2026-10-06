@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""v26.10.06.07 locked-scope regressions: calibration AUX confirmation + motion status."""
+"""v26.10.06.08 locked-scope regressions: calibration AUX confirmation + motion status."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.10.06.07'
+VER = '26.10.06.08'
 T = next((ROOT / f'HV_P2P_CTRL_TS_v{VER}').glob('*.ino')).read_text(encoding='utf-8')
 B = (ROOT / f'SRVR_GitHub_v{VER}' / 'backend.py').read_text(encoding='utf-8')
 
@@ -36,12 +36,13 @@ assert '(now_ms - g_selected_aux_ms)' not in confirm
 # 3) Canonical backend status is shared by SRVR + CTRL-TS. E-stop/service/
 # uncalibrated states retain priority, then Near/Far (within 1 m), then Ramping.
 assert 'LIMIT_STATUS_DISTANCE_M = 1.0' in B
-assert 'RAMP_STATUS_SPEED_EPS_MPS = 0.03' in B
 zone = B[B.index('    def _normal_motion_zone_status'):B.index('    def _resolved_system_status', B.index('    def _normal_motion_zone_status'))]
 for text in ('System | Near Limit', 'System | Far Limit', 'System | Ramping'):
     assert text in zone
-assert 'motion < 0.0' in zone and 'near_ramp > 0.0' in zone
-assert 'motion > 0.0' in zone and 'far_ramp > 0.0' in zone
+assert 'in_near_ramp' in zone and 'near_ramp > 0.0' in zone
+assert 'in_far_ramp' in zone and 'far_ramp > 0.0' in zone
+assert 'if in_near_ramp or in_far_ramp:' in zone
+assert 'motion < 0.0' not in zone and 'motion > 0.0' not in zone
 resolved = B[B.index('    def _resolved_system_status'):B.index('    def _set_ctrl_ts_gate_reason', B.index('    def _resolved_system_status'))]
 order = [resolved.index(x) for x in (
     'if self.state.estop_active:',

@@ -1,14 +1,12 @@
-# v26.10.06.07 — 2026-10-06
+# v26.10.06.08 — 2026-10-06
 
-- Locked `v26.10.06.06`; changes are restricted to automatic firmware-release recovery and CTRL-TS splash/connection arbitration.
-- Added a redundant `SRVR_FW` release announcement on CTRL's proven heartbeat return path so a missed standalone beacon cannot require a manual CTRL reboot.
-- Removed the optional SRVR firmware-session-token prerequisite from CTRL's bounded 12 s local CTRL-TS fallback after CTRL has exact authority verification and live SRVR presence.
-- CTRL-TS now clears a stale active CTRL firmware-progress row when post-reboot CTRL HELLO traffic proves the CTRL update transaction has ended, preventing a permanent `CTRL 100%` dashboard.
-- Firmware-screen release is now connection-aware and returns directly to Waiting when CTRL/SRVR is offline instead of briefly loading Home.
-- CTRL-TS POLL health hints are now the freshest SRVR-presence authority, preventing stale HMI packets from flashing Home after SRVR closes.
-- Added `test_firmware_splash_recovery_0607.py`; all historical updater/RS485/safe-update regressions, 370 EdgeBox checks, 53 build-pipeline checks and SRVR preflight pass.
-- W1P firmware and all motion/calibration/limit/Leadshine behavior remain unchanged apart from release identity.
-- macOS bundle metadata: short version `26.10.6`, build `2610.6.7`.
+- Locked `v26.10.06.07`; production changes are restricted to CTRL-TS progress-marker rendering and canonical SRVR Ramping-status presentation.
+- Replaced the `.06.07` speed-based forward predictor with verified sample-to-sample interpolation at the local 16 ms display-service cadence. This removes high-speed overshoot/back-correction while leaving numeric/authoritative position and all control calculations unchanged.
+- `System | Ramping` is now a physical ramp-zone state and remains yellow while stopped inside either configured end ramp. `Near Limit` / `Far Limit` keep priority inside their 1.0 m windows.
+- Audited W1P Encoder / Leadshine EL7-RS Modbus path end-to-end. No W1P production change was required; EdgeBox RS485 mapping, drive-register contract, feedback/configuration gates and independent 500 ms VEL watchdog remain unchanged.
+- Added `test_bench_regression_0608.py`; updated only historical assertions directly superseded by the requested no-prediction marker and stationary-Ramping semantics.
+- Full source suite passes: 370 EdgeBox checks, all historical updater/RS485/calibration/motion regressions, 53 build-pipeline checks, release/hygiene/Python syntax and SRVR preflight. Native firmware and frozen desktop builds remain GitHub Actions gates.
+- macOS bundle metadata: short version `26.10.6`, build `2610.6.8`.
 
 # v26.10.06.05 — 2026-10-06
 

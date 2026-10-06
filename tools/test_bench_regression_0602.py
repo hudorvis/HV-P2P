@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""v26.10.06.07 locked-scope bench regressions for the five requested fixes."""
+"""v26.10.06.08 locked-scope bench regressions for the five requested fixes."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.10.06.07'
+VER = '26.10.06.08'
 B = (ROOT / f'SRVR_GitHub_v{VER}' / 'backend.py').read_text(encoding='utf-8')
 M = (ROOT / f'SRVR_GitHub_v{VER}' / 'qml' / 'Main.qml').read_text(encoding='utf-8')
 S = (ROOT / f'SRVR_GitHub_v{VER}' / 'qml' / 'pages' / 'SetupPage.qml').read_text(encoding='utf-8')
@@ -60,21 +60,21 @@ assert choices.index('"None"') < choices.index('"Acceleration Mode"')
 for value in ('Acceleration Mode','Battery Change Mode','Drive Mode','Joystick Calibration','Limit Calibration','Winch Calibration'):
     assert f'"{value}"' in choices
 
-# 4) CTRL-TS progress marker is display-only locally interpolated at the ~50 Hz
-# loop, bounded to 180 ms from verified HMM1 position/speed samples. The numeric
-# Current Position remains g_pos (verified telemetry), not the predicted marker.
-for token in ('g_motion_sample_frac', 'g_motion_sample_speed_mps', 'g_progress_display_frac', 'g_motion_sample_ms'):
+# 4) CTRL-TS progress marker remains display-only and locally interpolated at
+# the LVGL service rate. The current implementation must not predict ahead of
+# verified HMM1 samples because that can overshoot and visibly correct backwards.
+for token in ('g_motion_sample_frac', 'g_progress_display_frac', 'g_progress_segment_start_frac', 'g_progress_segment_duration_ms'):
     assert token in T
 smooth = T[T.index('static void service_progress_marker_smooth()'):T.index('static void update_reference_marker()', T.index('static void service_progress_marker_smooth()'))]
-assert 'min(age_ms, (uint32_t)180)' in smooth
-assert '(g_motion_sample_speed_mps / span) * dt' in smooth
-assert 'g_progress_display_frac += err * 0.45f' in smooth
+assert 'g_progress_segment_start_frac +' in smooth
+assert 'g_motion_sample_frac - g_progress_segment_start_frac' in smooth
 assert 'set_progress_marker_fraction(g_progress_display_frac)' in smooth
+assert 'g_motion_sample_speed_mps' not in T
+assert 'min(age_ms, (uint32_t)180)' not in T
 loop = T[T.index('void loop()'):]
 assert 'service_progress_marker_smooth();' in loop
 apply = T[T.index('static void apply_hmi_packet'):T.index('static inline void rs485_slave_turnaround_guard', T.index('static void apply_hmi_packet'))]
 assert 's = String(g_pos, 2); set_label_text_if_changed(lbl_current_pos, s.c_str());' in apply
-assert 'g_motion_sample_frac = constrain(g_pos_frac' in T
-assert 'g_motion_sample_speed_mps = g_speed_mps' in T
+assert 'float next_frac = constrain(g_pos_frac' in T
 
 print('BENCH_REGRESSION_0602_PASS')

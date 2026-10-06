@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""v26.10.06.07 regression: redundant authority discovery + stable splash recovery."""
+"""v26.10.06.08 regression: redundant authority discovery + stable splash recovery."""
 from pathlib import Path
 import re
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.10.06.07'
+VER = '26.10.06.08'
 B = (ROOT/f'SRVR_GitHub_v{VER}'/'backend.py').read_text(encoding='utf-8')
 C = (ROOT/f'HV_P2P_CTRL_EDGEBOX_v{VER}'/f'HV_P2P_CTRL_EDGEBOX_v{VER}.ino').read_text(encoding='utf-8')
 T = (ROOT/f'HV_P2P_CTRL_TS_v{VER}'/f'HV_P2P_CTRL_TS_v{VER}.ino').read_text(encoding='utf-8')
