@@ -1,4 +1,4 @@
-# Arduino IDE Commissioning Settings — v26.10.06.02
+# Arduino IDE Commissioning Settings — v26.10.06.03
 
 GitHub Actions remains authoritative for release compilation. These settings are
 for initial/manual bench flashing only.
@@ -37,7 +37,7 @@ RS485.
 
 ## CTRL-TS library/build note
 
-v26.10.06.02 deliberately restores the pinned Waveshare display port's own RGB
+v26.10.06.03 deliberately restores the pinned Waveshare display port's own RGB
 configuration. The release build **does not** patch its 10-line RGB bounce buffer,
 does not change RGB PCLK at runtime during OTA and does not restart the RGB panel
 after firmware blocks. The only Waveshare source patch in CI is the narrow
@@ -72,7 +72,7 @@ release version, a matched CTRL can legitimately perform one automatic
 same-version update to install/verify the exact GitHub-staged image and SHA.
 
 During that exact-image synchronization the CTRL-TS display intentionally goes
-black in the headless flash phase. v26.10.06.02 relays the transfer percentage to
+black in the headless flash phase. v26.10.06.03 relays the transfer percentage to
 SRVR Setup so progress can be monitored there. After the verified reboot, the
 reported SHA should match CTRL's embedded required image and the repeat update
 should stop.

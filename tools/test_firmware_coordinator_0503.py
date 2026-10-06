@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.10.06.02'
+VER='26.10.06.03'
 B=(ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 C=(ROOT/f'HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino').read_text()
 
@@ -41,13 +41,16 @@ assert 'allow_modern_fallback=True' in svc
 assert 'self._fw_progress["ctrl"]["active"]' in svc and 'self._ctrl_fw_authority in ("updating", "rebooting")' in svc
 assert 'self._fw_progress["w1p"]["active"]' in svc and '"update_waiting_safe_idle"' in svc
 
-# CTRL must converge first. W1P update activity may briefly defer the display,
-# but stale/absent W1P state must never strand CTRL-TS indefinitely.
+# CTRL must converge first. W1P gets the ordered second stage and a bounded
+# recovery window, but a safe-idle deferral must not strand CTRL-TS forever.
 assert 'if not (self._ctrl_fw_match and self._ctrl_authority_fresh()):' in svc
 allow=B[B.index('def _ctrl_ts_update_allowed'):B.index('def _build_controller_display_packet')]
 assert '(now_wall - matched_since) >= 1.0' in allow
 assert 'self._fw_progress["w1p"]["active"]' in allow
-assert 'return not w1p_updating' in allow
+assert 'W1P_FINAL_STAGE_WAIT_S' in allow
+assert 'W1P_ACTIVE_UPDATE_WAIT_S' in allow
+assert '_ctrl_ts_grant_latched' in allow
+assert 'bounded W1P wait expired; W1P remains fail-closed' in allow
 assert 'if self.w1p.connected:\n            return False' not in allow
 
 print('FIRMWARE_COORDINATOR_0503_PASS')

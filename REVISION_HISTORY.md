@@ -1,3 +1,13 @@
+# v26.10.06.03 — 2026-10-06
+
+- Locked `v26.10.06.02` as baseline and changed only firmware update recovery/coordinator behavior.
+- Moved modern pull-fallback eligibility into the background SRVR communications worker so a missed CTRL/W1P pull no longer requires a manual device reboot or Qt timer progress.
+- Fresh stale-CTRL status now forces an immediate authority beacon retry.
+- Preserved CTRL -> W1P -> CTRL-TS preferred order, but bounded the W1P gate so a present W1P stuck waiting for safe idle cannot strand CTRL-TS forever; W1P remains fail-closed and keeps retrying independently.
+- Added monotonic final-stage CTRL-TS grant for the current SRVR release and `test_firmware_autoupdate_recovery_0603.py`.
+- Preserved all `.06.02` motion/UI fixes and all existing W1P/RS485/Leadshine safety timing.
+- macOS bundle metadata: short version `26.10.6`, build `2610.6.3`.
+
 # v26.10.06.02 — 2026-10-06
 
 - Locked `v26.10.06.01` as the production baseline; functional production edits are restricted to the five requested bench/UI items.

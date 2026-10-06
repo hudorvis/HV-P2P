@@ -51,6 +51,9 @@ VEL_REFRESH_LEASE_S = 0.22       # short producer lease; expiry stops refresh so
 VEL_REFRESH_AXIS_TOL = 0.035      # raw CTRL-axis coherence window for background lease renewal
 SRVR_ALIVE_INTERVAL_S = 0.25      # process/transport liveness independent of Qt window focus
 FIRMWARE_BEACON_INTERVAL_S = 0.50  # release discovery/order must also be independent of the Qt event loop
+FIRMWARE_RECOVERY_INTERVAL_S = 0.25 # bounded pull-fallback evaluation must also be independent of Qt
+W1P_FINAL_STAGE_WAIT_S = 30.0       # after ordered W1P attempt, do not strand CTRL-TS forever on safe-idle deferral
+W1P_ACTIVE_UPDATE_WAIT_S = 120.0    # preserve CTRL -> W1P -> CTRL-TS while W1P is actually flashing/rebooting
 
 # Automatic centre-drift compensation is deliberately conservative. It is a
 # runtime trim only: calibration endpoints and the saved Centre capture are never
@@ -396,7 +399,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.06.02", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.06.03", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -412,7 +415,7 @@ class HVP2PBackend(QObject):
         self._fw_modern_fallback_delay_s = 2.5
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.06.02+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.06.03+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -428,6 +431,14 @@ class HVP2PBackend(QObject):
         # healthy present node but still keeps a genuinely absent W1P bounded.
         self._w1p_fw_discovery_grace_s = 3.0
         self._w1p_fw_order_absent_timeout_s = 15.0
+        # Final CTRL-TS grant is monotonic for this SRVR release once the ordered
+        # preceding stages have either converged or exhausted their bounded
+        # recovery window. A present W1P that cannot prove safe idle must not
+        # strand the independent touchscreen update forever. Motion remains
+        # fail-closed until W1P itself later converges.
+        self._ctrl_ts_grant_latched = False
+        self._ctrl_ts_gate_reason = "waiting_ctrl"
+        self._ctrl_ts_gate_log_reason = ""
         self.started = time.time()
         # A short per-process authority session token is advertised to CTRL/W1P on
         # their existing real-time links. A new SRVR process therefore causes one
@@ -856,6 +867,7 @@ class HVP2PBackend(QObject):
     def _srvr_alive_worker(self):
         next_alive = 0.0
         next_fw = 0.0
+        next_recovery = 0.0
         while not self._stop_evt.is_set():
             now = time.monotonic()
             if now >= next_alive:
@@ -877,6 +889,17 @@ class HVP2PBackend(QObject):
                 next_fw = now + FIRMWARE_BEACON_INTERVAL_S
                 self._send_ctrl_firmware_beacon(force=True)
                 self._send_w1p_firmware_beacon(force=True)
+
+            # The primary modern path is node-pull after SRVR_FW. Recovery from a
+            # lost/missed pull used to be evaluated only by the Qt timer, which
+            # meant a field node could remain stale until a manual reboot. Keep
+            # the existing HTTP push fallback, but evaluate its eligibility from
+            # this communications worker as well. The upload itself already runs
+            # on its own daemon thread and each ESP32 re-proves a safe service
+            # state before accepting flash writes.
+            if now >= next_recovery and not self._stop_evt.is_set():
+                next_recovery = now + FIRMWARE_RECOVERY_INTERVAL_S
+                self._service_firmware_recovery_background()
 
             self._stop_evt.wait(0.05)
 
@@ -1148,6 +1171,13 @@ class HVP2PBackend(QObject):
                 self._ctrl_ts_diag_last_log_at = now
         self._ads1115_status_last_seen = now
         self._ads1115_connected_reported = str(fields.get("ads", fields.get("ads1115", "0"))).strip() == "1"
+
+        # Any proven stale CTRL gets an immediate authority beacon from the RX
+        # thread as well as the periodic background beacon. This closes the
+        # window where a node can look connected yet wait for a reboot before it
+        # notices a new SRVR release. No HTTP/flash work occurs in this RX path.
+        if (not self._ctrl_fw_match) and self._firmware_version_is_older(self._ctrl_fw_version):
+            self._send_ctrl_firmware_beacon(force=True)
 
         # A legacy CTRL can be alive and reporting its old version before the
         # normal UI timer has had a chance to service the compatibility bridge.
@@ -2377,23 +2407,41 @@ class HVP2PBackend(QObject):
             return "System | Uncalibrated", "yellow", "", 0
         return "System | Active", "green", "", 0
 
-    def _ctrl_ts_update_allowed(self) -> bool:
-        """Grant CTRL-TS only after preceding firmware stages have converged.
+    def _set_ctrl_ts_gate_reason(self, reason: str) -> None:
+        reason = str(reason or "waiting").strip() or "waiting"
+        self._ctrl_ts_gate_reason = reason
+        if reason != self._ctrl_ts_gate_log_reason:
+            self._ctrl_ts_gate_log_reason = reason
+            self._log(f"[FW COORD] CTRL-TS gate: {reason}")
 
-        CTRL must always converge first. If W1P is actually present for this
-        update session, its network-thread firmware snapshot must also report the
-        current release and an exact authority match before CTRL-TS may start.
-        This ordering no longer depends on Qt draining the W1P receive queue.
-        A W1P that was never present does not block the display; if a participating
-        W1P disappears entirely, a bounded 15 s absence timeout prevents a dead
-        unit from stranding the touchscreen forever.
+    def _grant_ctrl_ts_update(self, reason: str) -> bool:
+        if not self._ctrl_ts_grant_latched:
+            self._ctrl_ts_grant_latched = True
+            self._log(f"[FW COORD] CTRL-TS final stage granted: {reason}")
+        self._ctrl_ts_gate_reason = "granted"
+        return True
+
+    def _ctrl_ts_update_allowed(self) -> bool:
+        """Grant CTRL-TS after ordered firmware convergence with bounded recovery.
+
+        CTRL must always converge first. W1P is then given the normal pull path,
+        the modern HTTP fallback path, and a generous ordered wait. If a present
+        W1P cannot enter safe idle, the independent CTRL-TS update is eventually
+        released rather than remaining at Waiting forever; W1P stays fail-closed
+        and continues retrying its own authority update. Once granted, the final
+        stage is monotonic for this SRVR release, although a temporarily stale
+        CTRL still suppresses the grant until CTRL authority is fresh again.
         """
         now_wall = time.time()
         if not (self._ctrl_fw_match and self._ctrl_authority_fresh()):
+            self._set_ctrl_ts_gate_reason("waiting for CTRL authority")
             return False
         matched_since = float(self._ctrl_fw_match_since or 0.0)
         if not (matched_since and (now_wall - matched_since) >= 1.0):
+            self._set_ctrl_ts_gate_reason("confirming CTRL")
             return False
+        if self._ctrl_ts_grant_latched:
+            return True
 
         w1p_version, w1p_match, w1p_authority, snapshot_at = self.w1p.firmware_snapshot()
         w1p_present = bool(self.w1p.connected)
@@ -2401,38 +2449,52 @@ class HVP2PBackend(QObject):
         now_mono = time.monotonic()
         snapshot_fresh = bool(snapshot_at and (now_mono - float(snapshot_at)) <= (WINCH_STATUS_TIMEOUT_S * 2.0))
 
-        # Normal update ordering is CTRL -> W1P -> CTRL-TS. A healthy W1P is
-        # probed every 250 ms, so give it an explicit discovery grace after CTRL
-        # matches instead of allowing CTRL-TS merely because the very first W1P
-        # STATUS has not arrived yet. Virtual/bench operation with no W1P still
-        # proceeds automatically after this bounded grace.
         if not w1p_present and not snapshot_fresh and (now_wall - matched_since) < self._w1p_fw_discovery_grace_s:
-            return False
-
-        if (w1p_present or snapshot_fresh) and not w1p_current:
-            if not self._w1p_fw_order_pending:
-                self._w1p_fw_order_pending = True
-                self._w1p_fw_order_pending_since = now_mono
+            self._set_ctrl_ts_gate_reason("discovering W1P")
             return False
 
         if w1p_present and w1p_current:
             self._w1p_fw_order_pending = False
             self._w1p_fw_order_pending_since = 0.0
-        elif self._w1p_fw_order_pending:
-            # Preserve ordering across the normal W1P OTA reboot. If it never
-            # returns, eventually treat it as absent so CTRL-TS is not stranded.
+            return self._grant_ctrl_ts_update("CTRL and W1P verified")
+
+        if (w1p_present or snapshot_fresh) and not w1p_current:
+            if not self._w1p_fw_order_pending:
+                self._w1p_fw_order_pending = True
+                self._w1p_fw_order_pending_since = now_mono
+            since = float(self._w1p_fw_order_pending_since or now_mono)
+            wait_age = max(0.0, now_mono - since)
+            authority = str(w1p_authority or self._w1p_fw_authority or "unknown").strip().lower()
+            actively_flashing = bool(
+                self._fw_progress["w1p"]["active"]
+                or authority in ("updating", "rebooting")
+                or self._w1p_fw_authority in ("updating", "rebooting")
+            )
+            if actively_flashing and wait_age < W1P_ACTIVE_UPDATE_WAIT_S:
+                self._set_ctrl_ts_gate_reason("waiting for W1P update")
+                return False
+            if (not actively_flashing) and wait_age < W1P_FINAL_STAGE_WAIT_S:
+                if authority == "update_waiting_safe_idle" or self._w1p_fw_authority == "update_waiting_safe_idle":
+                    self._set_ctrl_ts_gate_reason("W1P waiting for safe idle")
+                else:
+                    self._set_ctrl_ts_gate_reason("waiting for W1P authority")
+                return False
+
+            # W1P remains a firmware/safety mismatch and therefore cannot enable
+            # motion. Allow only the independent HMI final stage to proceed; the
+            # W1P beacons/fallback worker continue until W1P itself converges.
+            return self._grant_ctrl_ts_update("bounded W1P wait expired; W1P remains fail-closed")
+
+        if self._w1p_fw_order_pending:
             since = float(self._w1p_fw_order_pending_since or now_mono)
             if (now_mono - since) < self._w1p_fw_order_absent_timeout_s:
+                self._set_ctrl_ts_gate_reason("waiting for W1P reboot")
                 return False
             self._w1p_fw_order_pending = False
             self._w1p_fw_order_pending_since = 0.0
+            return self._grant_ctrl_ts_update("W1P absent after ordered reboot window")
 
-        w1p_updating = bool(
-            self._fw_progress["w1p"]["active"]
-            or self._w1p_fw_authority in ("updating", "rebooting", "update_waiting_safe_idle")
-            or str(w1p_authority or "") in ("updating", "rebooting", "update_waiting_safe_idle")
-        )
-        return not w1p_updating
+        return self._grant_ctrl_ts_update("W1P not present")
 
     def _limit_calibration_display_position(self) -> float:
         """Return the operator-facing Limit Calibration coordinate.
@@ -2781,6 +2843,54 @@ class HVP2PBackend(QObject):
             name=f"HVP2P-{role.upper()}-LegacyOTA", daemon=True,
         ).start()
         return True
+
+    def _service_firmware_recovery_background(self) -> None:
+        """Background-safe recovery when a modern node misses its pull update.
+
+        This deliberately performs no GUI work and no direct motor decision. It
+        only starts the already-existing asynchronous verified HTTP push after
+        the same bounded mismatch grace used by the Qt path. W1P receives a STOP
+        request and its VEL bridge is cleared before a fallback attempt; W1P's
+        own web updater still refuses flash unless it independently proves the
+        stopped/braked service state.
+        """
+        if self.smoke_test or self._firmware_bundle is None or self._stop_evt.is_set():
+            return
+        now_wall = time.time()
+
+        ctrl_present = bool(self._ctrl_connected() or self._ctrl_authority_fresh())
+        ctrl_version = str(self._ctrl_fw_version or "").strip()
+        if ctrl_present and self._firmware_version_is_older(ctrl_version):
+            if not self._fw_mismatch_since.get("ctrl", 0.0):
+                self._fw_mismatch_since["ctrl"] = now_wall
+            mismatch_since = float(self._fw_mismatch_since.get("ctrl", 0.0) or 0.0)
+            pull_active = bool(self._fw_progress["ctrl"]["active"] or self._ctrl_fw_authority in ("updating", "rebooting"))
+            if mismatch_since and (now_wall - mismatch_since) >= self._fw_modern_fallback_delay_s and not pull_active:
+                self._try_start_legacy_firmware_push(
+                    "ctrl", str(self.ctrl_ip or "").strip(), ctrl_version, True, allow_modern_fallback=True
+                )
+                return
+
+        if not (self._ctrl_fw_match and self._ctrl_authority_fresh()):
+            return
+        w1p_version, w1p_match, w1p_authority, snapshot_at = self.w1p.firmware_snapshot()
+        w1p_present = bool(self.w1p.connected)
+        if not w1p_present or not self._firmware_version_is_older(w1p_version):
+            return
+        if not self._fw_mismatch_since.get("w1p", 0.0):
+            self._fw_mismatch_since["w1p"] = now_wall
+        mismatch_since = float(self._fw_mismatch_since.get("w1p", 0.0) or 0.0)
+        authority = str(w1p_authority or self._w1p_fw_authority or "").strip().lower()
+        pull_active = bool(self._fw_progress["w1p"]["active"] or authority in ("updating", "rebooting", "update_waiting_safe_idle"))
+        if mismatch_since and (now_wall - mismatch_since) >= self._fw_modern_fallback_delay_s and not pull_active:
+            try:
+                self.w1p.clear_velocity_refresh()
+                self.w1p.send("STOP")
+            except Exception:
+                pass
+            self._try_start_legacy_firmware_push(
+                "w1p", str(self.w1p_ip or "").strip(), str(w1p_version or "").strip(), True, allow_modern_fallback=True
+            )
 
     def _service_legacy_firmware_push(self) -> None:
         """Bridge old matched firmware directly to the current SRVR release.
@@ -3806,7 +3916,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.06.02 moves the installed joystick polarity correction into CTRL,
+        # v26.10.06.03 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same

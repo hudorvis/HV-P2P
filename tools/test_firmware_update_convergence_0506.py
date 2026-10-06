@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.10.06.02'
+VER='26.10.06.03'
 B=(ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 C=(ROOT/f'HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino').read_text()
 Q=(ROOT/f'SRVR_GitHub_v{VER}/qml/pages/SetupPage.qml').read_text()
@@ -17,7 +17,10 @@ assert 'allow_modern_fallback=True' in svc
 allow=B[B.index('def _ctrl_ts_update_allowed'):B.index('def _build_controller_display_packet')]
 assert 'self._ctrl_fw_match and self._ctrl_authority_fresh()' in allow
 assert '(now_wall - matched_since) >= 1.0' in allow
-assert 'return not w1p_updating' in allow
+assert 'W1P_FINAL_STAGE_WAIT_S' in allow
+assert 'W1P_ACTIVE_UPDATE_WAIT_S' in allow
+assert 'bounded W1P wait expired; W1P remains fail-closed' in allow
+assert '_ctrl_ts_grant_latched' in allow
 assert 'if self.w1p.connected:' not in allow
 
 # Once the old CTRL-TS accepts the first FW_BEGIN and asks for the safe reboot,
