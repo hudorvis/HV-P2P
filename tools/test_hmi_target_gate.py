@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 REQUIRED_HW = "WS-ESP32S3-7"
 REQUIRED_PROTO = 1
-REQUIRED_VERSION = "v26.10.06.06"
+REQUIRED_VERSION = "v26.10.06.07"
 REQUIRED_SHA = "a" * 64
 
 @dataclass(frozen=True)
@@ -32,7 +32,7 @@ def identity_ok(p: Peer, image_available: bool = True) -> bool:
 
 
 def should_auto_update(p: Peer, image_available: bool = True) -> bool:
-    # v26.10.06.06+ capability is mandatory. Pre-.03 receivers can speak the
+    # v26.10.06.07+ capability is mandatory. Pre-.03 receivers can speak the
     # transport protocol but self-program flash while their RGB/PSRAM display is
     # active, so the carrier must require a one-time USB bootstrap instead.
     return transport_ok(p) and p.safe_ota >= 2 and image_available and not identity_ok(p, image_available)
@@ -70,7 +70,7 @@ def receiver_accepts_begin(hw: str, proto: int, version: str) -> bool:
     return hw == REQUIRED_HW and proto == REQUIRED_PROTO and cand is not None and cand >= running
 
 assert receiver_accepts_begin(REQUIRED_HW, 1, REQUIRED_VERSION)
-assert receiver_accepts_begin(REQUIRED_HW, 1, "v26.10.06.06")
+assert receiver_accepts_begin(REQUIRED_HW, 1, "v26.10.06.07")
 assert not receiver_accepts_begin(REQUIRED_HW, 1, "v26.10.02.02")
 assert not receiver_accepts_begin("OTHER-BOARD", 1, REQUIRED_VERSION)
 assert not receiver_accepts_begin(REQUIRED_HW, 2, REQUIRED_VERSION)

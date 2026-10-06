@@ -1,12 +1,14 @@
-# v26.10.06.06 — 2026-10-06
+# v26.10.06.07 — 2026-10-06
 
-- CI/runtime-test fixture hotfix built from locked `v26.10.06.05`; no intentional production behavior change apart from release identity.
-- Fixed the macOS PySide `tools.test_backend_logic` failure introduced when `.06.05` added valid yellow Near Limit / Far Limit / Ramping states: the first `System | Active` assertion now explicitly creates a healthy stationary mid-span fixture instead of inheriting position/velocity state from earlier tests.
-- Kept the Active assertion strict (`systemStatusLevel == 0`, `systemReady`, exact `System | Active`) rather than weakening the new status behavior.
-- Added `test_backend_status_fixture_contract_0606.py` to the source runner so the PySide fixture reset is verified even when PySide6 is unavailable locally.
-- Normalized production diff confirms CTRL, W1P, CTRL-TS, SRVR backend, QML and firmware-authority logic are unchanged from `.06.05` apart from release identity.
-- Preserved all `.06.05` confirmation/status changes and `.06.04` automatic-update recovery.
-- macOS bundle metadata: short version `26.10.6`, build `2610.6.6`.
+- Locked `v26.10.06.06`; changes are restricted to automatic firmware-release recovery and CTRL-TS splash/connection arbitration.
+- Added a redundant `SRVR_FW` release announcement on CTRL's proven heartbeat return path so a missed standalone beacon cannot require a manual CTRL reboot.
+- Removed the optional SRVR firmware-session-token prerequisite from CTRL's bounded 12 s local CTRL-TS fallback after CTRL has exact authority verification and live SRVR presence.
+- CTRL-TS now clears a stale active CTRL firmware-progress row when post-reboot CTRL HELLO traffic proves the CTRL update transaction has ended, preventing a permanent `CTRL 100%` dashboard.
+- Firmware-screen release is now connection-aware and returns directly to Waiting when CTRL/SRVR is offline instead of briefly loading Home.
+- CTRL-TS POLL health hints are now the freshest SRVR-presence authority, preventing stale HMI packets from flashing Home after SRVR closes.
+- Added `test_firmware_splash_recovery_0607.py`; all historical updater/RS485/safe-update regressions, 370 EdgeBox checks, 53 build-pipeline checks and SRVR preflight pass.
+- W1P firmware and all motion/calibration/limit/Leadshine behavior remain unchanged apart from release identity.
+- macOS bundle metadata: short version `26.10.6`, build `2610.6.7`.
 
 # v26.10.06.05 — 2026-10-06
 

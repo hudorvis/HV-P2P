@@ -2,7 +2,7 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.10.06.06'
+VER = '26.10.06.07'
 B = (ROOT / f'SRVR_GitHub_v{VER}' / 'backend.py').read_text()
 M = (ROOT / f'SRVR_GitHub_v{VER}' / 'qml' / 'Main.qml').read_text()
 S = (ROOT / f'SRVR_GitHub_v{VER}' / 'qml' / 'pages' / 'SetupPage.qml').read_text()

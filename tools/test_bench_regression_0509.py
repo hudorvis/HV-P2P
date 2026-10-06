@@ -3,7 +3,7 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.10.06.06'
+VER = '26.10.06.07'
 B = (ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 Q = (ROOT/f'SRVR_GitHub_v{VER}/qml/pages/SetupPage.qml').read_text()
 C = (ROOT/f'HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino').read_text()
