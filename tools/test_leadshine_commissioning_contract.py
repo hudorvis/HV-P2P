@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-W=(ROOT/'HV_P2P_W1P_EDGEBOX_v26.10.06.03/HV_P2P_W1P_EDGEBOX_v26.10.06.03.ino').read_text()
+W=(ROOT/'HV_P2P_W1P_EDGEBOX_v26.10.06.04/HV_P2P_W1P_EDGEBOX_v26.10.06.04.ino').read_text()
 for tok in ('RS485_BAUD = 115200','DRIVE_MODBUS_ID = 1','SERIAL_8N1','MODBUS_INTERFRAME_GAP_US = 2000','W1P_VEL_COMMAND_TIMEOUT_MS = 500'):
     assert tok in W,tok
 for tok in ('EXPECTED_RS485_MODE = 4','EXPECTED_RS485_BAUD_CODE = 6','EXPECTED_RS485_ADDRESS = 1'):

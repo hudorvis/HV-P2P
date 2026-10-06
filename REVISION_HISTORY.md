@@ -1,12 +1,14 @@
-# v26.10.06.03 — 2026-10-06
+# v26.10.06.04 — 2026-10-06
 
-- Locked `v26.10.06.02` as baseline and changed only firmware update recovery/coordinator behavior.
-- Moved modern pull-fallback eligibility into the background SRVR communications worker so a missed CTRL/W1P pull no longer requires a manual device reboot or Qt timer progress.
-- Fresh stale-CTRL status now forces an immediate authority beacon retry.
-- Preserved CTRL -> W1P -> CTRL-TS preferred order, but bounded the W1P gate so a present W1P stuck waiting for safe idle cannot strand CTRL-TS forever; W1P remains fail-closed and keeps retrying independently.
-- Added monotonic final-stage CTRL-TS grant for the current SRVR release and `test_firmware_autoupdate_recovery_0603.py`.
-- Preserved all `.06.02` motion/UI fixes and all existing W1P/RS485/Leadshine safety timing.
-- macOS bundle metadata: short version `26.10.6`, build `2610.6.3`.
+- Locked `v26.10.06.03` and changed only automatic firmware-update recovery/diagnostics plus release identity.
+- Decoupled CTRL release discovery from later W1P/CTRL-TS coordinator evaluation so stage-1 `SRVR_FW` is always sent; coordinator errors fail closed with `ts_allowed=0` rather than suppressing the CTRL release beacon.
+- Added exception containment around recurring firmware beacon/recovery and CTRL HMI-status handling so one coordinator error cannot silently kill automatic release discovery.
+- Reduced the bounded W1P non-flashing final-stage wait to 8 s and active-update wait to 60 s while preserving preferred CTRL -> W1P -> CTRL-TS ordering.
+- Added a 12 s CTRL-local recovery for a repeatedly identified, approved `safe_ota>=2` mismatched CTRL-TS after CTRL itself is exact/matched; this prevents a lost/stuck final-stage grant from requiring manual reboots.
+- Split physical CTRL↔CTRL-TS RS485 activity from firmware compatibility in SRVR Setup; a live older touchscreen now shows RS485/Link Active while its firmware remains mismatched/update-required.
+- Added `test_firmware_rs485_recovery_0604.py`; full historical source suite, 370 EdgeBox checks, 53 build-pipeline checks and SRVR preflight pass.
+- Preserved all `.06.02` motion/UI fixes and W1P 500 ms watchdog / ~150 ms normal SRVR VEL refresh.
+- macOS bundle metadata: short version `26.10.6`, build `2610.6.4`.
 
 # v26.10.06.02 — 2026-10-06
 

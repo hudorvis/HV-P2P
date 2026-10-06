@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.10.06.03'
+VER='26.10.06.04'
 B=(ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 C=(ROOT/f'HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino').read_text()
 Q=(ROOT/f'SRVR_GitHub_v{VER}/qml/pages/SetupPage.qml').read_text()
@@ -27,10 +27,11 @@ assert 'if self.w1p.connected:' not in allow
 # CTRL must carry that authorization across the display-off/headless transition.
 assert 'static bool g_hmiSafeUpdateContinuation = false;' in C
 assert 'g_hmiSafeUpdateContinuation = true;' in C[C.index('fw_safe_reboot_retry')-700:C.index('fw_safe_reboot_retry')+900]
-start=C[C.index('static void hmiFwStart()'):C.index('static bool hmiFwHandleFrame')]
+start=C[C.index('static void hmiFwStart(bool coordinatorFallback=false)'):C.index('static bool hmiFwHandleFrame')]
 assert 'coordinatorGrant' in start and 'g_hmiSafeUpdateContinuation' in start
 rx=C[C.index('static void handleHmiRx()'):C.index('static bool initEthernetStatic')]
-assert 'g_hmiSafeUpdateContinuation || (g_hmiTsCoordinatorSeen && g_hmiTsUpdateAllowed)' in rx
+assert 'g_hmiSafeUpdateContinuation || coordinatorGrant || coordinatorFallback' in rx
+assert 'HMI_COORDINATOR_FALLBACK_MS' in rx
 assert 'g_hmiSafeUpdateContinuation = false;' in C[C.index('static bool applySrvrFirmwareBeacon'):C.index('static String buildHmiStatePacketFromSrvr')]
 
 # Older safe_ota=2 receivers rely on CTRL's final REBOOT frame. Retry it much

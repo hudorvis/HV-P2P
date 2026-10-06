@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.10.06.03'
+VER='26.10.06.04'
 B=(ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 C=(ROOT/f'HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino').read_text()
 
 # The final-stage CTRL-TS grant must ride the lightweight release beacon, not
 # depend on a coincident bulk DSP1 packet.
 beacon=B[B.index('def _send_ctrl_firmware_beacon'):B.index('def _send_w1p_firmware_beacon')]
-assert 'ts_allowed={1 if self._ctrl_ts_update_allowed() else 0}' in beacon
+assert 'ts_allowed={1 if self._ctrl_ts_update_allowed_safe() else 0}' in beacon
 apply=C[C.index('static bool applySrvrFirmwareBeacon'):C.index('static String buildHmiStatePacketFromSrvr')]
 assert 'hvGetPipeField(line, "ts_allowed")' in apply
 assert 'hvGetPipeField(line, "fw_ts_allowed")' in apply
 assert 'g_hmiTsCoordinatorSeen = true;' in apply
 assert 'g_hmiTsUpdateAllowed = (tsGrant == "1");' in apply
-start=C[C.index('static void hmiFwStart()'):C.index('static bool hmiFwHandleFrame')]
+start=C[C.index('static void hmiFwStart(bool coordinatorFallback=false)'):C.index('static bool hmiFwHandleFrame')]
 assert 'g_hmiTsCoordinatorSeen' in start and 'g_hmiTsUpdateAllowed' in start
 assert 'g_latestDisplayPacket' not in start
 
@@ -24,7 +24,7 @@ assert 'g_latestDisplayPacket' not in start
 rx=C[C.index('static void handleHmiRx()'):C.index('static bool initEthernetStatic')]
 for tok in ('freshIdentity', 'g_hmiIdentitySeenMs', 'g_hmiTsCoordinatorSeen',
             'g_hmiTsUpdateAllowed', '!hmiIdentityMatches()', 'hmiTransportCompatible()',
-            'g_hmiSafeOtaCapable', 'hmiFwStart();'):
+            'g_hmiSafeOtaCapable', 'hmiFwStart(coordinatorFallback);'):
     assert tok in rx, tok
 assert '|ts_grant=' in C
 

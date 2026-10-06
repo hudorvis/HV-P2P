@@ -52,8 +52,8 @@ VEL_REFRESH_AXIS_TOL = 0.035      # raw CTRL-axis coherence window for backgroun
 SRVR_ALIVE_INTERVAL_S = 0.25      # process/transport liveness independent of Qt window focus
 FIRMWARE_BEACON_INTERVAL_S = 0.50  # release discovery/order must also be independent of the Qt event loop
 FIRMWARE_RECOVERY_INTERVAL_S = 0.25 # bounded pull-fallback evaluation must also be independent of Qt
-W1P_FINAL_STAGE_WAIT_S = 30.0       # after ordered W1P attempt, do not strand CTRL-TS forever on safe-idle deferral
-W1P_ACTIVE_UPDATE_WAIT_S = 120.0    # preserve CTRL -> W1P -> CTRL-TS while W1P is actually flashing/rebooting
+W1P_FINAL_STAGE_WAIT_S = 8.0        # short ordered W1P safe-idle attempt; CTRL-TS must not remain stranded
+W1P_ACTIVE_UPDATE_WAIT_S = 60.0     # preserve CTRL -> W1P -> CTRL-TS while W1P is genuinely making update progress
 
 # Automatic centre-drift compensation is deliberately conservative. It is a
 # runtime trim only: calibration endpoints and the saved Centre capture are never
@@ -399,7 +399,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.06.03", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.06.04", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -415,7 +415,7 @@ class HVP2PBackend(QObject):
         self._fw_modern_fallback_delay_s = 2.5
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.06.03+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.06.04+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -574,6 +574,10 @@ class HVP2PBackend(QObject):
         self._ctrl_ts_image_available = False
         self._ctrl_ts_compatible_reported = False
         self._ctrl_ts_age_ms = 999999
+        # Physical RS485 activity is distinct from firmware compatibility. An old
+        # CTRL-TS can exchange HELLO/update frames while ctrl_ts=0 by design.
+        self._ctrl_ts_rs485_alive_reported = False
+        self._ctrl_ts_grant_reported = -1
         self._ctrl_ts_poll_timeouts = 0
         self._ctrl_ts_events_rejected = 0
         self._ctrl_ts_queue_drops = 0
@@ -887,8 +891,14 @@ class HVP2PBackend(QObject):
             # prerequisite for automatic firmware convergence.
             if now >= next_fw and not self._stop_evt.is_set():
                 next_fw = now + FIRMWARE_BEACON_INTERVAL_S
-                self._send_ctrl_firmware_beacon(force=True)
-                self._send_w1p_firmware_beacon(force=True)
+                try:
+                    self._send_ctrl_firmware_beacon(force=True)
+                except Exception as exc:
+                    self._log(f"[FW COORD] CTRL beacon worker recovered from error: {exc}")
+                try:
+                    self._send_w1p_firmware_beacon(force=True)
+                except Exception as exc:
+                    self._log(f"[FW COORD] W1P beacon worker recovered from error: {exc}")
 
             # The primary modern path is node-pull after SRVR_FW. Recovery from a
             # lost/missed pull used to be evaluated only by the Qt timer, which
@@ -899,7 +909,10 @@ class HVP2PBackend(QObject):
             # state before accepting flash writes.
             if now >= next_recovery and not self._stop_evt.is_set():
                 next_recovery = now + FIRMWARE_RECOVERY_INTERVAL_S
-                self._service_firmware_recovery_background()
+                try:
+                    self._service_firmware_recovery_background()
+                except Exception as exc:
+                    self._log(f"[FW COORD] recovery worker recovered from error: {exc}")
 
             self._stop_evt.wait(0.05)
 
@@ -927,7 +940,10 @@ class HVP2PBackend(QObject):
             except Exception:
                 line_text = ""
             if line_text.startswith("HMI_STATUS|"):
-                self._handle_ctrl_hmi_status(line_text)
+                try:
+                    self._handle_ctrl_hmi_status(line_text)
+                except Exception as exc:
+                    self._log(f"[CTRL] HMI_STATUS handler recovered from error: {exc}")
                 continue
             if line_text.startswith("FW_PROGRESS|"):
                 fields = self._parse_pipe_fields(line_text)
@@ -1131,6 +1147,14 @@ class HVP2PBackend(QObject):
             self._ctrl_ts_age_ms = int(float(fields.get("age_ms", 999999)))
         except Exception:
             self._ctrl_ts_age_ms = 999999
+        self._ctrl_ts_rs485_alive_reported = bool(0 <= self._ctrl_ts_age_ms <= int(HMI_STATUS_TIMEOUT_S * 1000.0))
+        try:
+            new_grant = int(float(fields.get("ts_grant", self._ctrl_ts_grant_reported)))
+        except Exception:
+            new_grant = self._ctrl_ts_grant_reported
+        if new_grant != self._ctrl_ts_grant_reported:
+            self._ctrl_ts_grant_reported = new_grant
+            self._log(f"[FW COORD] CTRL reports CTRL-TS grant={new_grant} fw_state={self._ctrl_ts_fw_state or 'idle'} version={self._ctrl_ts_version or 'unknown'}")
         # RS485 diagnostics are cumulative monotonic counters. Never reset the
         # stored baseline after parsing them: doing so makes every non-zero value
         # look "new" on every 250 ms report and creates an unbounded Qt log storm.
@@ -2496,6 +2520,20 @@ class HVP2PBackend(QObject):
 
         return self._grant_ctrl_ts_update("W1P not present")
 
+    def _ctrl_ts_update_allowed_safe(self) -> bool:
+        """Fail-safe wrapper so later-stage coordinator faults can never block CTRL release discovery."""
+        try:
+            return bool(self._ctrl_ts_update_allowed())
+        except Exception as exc:
+            # CTRL is stage 1 and must still hear the release. Later stages remain
+            # fail-closed until the coordinator recovers. Rate-limit identical logs.
+            now = time.monotonic()
+            last = float(getattr(self, "_ctrl_ts_gate_exception_log_at", 0.0) or 0.0)
+            if not last or (now - last) >= 5.0:
+                self._ctrl_ts_gate_exception_log_at = now
+                self._log(f"[FW COORD] CTRL-TS gate error; keeping final stage closed: {exc}")
+            return False
+
     def _limit_calibration_display_position(self) -> float:
         """Return the operator-facing Limit Calibration coordinate.
 
@@ -2635,7 +2673,7 @@ class HVP2PBackend(QObject):
             # CTRL-TS is deliberately last. If W1P is physically absent it does
             # not block the display update; if present, it must first report the
             # current SRVR firmware release.
-            f"fw_ts_allowed={1 if self._ctrl_ts_update_allowed() else 0}",
+            f"fw_ts_allowed={1 if self._ctrl_ts_update_allowed_safe() else 0}",
             f"w1p={1 if w1p_ok else 0}", f"w1p_state={w1p_state}",
             f"service={1 if self._service_override_active() else 0}", f"flags={int(self._ctrl_flags)}",
             f"cal_active={1 if cal_active else 0}", f"cal_kind={self._display_field(cal_kind, 16)}",
@@ -2707,7 +2745,7 @@ class HVP2PBackend(QObject):
         packet = (
             f"SRVR_FW|version={self._current_firmware_version()}|"
             f"session={self._firmware_authority_session}|"
-            f"ts_allowed={1 if self._ctrl_ts_update_allowed() else 0}\n"
+            f"ts_allowed={1 if self._ctrl_ts_update_allowed_safe() else 0}\n"
         ).encode("ascii", "ignore")
         try:
             with self._ctrl_presence_tx_lock:
@@ -3916,7 +3954,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.06.03 moves the installed joystick polarity correction into CTRL,
+        # v26.10.06.04 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same
@@ -4359,6 +4397,10 @@ class HVP2PBackend(QObject):
     def ctrlTsConnected(self):
         return bool(self._ctrl_connected() and self._ctrl_ts_connected_reported and
                     self._ctrl_ts_last_seen > 0 and time.time() - self._ctrl_ts_last_seen <= HMI_STATUS_TIMEOUT_S)
+    @Property(bool, notify=stateChanged)
+    def ctrlTsRs485Active(self):
+        return bool(self._ctrl_connected() and self._ctrl_ts_rs485_alive_reported and
+                    self._ctrl_ts_last_seen > 0 and time.time() - self._ctrl_ts_last_seen <= HMI_STATUS_TIMEOUT_S)
     @Property(str, notify=stateChanged)
     def ctrlTsVersion(self): return str(self._ctrl_ts_version or "—")
     @Property(str, notify=stateChanged)
@@ -4381,9 +4423,9 @@ class HVP2PBackend(QObject):
             "manual_bootstrap": "Manual USB bootstrap required",
         }
         if raw == "idle":
-            if not self.ctrlTsConnected:
+            if not self.ctrlTsRs485Active:
                 return "Idle"
-            return "Up to date" if current and authority_current else "Update required"
+            return "Up to date" if current and authority_current and self.ctrlTsConnected else "Update required"
         return states.get(raw, raw)
     @Property(int, notify=stateChanged)
     def ctrlTsFirmwareProgress(self): return int(max(0, min(100, self._ctrl_ts_fw_pct)))

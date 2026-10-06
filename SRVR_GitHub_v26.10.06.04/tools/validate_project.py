@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "26.10.06.03"
+VERSION = "26.10.06.04"
 ERRORS: list[str] = []
 
 
@@ -362,7 +362,7 @@ require('width:parent.width*.22' in qml_main and
 require(qml_main.count('width:f(72)') >= 2 and 'parent.width-f(48+72+66)' in qml_main,
         "Free-D lens decoded percentage width fix is missing")
 
-# v26.10.06.03 locked Run/Setup revision. Keep the approved panel geometry and
+# v26.10.06.04 locked Run/Setup revision. Keep the approved panel geometry and
 # setting semantics while guarding only the requested presentation/interaction deltas.
 require('text:"HV P2P\\nSRVR"' in qml_main and 'HV P2P  |  SRVR' not in qml_main and 'P2P°\\nSRVR' not in qml_main,
         "locked two-line HV P2P/SRVR logo/header revision is missing")
@@ -399,8 +399,8 @@ require(qml_setup.count('text:"Link"') >= 2 and qml_setup.count('text:"RS485"') 
         qml_setup.count('text:"E-Stop"') >= 2 and qml_setup.count('text:"Firmware"') >= 2,
         "CTRL/W1P generic six-row status labels are missing")
 require('text:"Link"' in qml_setup and
-        'text:backend.ctrlTsConnected?"Active":"Disconnected"' in qml_setup,
-        "Link is not using Active/Disconnected status semantics")
+        'text:backend.ctrlTsRs485Active?"Active":"Disconnected"' in qml_setup,
+        "CTRL-TS Link is not using physical RS485 Active/Disconnected semantics")
 
 # Joystick calibration is a real three-step wizard, not a no-op button. It must
 # capture raw Left/Centre/Right values, persist them, and fail-safe motion to zero
@@ -549,7 +549,7 @@ require('profileValue(Number(gp.x), key)' in span_qml and
         'var gv=root.sideView ? Number(gp.y)' not in span_qml,
         "Free-D geometry markers are not pinned to the exact calculated cable profile")
 
-# v26.10.06.03 integration contract: fifth CTRL-TS AUX travels in the spare A7
+# v26.10.06.04 integration contract: fifth CTRL-TS AUX travels in the spare A7
 # 16-bit flag, and display packets expose all five state-aware labels.
 require("FLAG_AUX5 = 0x0400" in backend, "AUX5 controller flag missing")
 require('f"aux5={labels[4]}"' in backend, "DSP1 AUX5 field missing")
@@ -605,7 +605,7 @@ require('cp assets/HV_P2P_SRVR_icon.png "$STAGE/HV_P2P_SRVR_icon.png"' in workfl
         "P2P SRVR bundle icon is not restored during packaging")
 require('CFBundleDisplayName' in workflow and "HV P2P SRVR'" in workflow,
         "HV P2P SRVR bundle display metadata is not enforced")
-require(all(token in workflow for token in ('CFBundleIdentifier', 'com.hvp2p.srvr', 'CFBundleShortVersionString', 'CFBundleVersion', 'HVP2PReleaseVersion', "BUNDLE_BUILD_VERSION: '2610.6.3'")),
+require(all(token in workflow for token in ('CFBundleIdentifier', 'com.hvp2p.srvr', 'CFBundleShortVersionString', 'CFBundleVersion', 'HVP2PReleaseVersion', "BUNDLE_BUILD_VERSION: '2610.6.4'")),
         "HV P2P SRVR stable bundle identity/version metadata is not enforced")
 require('three untouched native ZIPs' in workflow and 'SHA256SUMS.txt' in workflow and 'Complete Release.zip.sha256' in workflow,
         "complete release does not preserve/hash all native SRVR ZIPs and authoritative release ZIP")
@@ -624,9 +624,9 @@ require('Nuitka==4.2' in workflow and '--assume-yes-for-downloads' in workflow,
         "Windows CI does not pin Nuitka and permit required non-interactive dependency-tool downloads")
 require("Select-String -Path deploy-dry-run.txt -SimpleMatch '--assume-yes-for-downloads'" in workflow,
         "Windows deploy dry-run does not prove the actual Nuitka command is non-interactive")
-require('HV-P2P-SRVR-v26.10.06.03-macOS-Intel' in workflow and
-        'HV-P2P-SRVR-v26.10.06.03-macOS-Apple-Silicon' in workflow and
-        'HV-P2P-SRVR-v26.10.06.03-Windows-x64' in workflow,
+require('HV-P2P-SRVR-v26.10.06.04-macOS-Intel' in workflow and
+        'HV-P2P-SRVR-v26.10.06.04-macOS-Apple-Silicon' in workflow and
+        'HV-P2P-SRVR-v26.10.06.04-Windows-x64' in workflow,
         "native SRVR artifact names are incomplete")
 require('def _app_data_dir' in backend and 'LOCALAPPDATA' in backend and 'XDG_CONFIG_HOME' in backend,
         "cross-platform private config directory mapping is missing")
@@ -646,7 +646,7 @@ require('self._safety_servo_inhibited = True' in _virtual_branch,
         "Virtual Position Source does not latch the local Servo Enable inhibit independently of hardware I/O")
 require('fillText("SKATE"' not in span_qml, "Top/Side span diagrams still draw the SKATE text label")
 
-# v26.10.06.03 CTRL joystick readout labels/geometry and global preset-name mode.
+# v26.10.06.04 CTRL joystick readout labels/geometry and global preset-name mode.
 setup=(ROOT/"qml/pages/SetupPage.qml").read_text()
 require('text:"Value"' in setup and 'text:"Percentage"' in setup,
         "CTRL Setup uses Value / Percentage labels")
