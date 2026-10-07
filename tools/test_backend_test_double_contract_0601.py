@@ -5,7 +5,7 @@ import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.10.06.10'
+VER = '26.10.06.11'
 backend_path = ROOT / f'SRVR_GitHub_v{VER}' / 'backend.py'
 test_path = ROOT / f'SRVR_GitHub_v{VER}' / 'tools' / 'test_backend_logic.py'
 backend = backend_path.read_text(encoding='utf-8')

@@ -44,6 +44,7 @@ WINCH_STATUS_TIMEOUT_S = 0.75
 WINCH_PROBE_INTERVAL_S = 0.25
 HMI_STATUS_TIMEOUT_S = 3.5
 HMI_DISPLAY_MIN_CHANGE_INTERVAL_S = 0.10
+CTRL_MARKER_MIN_CHANGE_INTERVAL_S = 0.05
 HMI_DISPLAY_KEEPALIVE_S = 3.0
 VEL_KEEPALIVE_S = 0.15  # ordinary SRVR refresh cadence; W1P watchdog remains 500 ms
 VEL_BACKGROUND_REFRESH_S = 0.18  # sits behind the normal ~150 ms Qt cadence; bridges only a missed interval
@@ -401,7 +402,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.06.10", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.06.11", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -417,7 +418,7 @@ class HVP2PBackend(QObject):
         self._fw_modern_fallback_delay_s = 2.5
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.06.10+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.06.11+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -634,13 +635,18 @@ class HVP2PBackend(QObject):
         self._ctrl_presence_tx_lock = threading.Lock()
         self._ctrl_bound_display_lock = threading.Lock()
         self._ctrl_bound_display_pending = None
+        self._ctrl_bound_marker_pending = None
         self._ctrl_bound_display_tx = 0
         self._ctrl_bound_display_tx_errors = 0
+        self._ctrl_bound_marker_tx = 0
+        self._ctrl_bound_marker_tx_errors = 0
         self._srvr_alive_thread = None
         self._last_ctrl_display_packet = b""
         self._last_ctrl_display_change_tx = 0.0
         self._last_ctrl_display_keepalive_tx = 0.0
         self._last_ctrl_display_build_at = 0.0
+        self._last_ctrl_marker_packet = b""
+        self._last_ctrl_marker_tx = 0.0
         # Cache cable profiles so two diagrams on the same page reuse one
         # calculation instead of repeating 121 sag samples per state signal.
         self._cable_profile_cache_key = None
@@ -960,6 +966,37 @@ class HVP2PBackend(QObject):
                 if self._ctrl_bound_display_pending is None and not self._stop_evt.is_set():
                     self._ctrl_bound_display_pending = pending
 
+
+    def _stage_ctrl_marker_datagram(self, packet: bytes, target: str) -> bool:
+        """Coalesce the latest compact position marker onto bound UDP/5000.
+
+        This is intentionally separate from DSP1 so live position sampling can be
+        faster without increasing the large display/status packet cadence.
+        """
+        if not packet or not target or self._stop_evt.is_set():
+            return False
+        with self._ctrl_bound_display_lock:
+            self._ctrl_bound_marker_pending = (bytes(packet), (str(target), SERVER_BIND_PORT))
+        return True
+
+    def _flush_ctrl_marker_datagram(self, sock) -> None:
+        pending = None
+        with self._ctrl_bound_display_lock:
+            if self._ctrl_bound_marker_pending is not None:
+                pending = self._ctrl_bound_marker_pending
+                self._ctrl_bound_marker_pending = None
+        if pending is None or self._stop_evt.is_set():
+            return
+        payload, target = pending
+        try:
+            sock.sendto(payload, target)
+            self._ctrl_bound_marker_tx += 1
+        except Exception:
+            self._ctrl_bound_marker_tx_errors += 1
+            with self._ctrl_bound_display_lock:
+                if self._ctrl_bound_marker_pending is None and not self._stop_evt.is_set():
+                    self._ctrl_bound_marker_pending = pending
+
     def _controller_worker(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
@@ -974,6 +1011,7 @@ class HVP2PBackend(QObject):
         last_heartbeat_fw_reply = 0.0
         while not self._stop_evt.is_set():
             self._flush_ctrl_display_datagram(sock)
+            self._flush_ctrl_marker_datagram(sock)
             try: data, addr = sock.recvfrom(2048)
             except socket.timeout: continue
             except OSError: break
@@ -2811,6 +2849,35 @@ class HVP2PBackend(QObject):
         ]
         return "|".join(fields) + "\n"
 
+    def _build_controller_marker_packet(self) -> str:
+        """Build compact real-position telemetry for the CTRL-TS marker only."""
+        near_abs = float(self.state.near_limit.position_m or 0.0)
+        far_abs = float(self.state.far_limit.position_m if self.state.far_limit.position_m is not None else near_abs + self.state.total_length_m)
+        if far_abs < near_abs:
+            near_abs, far_abs = far_abs, near_abs
+        pos_abs = float(self.state.pos_m if self.state.pos_m is not None else near_abs)
+        pos_frac = self._span_fraction(pos_abs)
+        return f"DMP1|pos_frac={pos_frac:.6f}|speed_mps={float(self.current_speed_mps):.3f}\n"
+
+    def _send_controller_marker_packet(self):
+        if self.smoke_test:
+            return
+        target = str(self.ctrl_ip or "").strip()
+        if not target:
+            return
+        now = time.monotonic()
+        if (now - self._last_ctrl_marker_tx) < CTRL_MARKER_MIN_CHANGE_INTERVAL_S:
+            return
+        packet = self._build_controller_marker_packet().encode("ascii", "ignore")
+        # Change-driven only: Encoder mode therefore cannot manufacture samples
+        # faster than the verified W1P feedback; Virtual mode can expose the
+        # newer SRVR state at the 20 Hz marker cadence.
+        if packet == self._last_ctrl_marker_packet:
+            return
+        if self._stage_ctrl_marker_datagram(packet, target):
+            self._last_ctrl_marker_packet = packet
+            self._last_ctrl_marker_tx = now
+
     def _send_controller_display_packet(self, force: bool = False):
         if self.smoke_test:
             return
@@ -3614,7 +3681,7 @@ class HVP2PBackend(QObject):
             # Firmware authority beacons are deliberately NOT serviced here.
             # They are owned by _srvr_alive_worker so a stalled/background Qt
             # event loop cannot prevent CTRL/W1P/CTRL-TS release convergence.
-            self._motion_tick(); self._service_w1p_setting_sync(); self._service_legacy_firmware_push(); self._send_freed(); self._send_controller_display_packet()
+            self._motion_tick(); self._service_w1p_setting_sync(); self._service_legacy_firmware_push(); self._send_freed(); self._send_controller_marker_packet(); self._send_controller_display_packet()
             # Keep the 25 ms control/safety cadence, but do not force the whole
             # QML property graph to re-evaluate at 40 Hz. 20 Hz is ample for the
             # desktop display and materially reduces Intel-mac UI load.
@@ -4069,7 +4136,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.06.10 moves the installed joystick polarity correction into CTRL,
+        # v26.10.06.11 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same

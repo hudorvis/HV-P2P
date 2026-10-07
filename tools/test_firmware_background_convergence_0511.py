@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""v26.10.06.10 firmware convergence must not depend on the Qt event loop."""
+"""v26.10.06.11 firmware convergence must not depend on the Qt event loop."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.10.06.10'
+VER = '26.10.06.11'
 B = (ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 M = (ROOT/f'SRVR_GitHub_v{VER}/main.py').read_text()
 C = (ROOT/f'HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino').read_text()

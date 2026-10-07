@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.10.06.10'
+VER='26.10.06.11'
 B=(ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 Q=(ROOT/f'SRVR_GitHub_v{VER}/qml/Main.qml').read_text()
 L=(ROOT/f'SRVR_GitHub_v{VER}/qml/pages/LogPage.qml').read_text()
@@ -40,7 +40,7 @@ assert 'static const uint32_t W1P_VEL_COMMAND_TIMEOUT_MS = 500;' in W
 # AUX-confirm workload is hardened: priority state packets use the light path,
 # bulk HMI is temporarily suppressed, and the small debug path is heap-free.
 assert 'const bool state_only = line.startsWith("HMS1|")' in T
-assert 'if((bulk_packet || motion_only) && !calibration_active_now) update_progress_marker();' in T
+assert 'if(position_only){' in T and '(marker_now - g_last_marker_packet_ms) > 500U' in T and 'update_progress_marker();' in T
 assert 'g_hmiBulkSuppressUntilMs = millis() + 1000;' in C
 assert 'const bool bulk_suppressed' in C
 assert 'static char last[64]' in T

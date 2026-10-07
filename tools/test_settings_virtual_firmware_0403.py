@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-B=(ROOT/'SRVR_GitHub_v26.10.06.10'/'backend.py').read_text()
-Q=(ROOT/'SRVR_GitHub_v26.10.06.10'/'qml'/'pages'/'SetupPage.qml').read_text()
-C=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.06.10'/'HV_P2P_CTRL_EDGEBOX_v26.10.06.10.ino').read_text()
-W=(ROOT/'HV_P2P_W1P_EDGEBOX_v26.10.06.10'/'HV_P2P_W1P_EDGEBOX_v26.10.06.10.ino').read_text()
+B=(ROOT/'SRVR_GitHub_v26.10.06.11'/'backend.py').read_text()
+Q=(ROOT/'SRVR_GitHub_v26.10.06.11'/'qml'/'pages'/'SetupPage.qml').read_text()
+C=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.06.11'/'HV_P2P_CTRL_EDGEBOX_v26.10.06.11.ino').read_text()
+W=(ROOT/'HV_P2P_W1P_EDGEBOX_v26.10.06.11'/'HV_P2P_W1P_EDGEBOX_v26.10.06.11.ino').read_text()
 
 # External/AUX changes must refresh the Settings mirror and the visible controls
 # bind to live state, not a stale draft snapshot.

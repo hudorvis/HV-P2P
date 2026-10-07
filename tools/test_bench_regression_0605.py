@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""v26.10.06.10 locked-scope regressions: calibration AUX confirmation + motion status."""
+"""v26.10.06.11 locked-scope regressions: calibration AUX confirmation + motion status."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.10.06.10'
+VER = '26.10.06.11'
 T = next((ROOT / f'HV_P2P_CTRL_TS_v{VER}').glob('*.ino')).read_text(encoding='utf-8')
 B = (ROOT / f'SRVR_GitHub_v{VER}' / 'backend.py').read_text(encoding='utf-8')
 

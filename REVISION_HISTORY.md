@@ -1,3 +1,16 @@
+# v26.10.06.11 — 2026-10-06
+
+- Locked `v26.10.06.10`; production change is restricted to CTRL-TS cable-progress display smoothness.
+- Confirmed the baseline path: healthy W1P Leadshine feedback poll 100 ms (10 Hz), W1P STATUS 50 ms (20 Hz), SRVR Virtual state tick 25 ms (40 Hz), SRVR desktop state emit 50 ms (20 Hz), DSP1 100 ms (10 Hz), CTRL HMM1 gate 80 ms but source-limited to ~10 Hz, CTRL-TS local marker service 16 ms with a 20 ms main-loop delay (~50 Hz effective).
+- Added a separate change-driven `DMP1` SRVR -> CTRL and `HMP1` CTRL -> CTRL-TS marker-only path capped at 50 ms (20 Hz), using only canonical `pos_frac` plus signed measured `speed_mps`. Full DSP1/HMI1/HMM1 rates remain unchanged.
+- Marker UDP uses the existing proven bound UDP/5000 controller-worker socket. The new packet is display-only and does not alter SRVR liveness, firmware authority, calibration, status or safety state.
+- CTRL forwards HMP1 through the same framed 115200-baud half-duplex link and ownership guards, but marker sends deliberately do not restart the existing POLL interval. POLL/EVENT, firmware transfer, state and geometry traffic retain priority.
+- CTRL-TS ignores duplicate marker targets, prevents slower HMM1/HMI1 copies from restarting interpolation while HMP1 is live, accepts observed 20 Hz samples, and reaches each already-verified target in ~90% of the observed sample interval without extrapolation. Existing signed-speed monotonic clamp remains.
+- Encoder mode remains limited to genuinely new verified Leadshine position samples (~10 Hz) because W1P `MODBUS_POLL_MS` is deliberately unchanged. Virtual mode can deliver new marker samples at 20 Hz. Local marker rendering remains ~50 Hz.
+- Conservative HMP1 transaction budget is ~14.5% of the RS485 bus at a continuous 20 Hz including framing and the 2.5 ms turnaround guard; firmware updates still exclusively own the bus while active.
+- Added `test_ctrl_ts_marker_smoothness_0611.py`; all prior transport/safety/update contracts remain in the source regression runner.
+- macOS bundle metadata: short version `26.10.6`, build `2610.6.11`.
+
 # v26.10.06.10 — 2026-10-06
 
 - Locked `v26.10.06.09`; production change is restricted to SRVR -> CTRL DSP1 display transport.

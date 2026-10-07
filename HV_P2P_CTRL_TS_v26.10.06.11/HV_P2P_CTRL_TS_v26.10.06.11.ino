@@ -14,7 +14,7 @@
 #include <esp_system.h>
 #include <esp_attr.h>
 
-#define CTRL_TS_SEMVER "v26.10.06.10"
+#define CTRL_TS_SEMVER "v26.10.06.11"
 #define CTRL_TS_VERSION "HV P2P CTRL-TS " CTRL_TS_SEMVER
 #define CTRL_TS_HW_ID "WS-ESP32S3-7"
 #define HMI_BAUD 115200
@@ -141,6 +141,7 @@ static String g_pending_boot_hmi_line;
 static String g_pending_runtime_state_line;
 static String g_pending_runtime_geometry_line;
 static String g_pending_runtime_motion_line;
+static String g_pending_runtime_marker_line;
 static String g_pending_runtime_bulk_line;
 
 
@@ -203,7 +204,7 @@ static float g_pos_frac=0.0f, g_ref_frac=0.5f;
 // telemetry. The marker deliberately does NOT predict ahead of the latest sample:
 // prediction could overshoot at high speed and then visibly correct backwards when
 // the next real sample arrived. Instead, traverse each verified sample-to-sample
-// segment over the observed HMM1 interval (~10 Hz) at the local LVGL service rate.
+// segment over the observed real marker-sample interval at the local LVGL service rate.
 static float g_motion_sample_frac=0.0f;
 static float g_progress_display_frac=0.0f;
 static float g_progress_segment_start_frac=0.0f;
@@ -211,6 +212,7 @@ static uint32_t g_motion_sample_ms=0;
 static uint32_t g_progress_segment_start_ms=0;
 static uint32_t g_progress_segment_duration_ms=100;
 static uint32_t g_progress_service_ms=0;
+static uint32_t g_last_marker_packet_ms=0;
 static bool g_motion_sample_valid=false;
 static bool g_progress_display_valid=false;
 static bool g_ref_visible = true;
@@ -261,7 +263,7 @@ static float g_last_ramp_near_draw = -999999.0f;
 static float g_last_ramp_far_draw = -999999.0f;
 
 // -------------------- CTRL-TS Settings page --------------------
-// Safe v26.10.06.10 approach: no backlight/brightness writes. This page only
+// Safe v26.10.06.11 approach: no backlight/brightness writes. This page only
 // edits CTRL network settings over UART and therefore should preserve the known
 // Keep the proven splash/boot path; do not write to the backlight controller.
 static lv_obj_t *settings_overlay = nullptr;
@@ -309,7 +311,7 @@ static void force_screen_refresh(){
 }
 
 static void screen_keepalive(){
-  // v26.10.06.10: no periodic full-screen or left-strip invalidation or brightness writes.
+  // v26.10.06.11: no periodic full-screen or left-strip invalidation or brightness writes.
   // The Waveshare/LVGL port refreshes changed objects itself; forcing a full
   // screen refresh every second caused the visible 1-second flicker/glitch.
   if(!g_ui_ready) return;
@@ -1225,7 +1227,7 @@ static void confirm_aux_idx(int idx, bool send_command){
   selected_aux = -1;
   g_selected_aux_ms = 0;
   confirmed_aux = idx;
-  clear_confirm_at = now_ms + 2000;  // v26.10.06.10: confirmed AUX tile stays lit for 2 seconds
+  clear_confirm_at = now_ms + 2000;  // v26.10.06.11: confirmed AUX tile stays lit for 2 seconds
   style_aux(idx,false,true);
   snprintf(msg,sizeof(msg),"AUX %d Confirmed", idx+1);
   set_touch_debug(msg);
@@ -1303,7 +1305,7 @@ static void style_w1p_status_pill(int state){
 }
 
 static void style_estop_pill(bool active){
-  // v26.10.06.10: the middle status banner follows the SRVR-resolved state.
+  // v26.10.06.11: the middle status banner follows the SRVR-resolved state.
   // A local CTRL-TS UART/display gap must not invent "E-Stop CTRL" while SRVR
   // is still sending Status | Active. Real CTRL/W1P E-Stops are still shown
   // immediately when SRVR sends status=E-Stop... / status_level=red.
@@ -1354,7 +1356,7 @@ static void refresh_status_ui(){
   style_status_pill_cached(0,pill_ctrl,lbl_ctrl,"CTRL",g_ctrl_ok);
   if(pill_srvr && lbl_srvr) style_status_pill_cached(1,pill_srvr,lbl_srvr,"SRVR",g_srvr_ok);
   style_w1p_status_pill(g_w1p_health);
-  // v26.10.06.10: do not turn the main middle box red purely because the
+  // v26.10.06.11: do not turn the main middle box red purely because the
   // CTRL-TS local UART/display link hiccuped. The SRVR status packet is the
   // authoritative source for Active / Un-Calibrated / E-Stop display state.
   bool stopped_visual = (g_status_level >= 2) || g_estop_active;
@@ -1776,14 +1778,22 @@ static void update_progress_marker(){
     return;
   }
 
+  // A duplicate bulk/HMM keepalive is not a new verified position sample. Do
+  // not restart a segment toward the same target; doing so creates the subtle
+  // hesitation that made the baseline marker feel less fluid than SRVR.
+  if(fabsf(next_frac - g_motion_sample_frac) < 0.0000005f) return;
+
   // Use the actual observed verified-sample spacing rather than assuming a fixed
-  // frame rate. Lightly filter/clamp it so UDP/RS485 jitter does not change the
-  // visual marker speed abruptly from one segment to the next.
+  // frame rate. Allow 20 Hz samples, and reach the already-measured target just
+  // before the next expected sample so the marker feels responsive without ever
+  // extrapolating beyond real movement.
   uint32_t sample_interval_ms = now - g_motion_sample_ms;
-  sample_interval_ms = constrain(sample_interval_ms, (uint32_t)60, (uint32_t)180);
+  sample_interval_ms = constrain(sample_interval_ms, (uint32_t)35, (uint32_t)180);
+  const uint32_t target_duration_ms = constrain((sample_interval_ms * 9U) / 10U,
+                                                 (uint32_t)40, (uint32_t)150);
   g_progress_segment_duration_ms = constrain(
-    ((g_progress_segment_duration_ms * 3U) + sample_interval_ms) / 4U,
-    (uint32_t)70, (uint32_t)160);
+    (g_progress_segment_duration_ms + (target_duration_ms * 3U)) / 4U,
+    (uint32_t)40, (uint32_t)150);
 
   g_progress_segment_start_frac = g_progress_display_frac;
 
@@ -1926,7 +1936,8 @@ static void apply_hmi_packet(const String &line){
   const bool state_only = line.startsWith("HMS1|");
   const bool geometry_only = line.startsWith("HMG1|");
   const bool motion_only = line.startsWith("HMM1|");
-  const bool bulk_packet = !state_only && !geometry_only && !motion_only;
+  const bool position_only = line.startsWith("HMP1|");
+  const bool bulk_packet = !state_only && !geometry_only && !motion_only && !position_only;
   const bool status_packet = state_only || bulk_packet;
   bool prev_estop = g_estop_active;
   bool prev_ctrl = g_ctrl_ok;
@@ -2012,7 +2023,7 @@ static void apply_hmi_packet(const String &line){
     else g_status_level = 0;
   }
 
-  // v26.10.06.10: if SRVR sends explicit status/status_level, trust it as
+  // v26.10.06.11: if SRVR sends explicit status/status_level, trust it as
   // the authoritative display state. Do not override it locally with a CTRL
   // error just because the touchscreen/CTRL UART side saw a transient gap.
   if(status_packet){
@@ -2061,7 +2072,7 @@ static void apply_hmi_packet(const String &line){
   // stream of invalidations underneath the overlay. The first packet after the
   // wizard closes redraws them from the latest cached values.
   const bool calibration_was_active = g_calibration_overlay_active;
-  const bool calibration_active_now = (geometry_only || motion_only) ? g_calibration_overlay_active : apply_calibration_overlay_fields(line);
+  const bool calibration_active_now = (geometry_only || motion_only || position_only) ? g_calibration_overlay_active : apply_calibration_overlay_fields(line);
   const bool calibration_just_closed = calibration_was_active && !calibration_active_now;
 
   String s;
@@ -2129,7 +2140,16 @@ static void apply_hmi_packet(const String &line){
   }
 
   apply_flags_to_aux(flags_now);
-  if((bulk_packet || motion_only) && !calibration_active_now) update_progress_marker();
+  const uint32_t marker_now = millis();
+  if(position_only){
+    g_last_marker_packet_ms = marker_now;
+    if(!calibration_active_now) update_progress_marker();
+  } else if((bulk_packet || motion_only) && !calibration_active_now &&
+            (!g_last_marker_packet_ms || (marker_now - g_last_marker_packet_ms) > 500U)) {
+    // Backward-compatible fallback only. Once HMP1 is live, slower HMM1/HMI1
+    // copies must not restart/interfere with the dedicated marker interpolation.
+    update_progress_marker();
+  }
 
   // HMG1 is emitted only when geometry/presets change, so it is the explicit
   // redraw trigger for REF/ramp/preset markers. This avoids relying on the slow
@@ -2169,7 +2189,7 @@ static void apply_hmi_packet(const String &line){
   if(mode_changed || (prev_status_text != g_status_text) || (prev_status_level != g_status_level) || (prev_estop != g_estop_active) || (prev_estop_source != g_estop_source) || (prev_ctrl != g_ctrl_ok) || (prev_srvr != g_srvr_ok) || (prev_w1p != g_w1p_ok) || (prev_w1p_health != g_w1p_health)) {
     refresh_status_ui();
   }
-  // v26.10.06.10: no left-strip/full-screen invalidation on packets; progress marker animates locally.
+  // v26.10.06.11: no left-strip/full-screen invalidation on packets; progress marker animates locally.
 }
 
 
@@ -2178,7 +2198,7 @@ static void apply_layout_packet(const String &line){
   // on CTRL cannot overwrite the screen title/version or trigger header redraws.
   String hint = getField(line, "hint");
   if(lbl_title) set_label_text_if_changed(lbl_title, "HV P2P\nCTRL-TS");
-  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.06.10");
+  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.06.11");
   if(hint.length() && hint.startsWith("ERROR")) set_touch_debug(hint.c_str());
   // UIL1 is presentation-only. AUX assignment/value ownership belongs solely to
   // live SRVR HMI state, so an old layout persisted in CTRL NVS cannot overwrite
@@ -2207,7 +2227,9 @@ static void process_text_from_ctrl(String line, bool boot_phase){
   } else if(line.startsWith("HMG1|")) {
     // Change-driven geometry/preset delta; no connection or firmware semantics.
   } else if(line.startsWith("HMM1|")) {
-    // Live-motion delta; display data only and never a status authority.
+    // Live-motion/readout delta; display data only and never a status authority.
+  } else if(line.startsWith("HMP1|")) {
+    // Dedicated real-position marker delta; never a status authority.
   }
   if(boot_phase){
     // Cache compact deltas that arrive before the main UI exists. HMI1 still
@@ -2216,6 +2238,7 @@ static void process_text_from_ctrl(String line, bool boot_phase){
     if(line.startsWith("HMS1|")) g_pending_runtime_state_line = line;
     else if(line.startsWith("HMG1|")) g_pending_runtime_geometry_line = line;
     else if(line.startsWith("HMM1|")) g_pending_runtime_motion_line = line;
+    else if(line.startsWith("HMP1|")) g_pending_runtime_marker_line = line;
     boot_process_line(line);
     return;
   }
@@ -2226,6 +2249,7 @@ static void process_text_from_ctrl(String line, bool boot_phase){
     if(line.startsWith("HMS1|")) g_pending_runtime_state_line = line;
     else if(line.startsWith("HMG1|")) g_pending_runtime_geometry_line = line;
     else if(line.startsWith("HMM1|")) g_pending_runtime_motion_line = line;
+    else if(line.startsWith("HMP1|")) g_pending_runtime_marker_line = line;
     else if(is_valid_hmi_packet(line)) g_pending_runtime_bulk_line = line;
     return;
   }
@@ -2236,6 +2260,8 @@ static void process_text_from_ctrl(String line, bool boot_phase){
   } else if(line.startsWith("HMG1|")) {
     apply_hmi_packet(line);
   } else if(line.startsWith("HMM1|")) {
+    apply_hmi_packet(line);
+  } else if(line.startsWith("HMP1|")) {
     apply_hmi_packet(line);
   } else if(line.startsWith("CFG1|")) {
     apply_cfg_packet(line);
@@ -2707,7 +2733,7 @@ static void create_ui(){
   lv_obj_t *brand=make_panel(frame,SX,HEADER_Y,70,HEADER_H,C_BG,0x63d84e,7);
   lbl_title=make_label(brand,"HV P2P\nCTRL-TS",0,6,&lv_font_montserrat_12,lv_color_hex(C_FG),70);
   lv_obj_set_style_text_line_space(lbl_title,-2,0);
-  lbl_subtitle=make_label(frame,"v26.10.06.10",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
+  lbl_subtitle=make_label(frame,"v26.10.06.11",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
 
   pill_ctrl=make_panel(frame,255,HEADER_Y,126,HEADER_H,C_PANEL,C_BORDER,5);
   dot_ctrl=lv_obj_create(pill_ctrl); lv_obj_set_pos(dot_ctrl,9,15); lv_obj_set_size(dot_ctrl,8,8); lv_obj_set_style_radius(dot_ctrl,LV_RADIUS_CIRCLE,0); lv_obj_set_style_border_width(dot_ctrl,0,0); lv_obj_set_style_bg_color(dot_ctrl,lv_color_hex(0xef5757),0); lv_obj_clear_flag(dot_ctrl,LV_OBJ_FLAG_SCROLLABLE);
@@ -2880,10 +2906,12 @@ static void service_fw_screen_release(){
     if(g_pending_runtime_state_line.length()) apply_hmi_packet(g_pending_runtime_state_line);
     if(g_pending_runtime_geometry_line.length()) apply_hmi_packet(g_pending_runtime_geometry_line);
     if(g_pending_runtime_motion_line.length()) apply_hmi_packet(g_pending_runtime_motion_line);
+    if(g_pending_runtime_marker_line.length()) apply_hmi_packet(g_pending_runtime_marker_line);
     g_pending_runtime_bulk_line = "";
     g_pending_runtime_state_line = "";
     g_pending_runtime_geometry_line = "";
     g_pending_runtime_motion_line = "";
+    g_pending_runtime_marker_line = "";
     const bool ctrl_link_alive = last_hmi_rx && ((millis() - last_hmi_rx) <= HMI_TIMEOUT_MS) && g_ctrl_ok;
     if(ctrl_link_alive && g_srvr_ok){
       lv_scr_load(g_main_scr);
@@ -2917,7 +2945,7 @@ static void service_link_state(){
 
   bool link_alive = last_hmi_rx && ((millis() - last_hmi_rx) <= HMI_TIMEOUT_MS);
   if(!link_alive) {
-    // v26.10.06.10: local UART/display timeout is a CTRL-TS link warning, not
+    // v26.10.06.11: local UART/display timeout is a CTRL-TS link warning, not
     // proof of a real CTRL E-Stop. Keep the last SRVR-resolved status banner so
     // the touchscreen cannot randomly show "Status | E-Stop CTRL" while SRVR
     // remains "Status | Active". The CTRL status pill can still show ERROR.
@@ -3014,9 +3042,11 @@ void setup(){
   if(g_pending_runtime_state_line.length()) apply_hmi_packet(g_pending_runtime_state_line);
   if(g_pending_runtime_geometry_line.length()) apply_hmi_packet(g_pending_runtime_geometry_line);
   if(g_pending_runtime_motion_line.length()) apply_hmi_packet(g_pending_runtime_motion_line);
+  if(g_pending_runtime_marker_line.length()) apply_hmi_packet(g_pending_runtime_marker_line);
   g_pending_runtime_state_line = "";
   g_pending_runtime_geometry_line = "";
   g_pending_runtime_motion_line = "";
+  g_pending_runtime_marker_line = "";
   lvgl_port_unlock();
   delay(50);
   Serial.println("[WS-HMI] boot: UI ready after CTRL and SRVR confirmed");
