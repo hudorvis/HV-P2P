@@ -1,8 +1,8 @@
-# HV P2P v26.10.08.02 native build and bench checklist
+# HV P2P v26.10.08.03 native build and bench checklist
 
 ## GitHub CI / source verification
 
-- [ ] Complete source/static suite passes, including `W1P_EDGEBOX_BRAKE_DO0_1008_PASS`, `W1P_ESTOP_ACTIVE_1008_PASS`, `LEADSHINE_COMMISSIONING_CONTRACT_PASS` and `FULL_SYSTEM_UPDATE_STATUS_1008_PASS`.
+- [ ] Complete source/static suite passes, including `W1P_EDGEBOX_BRAKE_DO0_1008_PASS`, `W1P_ESTOP_AI0_100803_PASS`, `LEADSHINE_COMMISSIONING_CONTRACT_PASS` and `FULL_SYSTEM_UPDATE_STATUS_1008_PASS`.
 - [ ] macOS Intel / Apple Silicon and Windows backend tests pass.
 - [ ] Native CTRL-TS, CTRL and W1P compilation passes.
 - [ ] CTRL compilation uses the staged CTRL-TS firmware image.
@@ -33,7 +33,12 @@
 - [ ] Servo Enable: EL7 logical BRK-OFF asserts, then DO0 goes HIGH/on and the brake releases.
 - [ ] Normal Servo-OFF: DO0 remains on while fresh EL7 BRK-OFF is asserted, then turns off after BRK-OFF clears.
 - [ ] Confirm transition-only P08.47 polling does not disturb the locked 100 ms position-feedback path.
-- [ ] Verify W1P DI0 E-stop is active: triggering it commands immediate stop/drive-write lock/Servo-inhibit, then DO0 follows the EL7 shutdown sequence while feedback is valid; loss of brake-status authority fails DO0 LOW.
+- [ ] Verify W1P AI0 is configured for voltage input (factory 249-ohm current shunt removed, or 0-10 V hardware option).
+- [ ] Wire regulated +5 V through the NC E-stop contact to AI0 pin 14; connect the 5 V 0 V return to AGND pin 12.
+- [ ] With AI0 open/0 V, W1P reports `E-Stop W1P`, motion remains inhibited and DO0 cannot newly release the brake.
+- [ ] With a healthy ~5 V AI0 loop, E-stop clears only after three healthy samples and still requires SRVR neutral re-arm before Servo Enable.
+- [ ] Opening the AI0 loop commands immediate stop/drive-write lock/Servo-inhibit, then DO0 follows the EL7 shutdown sequence while feedback is valid; loss of brake-status authority fails DO0 LOW.
+- [ ] ADC/I2C/configuration failure must report/behave as W1P E-stop active.
 - [ ] Remove RS485 during a safely supported released-brake test: stale/invalid output status must fail DO0 LOW.
 - [ ] Verify SRVR loss, VEL watchdog, service lock and drive alarm cannot create a new brake release.
 - [ ] OTA/reboot/reset must be refused until speed is near zero, SRV-ST=0, BRK-OFF=0 and DO0=0 for two fresh samples.

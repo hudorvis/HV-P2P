@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-B=(ROOT/'SRVR_GitHub_v26.10.08.02/backend.py').read_text()
-C=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.08.02/HV_P2P_CTRL_EDGEBOX_v26.10.08.02.ino').read_text()
-T=(ROOT/'HV_P2P_CTRL_TS_v26.10.08.02/HV_P2P_CTRL_TS_v26.10.08.02.ino').read_text()
+B=(ROOT/'SRVR_GitHub_v26.10.08.03/backend.py').read_text()
+C=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.08.03/HV_P2P_CTRL_EDGEBOX_v26.10.08.03.ino').read_text()
+T=(ROOT/'HV_P2P_CTRL_TS_v26.10.08.03/HV_P2P_CTRL_TS_v26.10.08.03.ino').read_text()
 
 # Cumulative HMI fault counters must retain their baseline; .03.02 accidentally
 # zeroed them after every packet and generated a 4 Hz log/UI storm forever.

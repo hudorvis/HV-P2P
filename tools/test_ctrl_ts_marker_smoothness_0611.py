@@ -2,10 +2,10 @@
 from pathlib import Path
 import re
 ROOT = Path(__file__).resolve().parents[1]
-CTRL = (ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.08.02'/'HV_P2P_CTRL_EDGEBOX_v26.10.08.02.ino').read_text()
-TS = (ROOT/'HV_P2P_CTRL_TS_v26.10.08.02'/'HV_P2P_CTRL_TS_v26.10.08.02.ino').read_text()
-W1P = (ROOT/'HV_P2P_W1P_EDGEBOX_v26.10.08.02'/'HV_P2P_W1P_EDGEBOX_v26.10.08.02.ino').read_text()
-SRVR = (ROOT/'SRVR_GitHub_v26.10.08.02'/'backend.py').read_text()
+CTRL = (ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.08.03'/'HV_P2P_CTRL_EDGEBOX_v26.10.08.03.ino').read_text()
+TS = (ROOT/'HV_P2P_CTRL_TS_v26.10.08.03'/'HV_P2P_CTRL_TS_v26.10.08.03.ino').read_text()
+W1P = (ROOT/'HV_P2P_W1P_EDGEBOX_v26.10.08.03'/'HV_P2P_W1P_EDGEBOX_v26.10.08.03.ino').read_text()
+SRVR = (ROOT/'SRVR_GitHub_v26.10.08.03'/'backend.py').read_text()
 RUNNER = (ROOT/'tools'/'run_all_source_checks.py').read_text()
 
 # Locked source cadences: do not accelerate the Leadshine feedback/safety loop or bulk HMI traffic.

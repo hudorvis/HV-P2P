@@ -1,4 +1,4 @@
-# HV P2P W1P direct motor-brake wiring — v26.10.08.02
+# HV P2P W1P direct motor-brake wiring — v26.10.08.03
 
 ## Scope
 
@@ -43,7 +43,7 @@ The brake is spring-applied and electrically released:
 
 Therefore an E-stop must **not** energise DO0. W1P's stop path removes motion/Servo Enable authority and the physical brake then applies when the EL7's fresh logical BRK-OFF sequence clears. If the EL7 output-status/RS485 path becomes invalid or stale, W1P fails DO0 LOW. DO0 is forced LOW during the earliest startup stage before network, Modbus, updater or motion initialization.
 
-The local W1P EdgeBox DI0 E-stop remains active in v26.10.08.02; there is no firmware bypass.
+The local W1P E-stop remains active, but v26.10.08.03 moves its status input to **AI0 / 5 V NC loop**. See `W1P_ESTOP_WIRING_v26.10.08.03.md`. There is no firmware bypass.
 
 ## Current estimate
 

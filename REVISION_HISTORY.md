@@ -1,3 +1,15 @@
+# v26.10.08.03 — 2026-10-08
+
+- Locked `v26.10.08.02`; the only functional production change is W1P local E-stop acquisition.
+- Migrated W1P E-stop from isolated `DI0` / 24 V to isolated `AI0` / 5 V using the onboard SGM58031 at I2C `0x48`.
+- W1P now starts fail-closed, samples AI0 every 10 ms, treats 3.5–6.0 V as healthy, asserts E-stop immediately for open/low/mid-band/over-range/ADC faults, and requires three consecutive healthy samples to clear.
+- ADC recovery remains fail-closed and cannot clear the E-stop until three fresh healthy samples are proven.
+- Existing E-stop action is unchanged: stop now, lock drive writes and inhibit software Servo Enable; clearing does not torque-enable the servo without SRVR neutral re-arm.
+- W1P wiring is AI0 pin 14 and AGND pin 12 on the commissioned connector. The W1P AI0 hardware must be configured for voltage input (same shunt-removed/0-10 V arrangement as CTRL).
+- Preserved `.08.02` Leadshine 38400/8N2/ID1, DO0 brake control, updater/status, motion, limits, calibration, AUX and all unrelated behaviour.
+- Added `test_w1p_estop_ai0_100803.py`, AI0 ADC/E-stop hash locks and dedicated wiring/bench documentation.
+- macOS bundle metadata: short version `26.10.8`, build `2610.8.3`.
+
 # v26.10.08.02 — 2026-10-08
 
 - Built from `v26.10.06.11`, preserving the locked `.06.10` system and `.06.11` CTRL-TS marker-smoothness change.

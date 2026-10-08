@@ -1,18 +1,18 @@
 // ============================================================
-// HV P2P W1P EdgeBox v26.10.08.02
+// HV P2P W1P EdgeBox v26.10.08.03
 // Seeed EdgeBox-ESP-100 Leadshine EL7-RS2000P commissioning interface
 //
 // Purpose:
 //   - Appear on the network over Ethernet
 //   - Accept UDP commands from HV P2P SRVR
 //   - Return STATUS lines compatible with the current SRVR branch over UDP
-//   - Provide an active local winch E-Stop input on EdgeBox DI0
+//   - Provide an active local winch E-Stop input on EdgeBox AI0 using a 5 V NC status loop
 //   - Initialise the EdgeBox onboard isolated RS485 link for
 //     Leadshine EL7-RS2000P Modbus RTU position and velocity control
 //
 // Current state of this build:
 //   - Network + SRVR UDP interface: implemented
-//   - Local E-Stop input: implemented
+//   - Local E-Stop input: implemented on isolated AI0 / SGM58031, fail-unsafe on open/low/ADC fault
 //   - Simulated position / velocity model for SRVR integration testing: implemented
 //   - EL7-RS2000P readback: implemented using the documented PR/Modbus register map
 //   - EL7-RS2000P velocity control: implemented with local accel/decel/cross-over profiling
@@ -36,6 +36,7 @@
 // EdgeBox-ESP-100 hardware port: onboard W5500 Ethernet and isolated RS485.
 #include <ETH.h>
 #include <SPI.h>
+#include <Wire.h>
 #include "hal/uart_types.h"
 #include <NetworkUdp.h>
 #include <WebServer.h>
@@ -50,11 +51,11 @@
 
 // -------------------- Version / identity --------------------
 static const char* FW_NAME    = "HV P2P W1P";
-static const char* FW_VERSION = "v26.10.08.02";
+static const char* FW_VERSION = "v26.10.08.03";
 static const char* NODE_BANNER = "HV_P2P_W1P";
 static const char* HV_AUTH_ROLE = "W1P";
 static const char* HV_AUTH_TARGET = "EDGEBOX_ESP100";
-static const char* HV_AUTH_VERSION = "v26.10.08.02";
+static const char* HV_AUTH_VERSION = "v26.10.08.03";
 
 // -------------------- Network defaults --------------------
 static IPAddress LOCAL_IP(172, 20, 1, 102);
@@ -230,10 +231,22 @@ static bool saveNetworkConfigFromHmi(const String &line, String &note){
 static const uint16_t TCP_PORT = 5000;
 
 // -------------------- Local I/O --------------------
-// Local W1P E-stop status on EdgeBox isolated DI0. Wire a 24 V NC loop:
-// field voltage present -> optocoupler GPIO HIGH -> healthy; open/pressed -> LOW -> unsafe.
-static const int PIN_LOCAL_ESTOP = 4;
-static const int LOCAL_ESTOP_HEALTHY_LEVEL = HIGH;
+// Local W1P E-stop status is read from EdgeBox isolated analogue input AI0 via
+// the onboard SGM58031 (I2C 0x48). This release intentionally mirrors the
+// commissioned CTRL voltage-input arrangement: the factory 249-ohm 4-20 mA
+// shunt on W1P AI0 must be removed / AI0 must be the 0-10 V hardware option.
+// Wire a normally-closed 5 V status loop: ~5 V present -> healthy; open/low or
+// any invalid/mid-band/ADC condition -> E-stop active. AI0 is pin 14 and the
+// isolated analogue return is AGND (pin 12 on the commissioned connector).
+static const int EDGEBOX_I2C_SDA = 20;
+static const int EDGEBOX_I2C_SCL = 19;
+static const uint8_t W1P_AI_ADC_ADDR = 0x48;
+static const float W1P_ESTOP_HEALTHY_MIN_V = 3.5f;
+static const float W1P_ESTOP_HEALTHY_MAX_V = 6.0f;
+static const uint8_t W1P_ESTOP_HEALTHY_CONFIRM_SAMPLES = 3;
+static const uint32_t W1P_ESTOP_SAMPLE_INTERVAL_MS = 10;
+static const uint32_t W1P_ESTOP_DIAG_INTERVAL_MS = 5000;
+static const uint32_t W1P_ESTOP_ADC_RECOVERY_INTERVAL_MS = 1000;
 // Do not consume an EdgeBox industrial output just for a firmware heartbeat.
 static const int PIN_STATUS_LED = -1;
 
@@ -253,7 +266,7 @@ static const uint32_t EDGEBOX_BRAKE_TRANSITION_POLL_MS = 25;
 static const uint32_t EDGEBOX_BRAKE_STATUS_STALE_MS = 120;
 
 // -------------------- Leadshine Servo Enable strategy --------------------
-// v26.10.08.02: EdgeBox W5500 + isolated native RS485; corrected EL7 SRV-ON configuration to PA4.00 / P04.00
+// v26.10.08.03: EdgeBox W5500 + isolated native RS485; corrected EL7 SRV-ON configuration to PA4.00 / P04.00
 // Input Selection DI1. MotionStudio confirmed the usable no-extra-wire setup
 // is DI1 = Servo ON Input (SRV-ON), Normally Closed, which reads/writes as
 // 0x83. Do not use the old DI5 / P04.04 path; do not use Normally Open
@@ -370,7 +383,7 @@ static const uint32_t MODBUS_FAULT_POLL_MS = 150;
 static const uint32_t MODBUS_REPLY_TIMEOUT_MS = 50;
 static const uint8_t  MODBUS_READ_RETRIES = 3;
 static const uint32_t MODBUS_INTERFRAME_GAP_US = 2000; // > Modbus fixed 1.75 ms t3.5 recommendation above 19.2 kbps
-// v26.10.08.02: EdgeBox W5500 + isolated native RS485; fail the physical link after two consecutive invalid/no-reply
+// v26.10.08.03: EdgeBox W5500 + isolated native RS485; fail the physical link after two consecutive invalid/no-reply
 // transactions, with a 250 ms stale-reply backstop. Require two valid replies
 // before recovering. The 50 ms reply timeout remains generous at 38400 baud,
 // while reducing the time for a removed CN3 lead to become a safety fault.
@@ -405,7 +418,7 @@ static const float MAX_PROFILE_ACCEL_MPS2 = 20.0f;
 static const float MOTION_ZERO_EPS_MPS = 0.005f;
 static const float DYNAMIC_LEAD_TIME_S = 0.50f;
 static const float DYNAMIC_MIN_LEAD_MPS = 0.05f;
-// v26.10.08.02: EdgeBox W5500 + isolated native RS485; Dynamic mode is a closed cable-speed hold. Joystick sets
+// v26.10.08.03: EdgeBox W5500 + isolated native RS485; Dynamic mode is a closed cable-speed hold. Joystick sets
 // target line speed; this PI trim lets the command nudge above/below the shaped
 // target to hold measured feedback speed more precisely under changing load.
 static const float DYNAMIC_SPEED_KP = 0.14f;
@@ -447,7 +460,7 @@ struct WinchState {
   float span_m = 100.0f;
   float limit_near_m = 0.0f;
   float limit_far_m = 100.0f;
-  bool local_estop = false;
+  bool local_estop = true;   // fail-closed until AI0 proves three consecutive healthy 5 V samples
   bool ethernet_up = false;
   bool client_connected = false;
   bool drive_ready = false;
@@ -576,7 +589,7 @@ static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_W1P";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL,CTRL_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_W1P_v*.ino.bin firmware. CTRL/CTRL-TS files are rejected.";
 static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=W1P;";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=W1P;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.08.02;";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=W1P;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.08.03;";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
@@ -854,6 +867,23 @@ float lastConfiguredAccelMps2 = -1.0f;
 float lastConfiguredDecelMps2 = -1.0f;
 float lastConfiguredCrossMps2 = -1.0f;
 
+// W1P AI0 E-stop ADC state. Assertion is immediate; clearing requires three
+// consecutive healthy samples so startup/noise cannot accidentally arm motion.
+static bool g_w1pEstopAdcReady = false;
+static float g_w1pEstopFieldV = 0.0f;
+static uint8_t g_w1pEstopHealthySamples = 0;
+static uint32_t g_w1pEstopLastSampleMs = 0;
+static uint32_t g_w1pEstopLastDiagMs = 0;
+static uint32_t g_w1pEstopLastRecoveryMs = 0;
+
+// SGM58031 register map/configuration, matching the commissioned CTRL driver.
+static const uint8_t W1P_SGM_REG_CONVERSION = 0x00;
+static const uint8_t W1P_SGM_REG_CONFIG = 0x01;
+static const uint8_t W1P_SGM_REG_CONFIG1 = 0x04;
+static const uint8_t W1P_SGM_REG_CHIP_ID = 0x05;
+static const uint16_t W1P_SGM_CONFIG_AI0_CONT_800SPS_6V144 = 0x40E3;
+static const uint16_t W1P_SGM_CONFIG1_DEFAULT = 0x0000;
+
 
 // -------------------- Helpers --------------------
 static String trimCopy(String s) {
@@ -876,6 +906,7 @@ static bool driveConfigureMotionProfile();
 static void serviceMotionProfile();
 static bool driveSendEmergencyStop();
 static void driveStopNow();
+static bool initW1pEstopAI0();
 static void updateLocalInputs();
 static void servicePeerTimeout();
 static void serviceVelocityCommandWatchdog();
@@ -1822,13 +1853,113 @@ static void serviceEdgeboxBrakeOutput() {
                                  : "EL7_BRK_OFF_OR_FAIL_SAFE_APPLY");
 }
 
+static bool w1pSgmWriteRegister(uint8_t reg, uint16_t value) {
+  Wire.beginTransmission(W1P_AI_ADC_ADDR);
+  Wire.write(reg);
+  Wire.write(uint8_t(value >> 8));
+  Wire.write(uint8_t(value & 0xFF));
+  return Wire.endTransmission() == 0;
+}
+
+static bool w1pSgmReadRegister(uint8_t reg, uint16_t &value) {
+  Wire.beginTransmission(W1P_AI_ADC_ADDR);
+  Wire.write(reg);
+  if(Wire.endTransmission(false) != 0) return false;
+  if(Wire.requestFrom(int(W1P_AI_ADC_ADDR), 2) != 2) return false;
+  value = (uint16_t(Wire.read()) << 8) | uint16_t(Wire.read());
+  return true;
+}
+
+static bool w1pSgmReadConversion(int16_t &raw) {
+  uint16_t u = 0;
+  if(!w1pSgmReadRegister(W1P_SGM_REG_CONVERSION, u)) return false;
+  raw = int16_t(u);
+  return true;
+}
+
+static bool initW1pEstopAI0() {
+  g_w1pEstopAdcReady = false;
+  g_w1pEstopHealthySamples = 0;
+  g.local_estop = true;
+
+  Wire.beginTransmission(W1P_AI_ADC_ADDR);
+  if(Wire.endTransmission() != 0) {
+    Serial.println("[ESTOP] SGM58031 not detected @0x48 - W1P E-stop held ACTIVE");
+    return false;
+  }
+  if(!w1pSgmWriteRegister(W1P_SGM_REG_CONFIG1, W1P_SGM_CONFIG1_DEFAULT) ||
+     !w1pSgmWriteRegister(W1P_SGM_REG_CONFIG, W1P_SGM_CONFIG_AI0_CONT_800SPS_6V144)) {
+    Serial.println("[ESTOP] SGM58031 AI0 configuration write failed - W1P E-stop held ACTIVE");
+    return false;
+  }
+
+  delay(5); // >3 conversion periods at 800 SPS.
+  uint16_t cfg = 0, chip = 0;
+  int16_t first = 0;
+  const bool cfgOk = w1pSgmReadRegister(W1P_SGM_REG_CONFIG, cfg);
+  const bool chipOk = w1pSgmReadRegister(W1P_SGM_REG_CHIP_ID, chip);
+  const bool sampleOk = w1pSgmReadConversion(first);
+  if(!cfgOk || !sampleOk ||
+     ((cfg & 0x7FFFu) != (W1P_SGM_CONFIG_AI0_CONT_800SPS_6V144 & 0x7FFFu))) {
+    Serial.printf("[ESTOP] SGM58031 AI0 verify failed cfg_ok=%d cfg=0x%04X sample_ok=%d - W1P E-stop held ACTIVE\n",
+                  cfgOk ? 1 : 0, unsigned(cfg), sampleOk ? 1 : 0);
+    return false;
+  }
+
+  g_w1pEstopAdcReady = true;
+  g_w1pEstopFieldV = (first < 0) ? 0.0f : float(first) * (6.144f / 32768.0f) * 2.0f;
+  Serial.printf("[ESTOP] SGM58031 OK @0x48 AI0 continuous 800SPS FS=+/-6.144V chip=0x%04X%s; field~=%.3fV; waiting for 3 healthy samples\n",
+                unsigned(chip), chipOk ? "" : " (ID read unavailable)", g_w1pEstopFieldV);
+  return true;
+}
+
 static void updateLocalInputs() {
-  int raw = digitalRead(PIN_LOCAL_ESTOP);
-  bool active = (raw != LOCAL_ESTOP_HEALTHY_LEVEL);
-  if (active != g.local_estop) {
+  const uint32_t now = millis();
+  if(g_w1pEstopLastSampleMs != 0 && (now - g_w1pEstopLastSampleMs) < W1P_ESTOP_SAMPLE_INTERVAL_MS) return;
+  g_w1pEstopLastSampleMs = now;
+
+  if(!g_w1pEstopAdcReady &&
+     (g_w1pEstopLastRecoveryMs == 0 || (now - g_w1pEstopLastRecoveryMs) >= W1P_ESTOP_ADC_RECOVERY_INTERVAL_MS)) {
+    g_w1pEstopLastRecoveryMs = now;
+    if(initW1pEstopAI0()) Serial.println("[ESTOP] AI0 ADC recovered; E-stop remains active until 3 healthy samples");
+  }
+
+  bool sampleOk = g_w1pEstopAdcReady;
+  uint16_t cfg = 0;
+  int16_t raw = 0;
+  if(sampleOk) {
+    sampleOk = w1pSgmReadRegister(W1P_SGM_REG_CONFIG, cfg) &&
+               ((cfg & 0x7FFFu) == (W1P_SGM_CONFIG_AI0_CONT_800SPS_6V144 & 0x7FFFu)) &&
+               w1pSgmReadConversion(raw) && raw >= 0;
+  }
+
+  bool active = true;
+  if(sampleOk) {
+    // Commissioned 0-10 V input option uses an approximately 2:1 divider, so
+    // field voltage is twice the ADC pin voltage, matching the CTRL implementation.
+    const float adcV = float(raw) * (6.144f / 32768.0f);
+    g_w1pEstopFieldV = adcV * 2.0f;
+    const bool healthyVoltage = (g_w1pEstopFieldV >= W1P_ESTOP_HEALTHY_MIN_V &&
+                                 g_w1pEstopFieldV <= W1P_ESTOP_HEALTHY_MAX_V);
+    if(healthyVoltage) {
+      if(g_w1pEstopHealthySamples < W1P_ESTOP_HEALTHY_CONFIRM_SAMPLES) ++g_w1pEstopHealthySamples;
+      active = g_w1pEstopHealthySamples < W1P_ESTOP_HEALTHY_CONFIRM_SAMPLES;
+    } else {
+      // Assertion is immediate. Open/low/mid-band/over-range all fail unsafe.
+      g_w1pEstopHealthySamples = 0;
+      active = true;
+    }
+  } else {
+    g_w1pEstopAdcReady = false;
+    g_w1pEstopHealthySamples = 0;
+    active = true;
+  }
+
+  if(active != g.local_estop) {
     g.local_estop = active;
-    Serial.printf("[IO] Local E-Stop -> %s\n", g.local_estop ? "ACTIVE" : "CLEAR");
-    if (g.local_estop) {
+    Serial.printf("[IO] Local E-Stop AI0 -> %s (field~=%.3fV)\n",
+                  g.local_estop ? "ACTIVE" : "CLEAR", g_w1pEstopFieldV);
+    if(g.local_estop) {
       driveStopNow();
       g.drive_writes_enabled = false;
       requestSoftwareSrvonInhibit(true, "W1P_ESTOP");
@@ -1838,6 +1969,11 @@ static void updateLocalInputs() {
       // every safety source is healthy and the joystick has passed neutral.
       Serial.println("[IO] Local E-Stop clear; software Servo Enable remains inhibited pending SRVR neutral re-arm");
     }
+  } else if(g.local_estop && sampleOk &&
+            (now - g_w1pEstopLastDiagMs) >= W1P_ESTOP_DIAG_INTERVAL_MS) {
+    g_w1pEstopLastDiagMs = now;
+    Serial.printf("[ESTOP] AI0 field~=%.3fV ACTIVE; healthy range %.1f..%.1fV\n",
+                  g_w1pEstopFieldV, W1P_ESTOP_HEALTHY_MIN_V, W1P_ESTOP_HEALTHY_MAX_V);
   }
 }
 
@@ -2185,7 +2321,7 @@ static bool driveAutoEnableReady() {
   if (g.no_motion_feedback_fault && requestingMotion) return false;
 
   if (!g.drive_writes_enabled) {
-    // v26.10.08.02: EdgeBox W5500 + isolated native RS485; only arm from WAIT on a fresh, non-zero joystick command.
+    // v26.10.08.03: EdgeBox W5500 + isolated native RS485; only arm from WAIT on a fresh, non-zero joystick command.
     // Do not re-arm from stale VEL state, and do not arm while the motor is still
     // coasting from a previous PR stop. Once armed, do not drop writes just because
     // feedback velocity becomes non-zero; that caused the observed step/pulse motion.
@@ -2306,7 +2442,7 @@ static void serviceMotionProfile() {
     g.vel_request_mps = 0.0f;
   }
   float target = constrain(g.vel_request_mps, -MAX_CMD_VEL_MPS, MAX_CMD_VEL_MPS);
-  // v26.10.08.02: EdgeBox W5500 + isolated native RS485; predictive hard-limit guard.  SRVR also tapers before
+  // v26.10.08.03: EdgeBox W5500 + isolated native RS485; predictive hard-limit guard.  SRVR also tapers before
   // Near/Far, but W1P applies the same stopping-distance rule locally so a
   // delayed network packet cannot keep driving past an end limit.
   target = limitVelocityForSoftLimits(g.pos_m, target);
@@ -3222,11 +3358,16 @@ void setup() {
   Serial.printf("%s %s\n", FW_NAME, FW_VERSION);
   Serial.printf("[OTA] Build identity: %s\n", HV_UPDATE_BUILD_TOKEN);
   Serial.println("Leadshine EL7-RS2000P command interface (auto-enable under SRVR safety gate)");
-  Serial.println("v26.10.08.02: EL7 factory RS485 38400 8N2; EdgeBox DO0 directly drives the fail-applied 24V motor brake under verified BRK-OFF sequencing");
+  Serial.println("v26.10.08.03: W1P E-stop on AI0 5V NC loop; EL7 RS485 38400 8N2; EdgeBox DO0 drives fail-applied 24V brake");
   Serial.println("============================================================");
 
-  pinMode(PIN_LOCAL_ESTOP, INPUT);
-  Serial.printf("[IO] EdgeBox DI0 GPIO%d: 24V NC loop HIGH=healthy, LOW/open=E-Stop\n", PIN_LOCAL_ESTOP);
+  // Fail closed until the isolated analogue input proves a healthy NC loop.
+  g.local_estop = true;
+  Wire.begin(EDGEBOX_I2C_SDA, EDGEBOX_I2C_SCL);
+  Wire.setClock(100000);
+  delay(20);
+  initW1pEstopAI0();
+  Serial.println("[IO] W1P E-stop: EdgeBox AI0 pin 14 / AGND pin 12, 5V NC loop; >=3.5V healthy after 3 samples, open/low/mid-band/ADC fault unsafe");
   Serial.printf("[IO] EdgeBox DO0 GPIO%d: HIGH=brake coil energised/released, LOW=brake applied (fail-safe)\n", PIN_EDGEBOX_BRAKE_DO0);
   if(PIN_STATUS_LED >= 0) { pinMode(PIN_STATUS_LED, OUTPUT); digitalWrite(PIN_STATUS_LED, LOW); }
   if (LEADSHINE_SRVON_OUTPUT_ENABLED && PIN_LEADSHINE_SRVON >= 0) {
@@ -3259,7 +3400,7 @@ void setup() {
   }
 
   Serial.printf("[CFG] IP=%s UDP=%u ETH=%s\n", ETH.localIP().toString().c_str(), (unsigned)TCP_PORT, eth_ok ? "OK" : "FAILED");
-  Serial.printf("[CFG] ESTOP_DI0=%d BRAKE_DO0=%d RS485=%lu/8N2 RX=%d TX=%d RTS=%d ID=%u\n", PIN_LOCAL_ESTOP, PIN_EDGEBOX_BRAKE_DO0, (unsigned long)RS485_BAUD, RS485_RX_PIN, RS485_TX_PIN, RS485_RTS_PIN, (unsigned)DRIVE_MODBUS_ID);
+  Serial.printf("[CFG] ESTOP_AI0=pin14/AGND12 healthy=%.1f..%.1fV BRAKE_DO0=%d RS485=%lu/8N2 RX=%d TX=%d RTS=%d ID=%u\n", W1P_ESTOP_HEALTHY_MIN_V, W1P_ESTOP_HEALTHY_MAX_V, PIN_EDGEBOX_BRAKE_DO0, (unsigned long)RS485_BAUD, RS485_RX_PIN, RS485_TX_PIN, RS485_RTS_PIN, (unsigned)DRIVE_MODBUS_ID);
   Serial.printf("[CFG] POS=%.3f SPAN=%.3f NL=%.3f FL=%.3f SIM=%s UPM=%.1f WRITES=LOCKED\n",
                 g.pos_m, g.span_m, g.limit_near_m, g.limit_far_m,
                 g.simulation_enabled ? "ON" : "OFF", g_command_units_per_m);

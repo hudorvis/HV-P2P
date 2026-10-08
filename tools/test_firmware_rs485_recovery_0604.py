@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""v26.10.08.02 regression: updater stages cannot strand a live mismatched CTRL-TS."""
+"""v26.10.08.03 regression: updater stages cannot strand a live mismatched CTRL-TS."""
 from pathlib import Path
 import re
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.10.08.02'
+VER = '26.10.08.03'
 B = (ROOT/f'SRVR_GitHub_v{VER}'/'backend.py').read_text(encoding='utf-8')
 Q = (ROOT/f'SRVR_GitHub_v{VER}'/'qml'/'pages'/'SetupPage.qml').read_text(encoding='utf-8')
 C = (ROOT/f'HV_P2P_CTRL_EDGEBOX_v{VER}'/f'HV_P2P_CTRL_EDGEBOX_v{VER}.ino').read_text(encoding='utf-8')

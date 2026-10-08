@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""v26.10.08.02 regression: DSP1 must use the proven bound CTRL UDP path."""
+"""v26.10.08.03 regression: DSP1 must use the proven bound CTRL UDP path."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BACKEND = ROOT / 'SRVR_GitHub_v26.10.08.02' / 'backend.py'
+BACKEND = ROOT / 'SRVR_GitHub_v26.10.08.03' / 'backend.py'
 src = BACKEND.read_text(encoding='utf-8')
 
 # The display sender must stage/coalesce rather than send DSP1 through the
@@ -37,7 +37,7 @@ assert 'self._ctrl_bound_display_pending = pending' in flush, 'failed send must 
 # Keep the fallback semantics unchanged: if fresh DSP1 is genuinely absent CTRL
 # may still present a neutral display, but .10 must fix the transport rather than
 # altering fallback operator data or motion/safety behavior.
-ctrl = (ROOT / 'HV_P2P_CTRL_EDGEBOX_v26.10.08.02' / 'HV_P2P_CTRL_EDGEBOX_v26.10.08.02.ino').read_text(encoding='utf-8')
+ctrl = (ROOT / 'HV_P2P_CTRL_EDGEBOX_v26.10.08.03' / 'HV_P2P_CTRL_EDGEBOX_v26.10.08.03.ino').read_text(encoding='utf-8')
 assert 'static String buildFallbackDisplayPacket' in ctrl
 for token in ('|aux1=AUX 1', '|aux5=AUX 5', '|max_mps=0.00', '|preset_names='):
     assert token in ctrl
