@@ -1,15 +1,19 @@
-# v26.10.06.11 — 2026-10-06
+# v26.10.08.02 — 2026-10-08
 
-- Locked `v26.10.06.10`; production change is restricted to CTRL-TS cable-progress display smoothness.
-- Confirmed the baseline path: healthy W1P Leadshine feedback poll 100 ms (10 Hz), W1P STATUS 50 ms (20 Hz), SRVR Virtual state tick 25 ms (40 Hz), SRVR desktop state emit 50 ms (20 Hz), DSP1 100 ms (10 Hz), CTRL HMM1 gate 80 ms but source-limited to ~10 Hz, CTRL-TS local marker service 16 ms with a 20 ms main-loop delay (~50 Hz effective).
-- Added a separate change-driven `DMP1` SRVR -> CTRL and `HMP1` CTRL -> CTRL-TS marker-only path capped at 50 ms (20 Hz), using only canonical `pos_frac` plus signed measured `speed_mps`. Full DSP1/HMI1/HMM1 rates remain unchanged.
-- Marker UDP uses the existing proven bound UDP/5000 controller-worker socket. The new packet is display-only and does not alter SRVR liveness, firmware authority, calibration, status or safety state.
-- CTRL forwards HMP1 through the same framed 115200-baud half-duplex link and ownership guards, but marker sends deliberately do not restart the existing POLL interval. POLL/EVENT, firmware transfer, state and geometry traffic retain priority.
-- CTRL-TS ignores duplicate marker targets, prevents slower HMM1/HMI1 copies from restarting interpolation while HMP1 is live, accepts observed 20 Hz samples, and reaches each already-verified target in ~90% of the observed sample interval without extrapolation. Existing signed-speed monotonic clamp remains.
-- Encoder mode remains limited to genuinely new verified Leadshine position samples (~10 Hz) because W1P `MODBUS_POLL_MS` is deliberately unchanged. Virtual mode can deliver new marker samples at 20 Hz. Local marker rendering remains ~50 Hz.
-- Conservative HMP1 transaction budget is ~14.5% of the RS485 bus at a continuous 20 Hz including framing and the 2.5 ms turnaround guard; firmware updates still exclusively own the bus while active.
-- Added `test_ctrl_ts_marker_smoothness_0611.py`; all prior transport/safety/update contracts remain in the source regression runner.
-- macOS bundle metadata: short version `26.10.6`, build `2610.6.11`.
+- Built from `v26.10.06.11`, preserving the locked `.06.10` system and `.06.11` CTRL-TS marker-smoothness change.
+- Moved the physical `ELM2M-2000LB130E-H` 24 V holding-brake coil to W1P EdgeBox `DO0` / GPIO40. Connector wiring is pin 1 `DO_24V`, pin 3 `DO_GND`, pin 5 `DO0`; the brake coil is wired between +24 V and DO0.
+- Retained EL7 DO4 as the internal `BRK-OFF` timing/status function but no longer uses its physical 50 mA output for the brake circuit. W1P reads logical BRK-OFF over Modbus and drives the higher-current EdgeBox output.
+- With the commissioned 36.2 ohm brake-coil measurement, nominal current is approximately 0.663 A at 24 V (15.9 W).
+- Added fail-safe DO0 startup LOW before network/Modbus/OTA/motion and a full healthy-state gate before any brake release.
+- Preserved Leadshine native brake timing on orderly Servo-OFF: an already released DO0 remains on only while fresh logical BRK-OFF remains asserted; W1P does not pre-apply the holding brake before the EL7 sequence completes.
+- Added a transition-only 25 ms read of `P08.47` while a released brake is shutting down. Normal position/velocity feedback remains locked at the existing 100 ms poll.
+- Safe OTA/service/reboot/reset now proves speed near zero, SRV-ST off, logical BRK-OFF off and EdgeBox DO0 off for two consecutive fresh samples.
+- W1P STATUS now separates `BRAKE_OUT` (EL7 logical state) from `BRAKE_DO0` (physical EdgeBox command); SRVR uses `BRAKE_DO0` for the operator-facing brake state.
+- Added `test_w1p_edgebox_brake_do0_1008.py`, new brake-function hash locks and wiring/bench documentation. All unrelated CTRL, CTRL-TS, W1P motion, calibration, AUX, limit, updater and firmware-authority behavior remains locked.
+- W1P operational EL7 Modbus now matches factory communication defaults: 38400 baud, 8N2, ID 1 (`P05.29=5`, `P05.30=4`, `P05.31=1`); prior 115200/8N1 remains read-only diagnostic only.
+- W1P local DI0 E-stop remains active; no E-stop bypass is present in this release.
+- Verified the existing updater status path: CTRL and W1P phase/percentage is relayed to CTRL-TS, with coordinator order CTRL -> W1P -> CTRL-TS.
+- macOS bundle metadata: short version `26.10.8`, build `2610.8.2`.
 
 # v26.10.06.10 — 2026-10-06
 
@@ -263,8 +267,6 @@
 ## v26.10.03.01
 - Introduced single-flight CTRL↔CTRL-TS RS485 scheduling, explicit normal POLL timeout, ACK/retry-safe EVENT IDs, fixed-buffer event queue, 4 Hz bulk HMI cap and communications counters.
 - Superseded by `.03.02` before bench deployment because GitHub native compilation exposed the parser-name typo.
-
-# HV P2P Revision History
 
 ## v26.10.02.05
 - Follow-up to v26.10.02.04 after bench reports of intentional-but-unexplained

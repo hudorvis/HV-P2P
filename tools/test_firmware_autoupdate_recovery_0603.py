@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""v26.10.06.11 regression: automatic update recovery must not require GUI ticks/reboots."""
+"""v26.10.08.02 regression: automatic update recovery must not require GUI ticks/reboots."""
 from pathlib import Path
 import re
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.10.06.11'
+VER='26.10.08.02'
 B=(ROOT/f'SRVR_GitHub_v{VER}'/'backend.py').read_text(encoding='utf-8')
 
 # Primary release discovery remains in the independent comms worker.

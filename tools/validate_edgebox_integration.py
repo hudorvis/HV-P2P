@@ -4,14 +4,14 @@ from pathlib import Path
 import hashlib, re, struct, sys
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.10.06.11'
+VER = '26.10.08.02'
 CTRL = ROOT / f'HV_P2P_CTRL_EDGEBOX_v{VER}' / f'HV_P2P_CTRL_EDGEBOX_v{VER}.ino'
 W1P = ROOT / f'HV_P2P_W1P_EDGEBOX_v{VER}' / f'HV_P2P_W1P_EDGEBOX_v{VER}.ino'
 TS = ROOT / f'HV_P2P_CTRL_TS_v{VER}' / f'HV_P2P_CTRL_TS_v{VER}.ino'
 FRAME_CTRL = ROOT / f'HV_P2P_CTRL_EDGEBOX_v{VER}' / 'HV_P2P_RS485_Frame.h'
 FRAME_TS = ROOT / f'HV_P2P_CTRL_TS_v{VER}' / 'HV_P2P_RS485_Frame.h'
 IMG_HDR = ROOT / f'HV_P2P_CTRL_EDGEBOX_v{VER}' / 'HV_P2P_CTRL_TS_Firmware_Image.h'
-SRVR_DIR = ROOT / 'SRVR_GitHub_v26.10.06.11'
+SRVR_DIR = ROOT / 'SRVR_GitHub_v26.10.08.02'
 SRVR = SRVR_DIR / 'backend.py'
 MAIN = SRVR_DIR / 'main.py'
 SETUP_QML = SRVR_DIR / 'qml' / 'pages' / 'SetupPage.qml'
@@ -214,8 +214,8 @@ must('CTRL_TS_SEMVER' in t and 'storedVersion == CTRL_TS_SEMVER' in t, 'CTRL-TS 
 must('Do NOT change g_fw_image_hash while the old application is still running' in t and 'return verify;' in t, 'CTRL-TS does not claim the staged image hash before reboot')
 must('MAX_IMAGE = 0x380000' in read(ROOT/'tools'/'embed_ctrl_ts_firmware.py'), 'CTRL-TS embed helper enforces the conservative 0x380000 target OTA slot')
 
-# Lock the reviewed v26.10.06.11 W1P safety-critical implementations via normalized function hashes.
-# Safety-facing functions intentionally extended in v26.10.06.11 are hash-locked separately below.
+# Lock the reviewed v26.10.08.02 W1P safety-critical implementations via normalized function hashes.
+# Safety-facing functions intentionally extended in v26.10.08.02 are hash-locked separately below.
 expected_w1p={
 'modbusCRC16':'2d54f956989bcfd6a5b539664c14228f13046f16daca4911cd6467fcafe6cd3e',
 'modbusWaitForSilentGap':'46cb53133b81b90bcc184ace784e64e1f807823485cd1ea29ad3b228a4b94cb8',
@@ -232,21 +232,39 @@ expected_w1p={
 'servicePeerTimeout':'81d5f57232771f48dbe5edd46161f75a8f5adf2aee370e9bc6180d64d61a48ff',
 'preserveDisplayedPositionForMotorDirectionChange':'e78aafbc76eb48601a04eed3703372a0dfd1f2c19070e891fdbd1952984942a0',
 }
-for fn,h in expected_w1p.items(): must(normalized_func_hash(w,fn)==h, f'W1P reviewed v26.10.06.11 safety-critical logic preserved: {fn}')
+for fn,h in expected_w1p.items(): must(normalized_func_hash(w,fn)==h, f'W1P reviewed v26.10.08.02 safety-critical logic preserved: {fn}')
 
 expected_w1p_v07_safety={
 'driveAutoEnableReady':'ce2cd73df1636f1ba2dd7ba23da9eca4f983ba3ee6a179dd9b5398ad831dc78f',
 'handleCommand':'eddc02983dec382ff0370f7b34fb244f855bfd45571836de9a217217ab83da2b',  # reviewed .05.11 SRVR authority-session revalidation
-'sendStatusLine':'00091e4a517a4196739f6307b8fea1a80afcc9bf405361bb4bfea1d6768aa397',
+'sendStatusLine':'7435a17c73d06db8b20e74d5cf8b838cfff5c0386e17001c1bdc0aa10d56f276',
 'serviceVelocityCommandWatchdog':'a6dc0d9244bf1c7b64d28291c56c8fcd20abb21af5566a5bf396e1723fdd9111',
-'hvPrepareSafeServiceState':'92026ffa3126d53e57d9f111583d11f7ef52b19b16528af82b970108bf4eb8ab',
+'hvPrepareSafeServiceState':'96366426901023dd550b528869e19ce53f5c6aa4dea736760af45c5e8ecae1fb',
 }
-for fn,h in expected_w1p_v07_safety.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.10.06.11 reviewed safety extension hash locked: {fn}')
+for fn,h in expected_w1p_v07_safety.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.10.08.02 reviewed safety extension hash locked: {fn}')
+
+# v26.10.08.02 direct EdgeBox DO0 brake switching. These functions are kept
+# separately hash-locked because they are the only new physical brake authority.
+expected_w1p_edgebox_brake={
+'requestSoftwareSrvonInhibit':'f2c1755e263a3cb29a09eb873113f0592f634cc97462063159fd77f2a9cf2066',
+'edgeboxBrakeReleaseStartAllowed':'caa8efb8790f96a7cce7fd6780e51e0b265d59c12b1abc9e3285e0f967f68da6',
+'edgeboxBrakeReleaseHoldAllowed':'eb4dfc6e705893c650ec56895b7ef3e67322cd5f550e4dc1b4cb4e040f42685d',
+'serviceLeadshineBrakeTransitionStatus':'dad21a5c702d092e57324b24525bbcaa2fa1d6cd1fe6effcc91d969a80a9d53b',
+'serviceEdgeboxBrakeOutput':'d5df450c7d6bed5681096f4730ffe044f674498ddb13ccfec3ebd1c70585116d',
+}
+for fn,h in expected_w1p_edgebox_brake.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.10.08.02 reviewed EdgeBox brake logic hash locked: {fn}')
+
+# Local W1P DI0 E-stop remains the locked fail-safe input. Hash-lock it so the
+# direct DO0 brake change cannot silently weaken the local E-stop path.
+expected_w1p_estop={
+'updateLocalInputs':'f672c819e2754c145013848eba11d3f50425852aeb2f2ba05c6981e27044fb92',
+}
+for fn,h in expected_w1p_estop.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.10.08.02 local E-stop path hash locked: {fn}')
 
 # Leadshine contract.
-for tok in ['RS485_BAUD = 115200','DRIVE_MODBUS_ID = 1','SERIAL_8N1','MODBUS_REPLY_TIMEOUT_MS = 50','MODBUS_READ_RETRIES = 3','MODBUS_INTERFRAME_GAP_US = 2000','W1P_PEER_TIMEOUT_MS = 750']:
+for tok in ['RS485_BAUD = 38400','DRIVE_MODBUS_ID = 1','SERIAL_8N2','MODBUS_REPLY_TIMEOUT_MS = 50','MODBUS_READ_RETRIES = 3','MODBUS_INTERFRAME_GAP_US = 2000','W1P_PEER_TIMEOUT_MS = 750']:
     must(tok in w, f'W1P Leadshine/safety contract: {tok}')
-for tok in ['REG_RS485_MODE = 0x053B','REG_RS485_BAUD = 0x053D','REG_RS485_ADDRESS = 0x053F','EXPECTED_RS485_MODE = 4','EXPECTED_RS485_BAUD_CODE = 6','EXPECTED_RS485_ADDRESS = 1']:
+for tok in ['REG_RS485_MODE = 0x053B','REG_RS485_BAUD = 0x053D','REG_RS485_ADDRESS = 0x053F','EXPECTED_RS485_MODE = 5','EXPECTED_RS485_BAUD_CODE = 4','EXPECTED_RS485_ADDRESS = 1']:
     must(tok in w, f'EL7 RS485 config contract: {tok}')
 for tok in ['REG_DO2_ASSIGN = 0x0417','REG_DO3_ASSIGN = 0x0419','REG_DO4_ASSIGN = 0x041B','REG_DO5_ASSIGN = 0x041D','EXPECTED_DO2_READY_ASSIGN = 2','EXPECTED_DO3_ENABLED_ASSIGN = 0x12','EXPECTED_DO4_BRAKE_ASSIGN = 3','EXPECTED_DO5_FAULT_ASSIGN = 1']:
     must(tok in w, f'EL7 DO map retained: {tok}')
@@ -258,8 +276,12 @@ must('SRVR peer timeout - stopping drive, locking writes and dropping software S
 must('driveStopNow();' in extract_func(w,'servicePeerTimeout'), 'W1P peer-timeout code directly stops drive')
 must('if (line == "STOP")' in w and 'parseFloatArg(line, "SW_SRVON", val)' in w, 'W1P STOP and SW_SRVON command contract retained')
 must('Do not torque-enable the servo while the output map is still being migrated' in w and '!g.do4_brake_assignment_ok' in w, 'SW Servo Enable waits for verified BRK-OFF/output map')
+must('PIN_EDGEBOX_BRAKE_DO0 = 40' in w and 'pin 1=DO_24V, pin 3=DO_GND, pin 5=DO0' in w, 'W1P direct brake maps EdgeBox connector pin 5 / GPIO40 with separate DO supply pins 1/3')
+must('EDGEBOX_BRAKE_TRANSITION_POLL_MS = 25' in w and 'REG_OUTPUT_IO_STATUS' in extract_func(w,'serviceLeadshineBrakeTransitionStatus'), 'W1P uses a dedicated high-rate P08.47 brake-transition poll without changing normal position poll rate')
+must('setEdgeboxBrakeRelease(false' not in extract_func(w,'requestSoftwareSrvonInhibit'), 'Orderly Servo-OFF does not pre-empt EL7 BRK-OFF timing by applying the holding brake early')
+must('BRAKE_DO0=' in extract_func(w,'sendStatusLine') and '"BRAKE_DO0"' in s and 'self.winch_brake_released = fields["BRAKE_DO0"]' in s, 'SRVR operator brake state follows the physical EdgeBox DO0 command')
 
-# v26.10.06.11 independent W1P command-deadman and service safety gate.
+# v26.10.08.02 independent W1P command-deadman and service safety gate.
 wd=extract_func(w,'serviceVelocityCommandWatchdog')
 must('W1P_VEL_COMMAND_TIMEOUT_MS = 500' in w, 'W1P independent VEL watchdog timeout is 500ms')
 must('lastVelocityCommandMs' in wd and 'lastPeerPacketMs' not in wd, 'W1P VEL watchdog keys only from VEL freshness, not generic peer traffic')
@@ -267,11 +289,11 @@ must(all(tok in wd for tok in ('driveStopNow();','g.drive_writes_enabled = false
 must('serviceVelocityCommandWatchdog();' in extract_func(w,'loop'), 'W1P main loop services the independent VEL watchdog')
 must('VEL_WD=' in w and 'SERVICE_LOCK=' in w and 'VEL_AGE_MS=' in w, 'W1P status exposes watchdog/service safety state to SRVR')
 service_gate=extract_func(w,'hvPrepareSafeServiceState')
-must(all(tok in service_gate for tok in ('driveStopNow();','g.drive_writes_enabled = false','requestSoftwareSrvonInhibit(true, "WEB_SERVICE")','modbusReadFeedbackBlock','rawUnitsDeltaToDisplayMps','OUTPUT_DO3_MASK','OUTPUT_DO4_MASK','stableSamples >= 2','lastDriveFeedbackMs','LEADSHINE_SRVON_DISABLED_VALUE')), 'W1P service gate uses fresh post-stop EL7 samples and proves stopped/SRV-ST-off/BRK-OFF-off state')
+must(all(tok in service_gate for tok in ('driveStopNow();','g.drive_writes_enabled = false','requestSoftwareSrvonInhibit(true, "WEB_SERVICE")','modbusReadFeedbackBlock','rawUnitsDeltaToDisplayMps','OUTPUT_DO3_MASK','OUTPUT_DO4_MASK','serviceEdgeboxBrakeOutput();','!g.edgebox_brake_released','stableSamples >= 2','lastDriveFeedbackMs','LEADSHINE_SRVON_DISABLED_VALUE')), 'W1P service gate uses fresh post-stop EL7 samples and proves stopped/SRV-ST-off/BRK-OFF-off/DO0-off state')
 must(w.count('hvPrepareSafeServiceState(reason)') >= 2 and 'hvPrepareSafeServiceState(hvUploadError)' in w, 'W1P OTA/reboot/reset all enter the safe service gate')
 must('SERVICE_REARM' in w and 'STOP_CLEAR_LATCH' in w, 'W1P service/watchdog latch requires STOP re-arm path')
 
-# v26.10.06.11 closes the W1P Setup-IP semantic gap with a coordinated safe
+# v26.10.08.02 closes the W1P Setup-IP semantic gap with a coordinated safe
 # readdress: the old address remains active until W1P proves stopped/braked,
 # persists the new local IP, acknowledges, then reboots.
 network_cmd=extract_func(w,'handleCommand')
@@ -334,7 +356,7 @@ must('▣  CTRL-TS' in q and 'CTRL-TS / FIRMWARE' not in q and 'ctrlTsFirmwareDi
 must('profileValue(Number(gp.x), key)' in span, 'Free-D geometry markers are sampled from the exact rendered cable path')
 
 
-# v26.10.06.11 locked Run/Setup revision and Virtual demo-source contract.
+# v26.10.08.02 locked Run/Setup revision and Virtual demo-source contract.
 main_qml = read(SRVR_DIR / 'qml' / 'Main.qml')
 must('text:"HV P2P\\nSRVR"' in main_qml and 'HV P2P  |  SRVR' not in main_qml and 'P2P°\\nSRVR' not in main_qml, 'Run/Setup shared header uses locked two-line HV P2P / SRVR logo only')
 must('pendingShortcutAction' in main_qml and 'shortcutConfirmRemaining = 5' in main_qml and 'Confirm? ' in main_qml and 'shortcutConfirmTimer' in main_qml, 'Run Save/Recall/Slip use one global five-second two-step confirmation state')
@@ -396,7 +418,7 @@ must('text:backend.bannerText' in main_qml and '♢' not in main_qml and '◇' n
 must('def _legacy_firmware_push_worker' in s and 'HTTPConnection' in s and '"/update/app"' in s and 'multipart/form-data' in s and 'daemon=True' in s and 'def _firmware_version_is_older' in s, 'SRVR has asynchronous backwards-compatible OTA push for older pre-beacon .01 field nodes without downgrading newer firmware')
 must('ctrl_present = bool(self._ctrl_connected() or self._ctrl_authority_fresh())' in s, 'legacy CTRL firmware bridge accepts either fresh control telemetry or fresh authority/HMI status presence')
 must('firmware_bundle=authority.bundle' in m, 'SRVR backend receives the already validated immutable firmware bundle for legacy OTA bridging')
-must('ctrl_version=v26.10.06.11' in c and 'FW=" + String(FW_VERSION)' in w, 'CTRL and W1P publish actual firmware identity for Setup')
+must('ctrl_version=v26.10.08.02' in c and 'FW=" + String(FW_VERSION)' in w, 'CTRL and W1P publish actual firmware identity for Setup')
 must('ctrlFirmwareVersion' in s and 'w1pFirmwareVersion' in s and 'ctrlEStopActive' in s and 'w1pEStopActive' in s, 'SRVR exposes locked CTRL/W1P Setup diagnostics')
 must('text:"Link"' in q and 'backend.ctrlTsRs485Active?"Active":"Disconnected"' in q, 'CTRL-TS Link uses physical RS485 Active/Disconnected semantics')
 must('anchors.rightMargin:root.f(15)' in q and 'anchors.leftMargin:root.f(15)' in q and q.count('width:(parent.width-root.f(1))/2') >= 2, 'Motion Profiles centre divider has even Mode 1/Mode 2 spacing')

@@ -402,7 +402,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.06.11", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.08.02", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -418,7 +418,7 @@ class HVP2PBackend(QObject):
         self._fw_modern_fallback_delay_s = 2.5
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.06.11+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.08.02+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -1590,7 +1590,7 @@ class HVP2PBackend(QObject):
                 k,v = p.split("=",1); fields[k]=v
         required_status = {
             "FW_MATCH", "ESTOP", "VEL_WD", "SERVICE_LOCK", "WRITE_EN",
-            "SW_SRVON_INHIBIT", "BRAKE_OUT", "RS_STAT", "LEAD_CFG",
+            "SW_SRVON_INHIBIT", "BRAKE_OUT", "BRAKE_DO0", "RS_STAT", "LEAD_CFG",
             "MODBUS", "READY", "POS_READ", "IO_READ", "DO2_CFG",
             "DO3_CFG", "DO4_CFG", "DO5_CFG", "SRDY"
         }
@@ -1605,7 +1605,7 @@ class HVP2PBackend(QObject):
         # rejecting the bad sample and retaining the previous fresh snapshot.
         strict_bits = (
             "FW_MATCH", "ESTOP", "VEL_WD", "SERVICE_LOCK", "WRITE_EN",
-            "SW_SRVON_INHIBIT", "BRAKE_OUT", "MODBUS", "READY",
+            "SW_SRVON_INHIBIT", "BRAKE_OUT", "BRAKE_DO0", "MODBUS", "READY",
             "POS_READ", "IO_READ", "DO2_CFG", "DO3_CFG", "DO4_CFG",
             "DO5_CFG", "SRDY",
         )
@@ -1671,7 +1671,10 @@ class HVP2PBackend(QObject):
             if "DO4_ASSIGN" in fields:
                 try: self.winch_do4_assignment = int(float(fields["DO4_ASSIGN"]))
                 except Exception: self.winch_do4_assignment = None
-            if "BRAKE_OUT" in fields: self.winch_brake_released = fields["BRAKE_OUT"].lower() in ("1","true","on","released")
+            # BRAKE_OUT is the EL7's logical BRK-OFF sequencing state; the actual
+            # motor brake coil is now switched by W1P EdgeBox DO0. Present the
+            # physical DO0 command as the brake state throughout SRVR/UI.
+            if "BRAKE_DO0" in fields: self.winch_brake_released = fields["BRAKE_DO0"].lower() in ("1","true","on","released")
             if "DO5_CFG" in fields: self.winch_do5_fault_config_ok = fields["DO5_CFG"].lower() in ("1","true","on","ok")
             if "DO5_ASSIGN" in fields:
                 try: self.winch_do5_assignment = int(float(fields["DO5_ASSIGN"]))
@@ -4136,7 +4139,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.06.11 moves the installed joystick polarity correction into CTRL,
+        # v26.10.08.02 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""v26.10.06.11 locked-scope regression: marker smoothing, persistent ramp status, W1P encoder path."""
+"""v26.10.08.02 locked-scope regression: marker smoothing, persistent ramp status, W1P encoder path."""
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.10.06.11'
+VER='26.10.08.02'
 T=(ROOT/f'HV_P2P_CTRL_TS_v{VER}/HV_P2P_CTRL_TS_v{VER}.ino').read_text()
 B=(ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 W=(ROOT/f'HV_P2P_W1P_EDGEBOX_v{VER}/HV_P2P_W1P_EDGEBOX_v{VER}.ino').read_text()
@@ -33,7 +33,7 @@ assert 'if "POS_M" in fields and self.position_source != "Virtual"' in B
 assert 'if "VEL_MPS" in fields and self.position_source != "Virtual"' in B
 for tok in (
     'EDGEBOX_RS485_TX = 17', 'EDGEBOX_RS485_RX = 18', 'EDGEBOX_RS485_RTS = 8',
-    'RS485_BAUD = 115200', 'SERIAL_8N1', 'UART_MODE_RS485_HALF_DUPLEX',
+    'RS485_BAUD = 38400', 'SERIAL_8N2', 'UART_MODE_RS485_HALF_DUPLEX',
     'DRIVE_MODBUS_ID = 1', 'REG_CONTROL_MODE = 0x0003', 'EXPECTED_CONTROL_MODE = 6',
     'REG_PR_CONTROL = 0x6002', 'REG_MOTOR_POSITION_H = 0x602C',
     'REG_INPUT_IO_STATUS = 0x602E', 'REG_OUTPUT_IO_STATUS = 0x602F',

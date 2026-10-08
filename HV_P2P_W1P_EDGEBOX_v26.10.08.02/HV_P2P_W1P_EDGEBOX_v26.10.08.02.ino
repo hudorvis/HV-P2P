@@ -1,12 +1,12 @@
 // ============================================================
-// HV P2P W1P EdgeBox v26.10.06.11
+// HV P2P W1P EdgeBox v26.10.08.02
 // Seeed EdgeBox-ESP-100 Leadshine EL7-RS2000P commissioning interface
 //
 // Purpose:
 //   - Appear on the network over Ethernet
 //   - Accept UDP commands from HV P2P SRVR
 //   - Return STATUS lines compatible with the current SRVR branch over UDP
-//   - Provide a local winch E-Stop input
+//   - Provide an active local winch E-Stop input on EdgeBox DI0
 //   - Initialise the EdgeBox onboard isolated RS485 link for
 //     Leadshine EL7-RS2000P Modbus RTU position and velocity control
 //
@@ -20,6 +20,9 @@
 //   - EL7 outputs verified/configured as DO2=Ready/SRDY, DO3=Enabled/SRV-ST,
 //     DO4=Brake/BRK-OFF and DO5=Fault/ALARM before normal motion can arm
 //   - Existing software SRV-ON is dropped before any EL7 output-map migration
+//   - Motor brake coil is driven directly by EdgeBox isolated DO0 (GPIO40).
+//     Leadshine DO4 remains assigned to BRK-OFF only as a verified logical
+//     timing/interlock state over Modbus; its physical output is not wired to the brake.
 //
 // Notes:
 //   - This sketch is intended for first powered RS485 commissioning. It starts with
@@ -47,11 +50,11 @@
 
 // -------------------- Version / identity --------------------
 static const char* FW_NAME    = "HV P2P W1P";
-static const char* FW_VERSION = "v26.10.06.11";
+static const char* FW_VERSION = "v26.10.08.02";
 static const char* NODE_BANNER = "HV_P2P_W1P";
 static const char* HV_AUTH_ROLE = "W1P";
 static const char* HV_AUTH_TARGET = "EDGEBOX_ESP100";
-static const char* HV_AUTH_VERSION = "v26.10.06.11";
+static const char* HV_AUTH_VERSION = "v26.10.08.02";
 
 // -------------------- Network defaults --------------------
 static IPAddress LOCAL_IP(172, 20, 1, 102);
@@ -231,20 +234,34 @@ static const uint16_t TCP_PORT = 5000;
 // field voltage present -> optocoupler GPIO HIGH -> healthy; open/pressed -> LOW -> unsafe.
 static const int PIN_LOCAL_ESTOP = 4;
 static const int LOCAL_ESTOP_HEALTHY_LEVEL = HIGH;
-
 // Do not consume an EdgeBox industrial output just for a firmware heartbeat.
 static const int PIN_STATUS_LED = -1;
 
+// -------------------- EdgeBox direct motor-brake output --------------------
+// EdgeBox multi-function connector: pin 1=DO_24V, pin 3=DO_GND, pin 5=DO0.
+// DO0 is the low-side switched return for the 24 V holding-brake coil.
+// GPIO40 HIGH turns the EdgeBox DO0 sink ON, energising the brake coil and
+// therefore RELEASING the spring-applied motor brake. LOW is the fail-safe state.
+static const int  PIN_EDGEBOX_BRAKE_DO0 = 40;
+static const bool EDGEBOX_BRAKE_RELEASE_ACTIVE_HIGH = true;
+static const uint32_t EDGEBOX_BRAKE_FEEDBACK_STALE_MS = 350;
+// During an orderly Servo-OFF transition, poll only P08.47 faster than the
+// normal 10 Hz position block. This keeps the physical DO0 brake output closely
+// behind the EL7's native BRK-OFF timing without increasing the normal encoder /
+// motion-feedback traffic for the rest of the project.
+static const uint32_t EDGEBOX_BRAKE_TRANSITION_POLL_MS = 25;
+static const uint32_t EDGEBOX_BRAKE_STATUS_STALE_MS = 120;
+
 // -------------------- Leadshine Servo Enable strategy --------------------
-// v26.10.06.11: EdgeBox W5500 + isolated native RS485; corrected EL7 SRV-ON configuration to PA4.00 / P04.00
+// v26.10.08.02: EdgeBox W5500 + isolated native RS485; corrected EL7 SRV-ON configuration to PA4.00 / P04.00
 // Input Selection DI1. MotionStudio confirmed the usable no-extra-wire setup
 // is DI1 = Servo ON Input (SRV-ON), Normally Closed, which reads/writes as
 // 0x83. Do not use the old DI5 / P04.04 path; do not use Normally Open
 // unless a physical 24 V SRV-ON input is wired.
 //
-// IMPORTANT: this enables the drive logic only. It is not STO, does not remove
-// main power, and does not release the motor brake. Keep the W1P E-stop, brake
-// wiring and power isolation strategy independent of this setting.
+// IMPORTANT: this enables the drive logic only. It is not STO and does not remove
+// main power. The physical motor brake is now driven by EdgeBox DO0 and remains
+// fail-applied until W1P verifies the EL7's SRV-ST + internal BRK-OFF state.
 static const bool LEADSHINE_SOFTWARE_SRVON_ENABLED = true;
 static const uint16_t LEADSHINE_SRVON_EXTERNAL_VALUE = 3;   // Physical DI SRV-ON, Normally Open - not used by default
 static const uint16_t LEADSHINE_SRVON_INTERNAL_VALUE = 0x0083;  // DI1 SRV-ON, Normally Closed - no physical SRV-ON wire (0x83 = decimal 131)
@@ -267,7 +284,7 @@ static const uint32_t SRVON_SETTLE_MS = 500;
 static const int RS485_RX_PIN = EDGEBOX_RS485_RX;
 static const int RS485_TX_PIN = EDGEBOX_RS485_TX;
 static const int RS485_RTS_PIN = EDGEBOX_RS485_RTS;
-static const uint32_t RS485_BAUD = 115200;
+static const uint32_t RS485_BAUD = 38400;
 HardwareSerial DriveSerial(1);
 
 // -------------------- W1P-TS disabled for this integration round --------------------
@@ -297,8 +314,9 @@ static uint32_t g_lastHmiDisplayKeepaliveMs = 0;
 
 // -------------------- Leadshine EL7-RS2000P Modbus --------------------
 // Exact EL7-RS P-series register map from Leadshine User Manual V2.0.1.
-// The drive must be configured in PR mode (P00.01 = 6), Modbus RTU 8N1,
-// 115200 baud, slave address 1. Position is 10,000 pulses per motor revolution.
+// The drive must be configured in PR mode (P00.01 = 6). RS485 uses the EL7
+// factory communication format: Modbus RTU 8N2, 38400 baud, slave address 1.
+// Position is 10,000 pulses per motor revolution.
 static const uint8_t  DRIVE_MODBUS_ID = 1;
 static const uint16_t REG_CONTROL_MODE = 0x0003;        // P00.01, expected 6 = PR mode
 static const uint16_t REG_DI1_ASSIGN = 0x0401;           // P04.00 / PA4.00, DI1 Input Selection
@@ -306,10 +324,10 @@ static const uint16_t REG_LEGACY_DI5_ASSIGN = 0x0409;    // Legacy v26.06.26.04 
 static const uint16_t REG_DO1_ASSIGN = 0x0415;           // P04.10 / DO1. Left operator-defined/spare; not used as a safety prerequisite.
 static const uint16_t REG_DO2_ASSIGN = 0x0417;           // P04.11, expected 2 = Servo Ready (SRDY)
 static const uint16_t REG_DO3_ASSIGN = 0x0419;           // P04.12, expected 0x12 = Servo Status / Enabled (SRV-ST)
-static const uint16_t REG_DO4_ASSIGN = 0x041B;           // P04.13, expected 3 = External brake released (BRK-OFF)
+static const uint16_t REG_DO4_ASSIGN = 0x041B;           // P04.13, expected 3 = BRK-OFF logical timing/status interlock (physical DO4 unused)
 static const uint16_t REG_DO5_ASSIGN = 0x041D;           // P04.14, expected 1 = Alarm / Fault (ALARM, NO)
-static const uint16_t REG_RS485_MODE = 0x053B;          // P05.29, expected 4 = 8N1
-static const uint16_t REG_RS485_BAUD = 0x053D;          // P05.30, expected 6 = 115200
+static const uint16_t REG_RS485_MODE = 0x053B;          // P05.29, expected 5 = 8N2 (factory default)
+static const uint16_t REG_RS485_BAUD = 0x053D;          // P05.30, expected 4 = 38400 (factory default)
 static const uint16_t REG_RS485_ADDRESS = 0x053F;       // P05.31, expected 1
 static const uint16_t REG_PR_CONTROL = 0x6002;          // P08.02 trigger/reset/E-stop
 static const uint16_t REG_MOTOR_POSITION_H = 0x602C;    // P08.44 high word
@@ -330,15 +348,15 @@ static const uint16_t DI_DISABLED_VALUE = 0;              // Leadshine input all
 // Leadshine programmable outputs therefore carry Ready / Enabled / Brake / Fault on DO2..DO5.
 static const uint16_t EXPECTED_DO2_READY_ASSIGN = 2;     // P04.11 = SRDY (NO)
 static const uint16_t EXPECTED_DO3_ENABLED_ASSIGN = 0x12;// P04.12 = SRV-ST (NO)
-static const uint16_t EXPECTED_DO4_BRAKE_ASSIGN = 3;     // P04.13 = BRK-OFF (NO)
+static const uint16_t EXPECTED_DO4_BRAKE_ASSIGN = 3;     // P04.13 = BRK-OFF (NO), retained as logical timing/status interlock
 static const uint16_t EXPECTED_DO5_FAULT_ASSIGN = 1;     // P04.14 = ALARM (NO; active when drive alarm occurs)
 static const uint16_t INPUT_DI1_MASK = 0x0001;           // P08.46 bit 0 = DI1 state, assuming DI1..DI8 map to bits 0..7
 static const uint16_t OUTPUT_DO2_MASK = 0x0002;          // P08.47 bit 1 = DO2 / configured SRDY
 static const uint16_t OUTPUT_DO3_MASK = 0x0004;          // P08.47 bit 2 = DO3 / configured SRV-ST
-static const uint16_t OUTPUT_DO4_MASK = 0x0008;          // P08.47 bit 3 = DO4 / configured BRK-OFF
+static const uint16_t OUTPUT_DO4_MASK = 0x0008;          // P08.47 bit 3 = logical BRK-OFF state; physical DO4 is not wired to the brake
 static const uint16_t OUTPUT_DO5_MASK = 0x0010;          // P08.47 bit 4 = DO5 / configured ALARM
-static const uint16_t EXPECTED_RS485_MODE = 4;
-static const uint16_t EXPECTED_RS485_BAUD_CODE = 6;
+static const uint16_t EXPECTED_RS485_MODE = 5;
+static const uint16_t EXPECTED_RS485_BAUD_CODE = 4;
 static const uint16_t EXPECTED_RS485_ADDRESS = 1;
 static const uint16_t PR_MODE_VELOCITY = 0x0002;
 static const uint16_t PR_TRIGGER_PATH0 = 0x0010;
@@ -352,9 +370,9 @@ static const uint32_t MODBUS_FAULT_POLL_MS = 150;
 static const uint32_t MODBUS_REPLY_TIMEOUT_MS = 50;
 static const uint8_t  MODBUS_READ_RETRIES = 3;
 static const uint32_t MODBUS_INTERFRAME_GAP_US = 2000; // > Modbus fixed 1.75 ms t3.5 recommendation above 19.2 kbps
-// v26.10.06.11: EdgeBox W5500 + isolated native RS485; fail the physical link after two consecutive invalid/no-reply
+// v26.10.08.02: EdgeBox W5500 + isolated native RS485; fail the physical link after two consecutive invalid/no-reply
 // transactions, with a 250 ms stale-reply backstop. Require two valid replies
-// before recovering. The 50 ms reply timeout is still generous at 115200 baud,
+// before recovering. The 50 ms reply timeout remains generous at 38400 baud,
 // while reducing the time for a removed CN3 lead to become a safety fault.
 static const uint8_t  RS485_FAIL_CONFIRM_COUNT = 2;
 static const uint8_t  RS485_RECOVER_CONFIRM_COUNT = 2;
@@ -387,7 +405,7 @@ static const float MAX_PROFILE_ACCEL_MPS2 = 20.0f;
 static const float MOTION_ZERO_EPS_MPS = 0.005f;
 static const float DYNAMIC_LEAD_TIME_S = 0.50f;
 static const float DYNAMIC_MIN_LEAD_MPS = 0.05f;
-// v26.10.06.11: EdgeBox W5500 + isolated native RS485; Dynamic mode is a closed cable-speed hold. Joystick sets
+// v26.10.08.02: EdgeBox W5500 + isolated native RS485; Dynamic mode is a closed cable-speed hold. Joystick sets
 // target line speed; this PI trim lets the command nudge above/below the shaped
 // target to hold measured feedback speed more precisely under changing load.
 static const float DYNAMIC_SPEED_KP = 0.14f;
@@ -456,7 +474,9 @@ struct WinchState {
   bool do5_assignment_read_ok = false;
   bool do5_fault_assignment_ok = false;
   bool servo_enabled_output = false;
-  bool brake_output_released = false;
+  bool brake_output_released = false;   // EL7 logical BRK-OFF state from P08.47; not the physical brake coil output
+  bool edgebox_brake_released = false;  // actual EdgeBox DO0 state: true = coil energised / brake released
+  uint32_t edgebox_brake_last_change_ms = 0;
   bool fault_output_active = false;
   uint32_t output_config_last_attempt_ms = 0;
   bool srvon_output_asserted = false;
@@ -556,7 +576,7 @@ static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_W1P";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL,CTRL_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_W1P_v*.ino.bin firmware. CTRL/CTRL-TS files are rejected.";
 static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=W1P;";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=W1P;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.06.11;";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=W1P;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.08.02;";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
@@ -816,6 +836,8 @@ unsigned long lastBlinkMs = 0;
 unsigned long lastPeerPacketMs = 0;
 unsigned long lastModbusPollMs = 0;
 unsigned long lastDriveFeedbackMs = 0;
+unsigned long lastBrakeStatusMs = 0;
+unsigned long lastBrakeTransitionPollMs = 0;
 unsigned long lastDriveConfigPollMs = 0;
 int32_t lastRawDrivePosition = 0;
 unsigned long lastRawDrivePositionMs = 0;
@@ -858,6 +880,13 @@ static void updateLocalInputs();
 static void servicePeerTimeout();
 static void serviceVelocityCommandWatchdog();
 static void sendStatusLine(bool force = false);
+static void setEdgeboxBrakeRelease(bool release, const char* reason);
+static bool softwareServoEnableReady();
+static bool edgeboxBrakeReleaseStartAllowed();
+static bool edgeboxBrakeReleaseHoldAllowed();
+static bool edgeboxBrakeShutdownSequencingRequested();
+static void serviceLeadshineBrakeTransitionStatus();
+static void serviceEdgeboxBrakeOutput();
 static void requestSoftwareSrvonInhibit(bool inhibit, const char* reason);
 
 static void serviceNetworkReaddressRollback(){
@@ -956,12 +985,17 @@ static bool hvPrepareSafeServiceState(String& reason) {
     g.brake_output_released = brakeReleased;
     g.vel_actual_mps = isfinite(observedMps) ? observedMps : 0.0f;
     lastDriveFeedbackMs = now;
+    lastBrakeStatusMs = now;
+    // Preserve the EL7's native brake sequence: during an orderly Servo-OFF,
+    // DO0 remains released only while fresh P08.47/BRK-OFF remains asserted,
+    // then drops as soon as the EL7 requests brake application.
+    serviceEdgeboxBrakeOutput();
 
-    if (isfinite(observedMps) && fabsf(observedMps) <= 0.05f && !servoEnabled && !brakeReleased) {
+    if (isfinite(observedMps) && fabsf(observedMps) <= 0.05f && !servoEnabled && !brakeReleased && !g.edgebox_brake_released) {
       ++stableSamples;
       if (stableSamples >= 2) {
         g.vel_actual_mps = 0.0f;
-        reason = "Safe service state verified: stopped, Servo Enable OFF, brake release OFF";
+        reason = "Safe service state verified: stopped, Servo Enable OFF, EL7 BRK-OFF OFF, EdgeBox DO0 brake release OFF";
         return true;
       }
     } else {
@@ -973,7 +1007,8 @@ static bool hvPrepareSafeServiceState(String& reason) {
 
   reason = String("Refused: EL7 did not prove stopped/braked state within 1.2 s (speed=") +
            String(g.vel_actual_mps, 3) + " m/s, SRV-ST=" + String(g.servo_enabled_output ? 1 : 0) +
-           ", BRK-OFF=" + String(g.brake_output_released ? 1 : 0) + ").";
+           ", BRK-OFF=" + String(g.brake_output_released ? 1 : 0) +
+           ", EDGEBOX_DO0=" + String(g.edgebox_brake_released ? 1 : 0) + ").";
   return false;
 }
 
@@ -1393,16 +1428,16 @@ static void serviceLeadshineFactoryCommsProbe(){
   const uint32_t savedLastErr = g.rs_last_err_ms;
   const uint8_t savedException = g.last_modbus_exception;
 
-  Serial.println("[RS485 DIAG] no reply at operational 115200 8N1; probing EL7 factory 38400 8N2 read-only");
-  startDriveSerialConfig(38400, SERIAL_8N2);
+  Serial.println("[RS485 DIAG] no reply at operational 38400 8N2; probing prior HV setting 115200 8N1 read-only");
+  startDriveSerialConfig(115200, SERIAL_8N1);
   uint16_t fmt=0xFFFF, baud=0xFFFF, addr=0xFFFF;
   bool okFmt = modbusReadHoldingRegisters(DRIVE_MODBUS_ID, REG_RS485_MODE, 1, &fmt);
   bool okBaud = okFmt && modbusReadHoldingRegisters(DRIVE_MODBUS_ID, REG_RS485_BAUD, 1, &baud);
   bool okAddr = okBaud && modbusReadHoldingRegisters(DRIVE_MODBUS_ID, REG_RS485_ADDRESS, 1, &addr);
 
-  // Factory probing is diagnostic only: never let it promote operational link
-  // health or alter normal Modbus counters, and always restore 115200/8N1.
-  startDriveSerialConfig(RS485_BAUD, SERIAL_8N1);
+  // Alternate-format probing is diagnostic only: never let it promote operational
+  // link health or alter normal Modbus counters, and always restore 38400/8N2.
+  startDriveSerialConfig(RS485_BAUD, SERIAL_8N2);
   g.rs_link_ok = savedLink;
   g.rs_consecutive_successes = savedOk;
   g.rs_consecutive_failures = savedFail;
@@ -1413,11 +1448,11 @@ static void serviceLeadshineFactoryCommsProbe(){
   g_factoryCommsDetected = okFmt && okBaud && okAddr;
   if(g_factoryCommsDetected){
     g_factoryFmt = fmt; g_factoryBaud = baud; g_factoryAddr = addr;
-    Serial.printf("[RS485 DIAG] EL7 responds at 38400 8N2: P05.29=%u P05.30=%u P05.31=%u. Set 4/6/1 and restart the EL7 before HV P2P operation.\n",
+    Serial.printf("[RS485 DIAG] EL7 responds at prior 115200 8N1 setting: P05.29=%u P05.30=%u P05.31=%u. For this release set P05.29=5, P05.30=4, P05.31=1 and restart the EL7.\n",
                   (unsigned)fmt, (unsigned)baud, (unsigned)addr);
   } else {
     g_factoryFmt = g_factoryBaud = g_factoryAddr = 0xFFFF;
-    Serial.println("[RS485 DIAG] no valid EL7 reply at 38400 8N2 either; check CN3 custom harness, A/B polarity, termination and drive power.");
+    Serial.println("[RS485 DIAG] no valid EL7 reply at 115200 8N1 either; check CN3 custom harness, A/B polarity, termination and drive power.");
   }
 }
 
@@ -1507,7 +1542,7 @@ static void pollLeadshineFeedback() {
     if (diagState != lastDiagState) {
       lastDiagState = diagState;
       if (diagState == 0) {
-        Serial.printf("[RS485] No valid Modbus reply at 115200 8N1, slave ID %u. Check tested T/R harness, A/B/GND and EL7 P05.29/P05.30/P05.31.\n", (unsigned)DRIVE_MODBUS_ID);
+        Serial.printf("[RS485] No valid Modbus reply at 38400 8N2, slave ID %u. Check tested T/R harness, A/B/GND and EL7 P05.29/P05.30/P05.31.\n", (unsigned)DRIVE_MODBUS_ID);
       } else if (diagState == 1) {
         Serial.printf("[RS485] Configuration read fault: P00.01=%s, P04.00=%s, P04.11=%s, P04.12=%s, P04.13=%s, P04.14=%s, P05.29=%s, P05.30=%s, P05.31=%s; last Modbus exception=0x%02X.\n",
                       okCtrl ? "OK" : "NO REPLY",
@@ -1521,7 +1556,7 @@ static void pollLeadshineFeedback() {
                       okAddr ? "OK" : "NO REPLY",
                       (unsigned)g.last_modbus_exception);
       } else if (diagState == 2) {
-        Serial.printf("[RS485] Link OK but configuration value mismatch: P00.01=%u (need 6), P04.00=%u (need 0x83/131=DI1 SRV-ON NC), legacy P04.04/DI5=%u (must not be SRV-ON), P04.11/DO2=%u (need 2=SRDY), P04.12/DO3=%u (need 0x12=SRV-ST), P04.13/DO4=%u (need 3=BRK-OFF), P04.14/DO5=%u (need 1=ALARM), P05.29=%u (need 4/8N1), P05.30=%u (need 6/115200), P05.31=%u (need 1).\n",
+        Serial.printf("[RS485] Link OK but configuration value mismatch: P00.01=%u (need 6), P04.00=%u (need 0x83/131=DI1 SRV-ON NC), legacy P04.04/DI5=%u (must not be SRV-ON), P04.11/DO2=%u (need 2=SRDY), P04.12/DO3=%u (need 0x12=SRV-ST), P04.13/DO4=%u (need 3=BRK-OFF), P04.14/DO5=%u (need 1=ALARM), P05.29=%u (need 5/8N2), P05.30=%u (need 4/38400), P05.31=%u (need 1).\n",
                       (unsigned)g.control_mode, (unsigned)g.di1_assignment, (unsigned)g.legacy_di5_assignment,
                       (unsigned)g.do2_assignment, (unsigned)g.do3_assignment, (unsigned)g.do4_assignment, (unsigned)g.do5_assignment,
                       (unsigned)g.rs485_mode, (unsigned)g.rs485_baud_code, (unsigned)g.rs485_address);
@@ -1579,10 +1614,15 @@ static void pollLeadshineFeedback() {
     g.output_io_read_ok = true;
     g.servo_ready = g.do2_ready_assignment_ok && ((outio & OUTPUT_DO2_MASK) != 0);
     g.servo_enabled_output = g.do3_enabled_assignment_ok && ((outio & OUTPUT_DO3_MASK) != 0);
-    g.brake_output_released = g.do4_brake_assignment_ok && ((outio & OUTPUT_DO4_MASK) != 0);
+    // Keep the raw logical BRK-OFF bit separate from assignment verification.
+    // A new physical brake release still requires DO4_CFG, but a transient
+    // configuration-read fault must never make us apply a holding brake early
+    // while the EL7 is still asserting its previously verified BRK-OFF state.
+    g.brake_output_released = ((outio & OUTPUT_DO4_MASK) != 0);
     g.fault_output_active = g.do5_fault_assignment_ok && ((outio & OUTPUT_DO5_MASK) != 0);
     g.feedback_from_drive = true;
     lastDriveFeedbackMs = now;
+    lastBrakeStatusMs = now;
   } else if ((now - lastDriveFeedbackMs) > 500) {
     g.position_feedback_read_ok = false;
     g.output_io_read_ok = false;
@@ -1680,6 +1720,106 @@ static void driveStopNow() {
     (void)driveSendEmergencyStop();
   }
   g.drive_enabled = false;
+}
+
+static void setEdgeboxBrakeRelease(bool release, const char* reason) {
+  const int level = (release == EDGEBOX_BRAKE_RELEASE_ACTIVE_HIGH) ? HIGH : LOW;
+  if (g.edgebox_brake_released == release && digitalRead(PIN_EDGEBOX_BRAKE_DO0) == level) return;
+
+  digitalWrite(PIN_EDGEBOX_BRAKE_DO0, level);
+  g.edgebox_brake_released = release;
+  g.edgebox_brake_last_change_ms = millis();
+  Serial.printf("[BRAKE] EdgeBox DO0 GPIO%d -> %s (%s). Physical motor brake %s.\n",
+                PIN_EDGEBOX_BRAKE_DO0, release ? "ON" : "OFF", reason ? reason : "state",
+                release ? "RELEASED" : "APPLIED");
+}
+
+static bool edgeboxBrakeReleaseStartAllowed() {
+  // A new brake RELEASE is permitted only from a fully verified healthy state.
+  // The EL7's logical BRK-OFF remains the timing authority; DO0 is only the
+  // higher-current physical switch for the 24 V brake coil.
+  if (g.local_estop) return false;
+  if (!g_srvrFirmwareMatched) return false;
+  if (g.vel_watchdog_fault || g.service_rearm_required || hvServiceOperationActive) return false;
+  if (!g.client_connected) return false;
+  if (g.simulation_enabled) return false;
+  if (!g.rs_link_ok || !g.communication_config_ok) return false;
+  if (!g.position_feedback_read_ok || !g.output_io_read_ok || !g.drive_feedback_ok) return false;
+  if ((millis() - lastDriveFeedbackMs) > EDGEBOX_BRAKE_FEEDBACK_STALE_MS) return false;
+  if (!softwareServoEnableReady()) return false;
+  if (!g.servo_ready || !g.servo_enabled_output) return false;
+  if (!g.do4_brake_assignment_ok || !g.brake_output_released) return false;
+  if (g.fault_output_active || g.no_motion_feedback_fault) return false;
+  return true;
+}
+
+static bool edgeboxBrakeShutdownSequencingRequested() {
+  return g.software_srvon_inhibit ||
+         g.local_estop ||
+         g.vel_watchdog_fault ||
+         g.service_rearm_required ||
+         hvServiceOperationActive ||
+         !g.client_connected ||
+         !g_srvrFirmwareMatched ||
+         !g.communication_config_ok ||
+         !g.drive_feedback_ok ||
+         !g.servo_ready ||
+         !g.servo_enabled_output ||
+         g.fault_output_active;
+}
+
+static bool edgeboxBrakeReleaseHoldAllowed() {
+  // Once released, do NOT apply the spring holding brake merely because an
+  // orderly stop / Servo-OFF has been requested. The EL7 must first execute its
+  // configured deceleration/brake timing and clear logical BRK-OFF. This avoids
+  // using the holding brake as a dynamic brake. A lost/stale output-status path
+  // still fails closed; drive/config/fault changes trigger the faster P08.47 poll
+  // so the EL7's native BRK-OFF edge remains the normal application authority.
+  if (!g.edgebox_brake_released) return false;
+  if (!g.rs_link_ok || !g.output_io_read_ok) return false;
+
+  const unsigned long now = millis();
+  const unsigned long brakeStatusAge = lastBrakeStatusMs > 0 ? (now - lastBrakeStatusMs) : 0xFFFFFFFFUL;
+  const unsigned long maxAge = edgeboxBrakeShutdownSequencingRequested()
+    ? EDGEBOX_BRAKE_STATUS_STALE_MS
+    : EDGEBOX_BRAKE_FEEDBACK_STALE_MS;
+  if (brakeStatusAge > maxAge) return false;
+
+  return g.brake_output_released;
+}
+
+static void serviceLeadshineBrakeTransitionStatus() {
+  // The normal feedback block remains locked at 10 Hz. Only while an already-
+  // released brake is being sequenced toward Servo-OFF do we read P08.47 at a
+  // higher rate, so DO0 can follow the EL7's BRK-OFF edge with low latency.
+  if (!g.edgebox_brake_released || !edgeboxBrakeShutdownSequencingRequested()) return;
+  if (!g.rs_link_ok) return;
+
+  const unsigned long now = millis();
+  if ((now - lastBrakeTransitionPollMs) < EDGEBOX_BRAKE_TRANSITION_POLL_MS) return;
+  if (lastBrakeStatusMs > 0 && (now - lastBrakeStatusMs) < EDGEBOX_BRAKE_TRANSITION_POLL_MS) return;
+  lastBrakeTransitionPollMs = now;
+
+  uint16_t outputIo = 0;
+  if (!modbusReadU16(DRIVE_MODBUS_ID, REG_OUTPUT_IO_STATUS, outputIo)) return;
+
+  const unsigned long sampledAt = millis();
+  g.output_io_status = outputIo;
+  g.output_io_read_ok = true;
+  g.servo_ready = g.do2_ready_assignment_ok && ((outputIo & OUTPUT_DO2_MASK) != 0);
+  g.servo_enabled_output = g.do3_enabled_assignment_ok && ((outputIo & OUTPUT_DO3_MASK) != 0);
+  g.brake_output_released = ((outputIo & OUTPUT_DO4_MASK) != 0);
+  g.fault_output_active = g.do5_fault_assignment_ok && ((outputIo & OUTPUT_DO5_MASK) != 0);
+  lastBrakeStatusMs = sampledAt;
+}
+
+static void serviceEdgeboxBrakeOutput() {
+  const bool release = g.edgebox_brake_released
+    ? edgeboxBrakeReleaseHoldAllowed()
+    : edgeboxBrakeReleaseStartAllowed();
+  setEdgeboxBrakeRelease(release,
+                         release ? (g.edgebox_brake_released ? "EL7_BRK_OFF_HELD" : "EL7_SRV_ST_AND_BRK_OFF_VERIFIED")
+                                 : "EL7_BRK_OFF_OR_FAIL_SAFE_APPLY");
 }
 
 static void updateLocalInputs() {
@@ -1794,6 +1934,10 @@ static void requestSoftwareSrvonInhibit(bool inhibit, const char* reason) {
   if (!LEADSHINE_SOFTWARE_SRVON_ENABLED) return;
   g.software_srvon_inhibit = inhibit;
   if (inhibit) {
+    // Do not force the holding brake on before the EL7 has completed its own
+    // Servo-OFF/brake sequence. While feedback remains healthy, an already-
+    // released EdgeBox DO0 follows the EL7's logical BRK-OFF state. Loss of
+    // link/status/fault authority still makes serviceEdgeboxBrakeOutput fail low.
     g.software_srvon_ready = false;
     g.software_srvon_configured = false;
     g.software_srvon_configured_ms = 0;
@@ -1838,10 +1982,10 @@ static void serviceLeadshineOutputAssignments() {
   //   Power   = direct hardwired indication (not a programmable EL7 DO)
   //   DO2     = Ready / SRDY
   //   DO3     = Enabled / SRV-ST
-  //   DO4     = Brake release / BRK-OFF
+  //   DO4     = BRK-OFF logical timing/status only (physical terminal unused)
   //   DO5     = Fault / ALARM
-  // EL7 owns brake release/engage timing. W1P only verifies/configures the
-  // assignment map while stopped, before normal motion can arm.
+  // EdgeBox DO0 is the physical brake-coil switch. W1P still verifies/configures
+  // EL7 DO4=BRK-OFF so the drive's native brake timing can gate DO0 release.
   if (g.do2_ready_assignment_ok && g.do3_enabled_assignment_ok &&
       g.do4_brake_assignment_ok && g.do5_fault_assignment_ok) return;
   if (g.local_estop || !g.client_connected || !g.rs_link_ok || !g.communication_config_read_ok) return;
@@ -1852,8 +1996,8 @@ static void serviceLeadshineOutputAssignments() {
 
   // If this drive was previously commissioned with software SRV-ON already
   // active, torque-inhibit it before altering any programmable output mapping.
-  // This is especially important for DO4 because BRK-OFF owns the external
-  // motor-brake release path. The normal software SRV-ON service will restore
+  // This is especially important for DO4 because BRK-OFF remains the logical
+  // brake timing/interlock used to permit EdgeBox DO0 release. The normal software SRV-ON service will restore
   // P04.00=0x83 only after the complete DO2..DO5 map has been re-read/verified.
   if (g.di1_assignment == LEADSHINE_SRVON_INTERNAL_VALUE) {
     (void)writeLeadshineSoftwareSrvonAssignment(false, "EL7_DO_MAP_MIGRATION");
@@ -2041,7 +2185,7 @@ static bool driveAutoEnableReady() {
   if (g.no_motion_feedback_fault && requestingMotion) return false;
 
   if (!g.drive_writes_enabled) {
-    // v26.10.06.11: EdgeBox W5500 + isolated native RS485; only arm from WAIT on a fresh, non-zero joystick command.
+    // v26.10.08.02: EdgeBox W5500 + isolated native RS485; only arm from WAIT on a fresh, non-zero joystick command.
     // Do not re-arm from stale VEL state, and do not arm while the motor is still
     // coasting from a previous PR stop. Once armed, do not drop writes just because
     // feedback velocity becomes non-zero; that caused the observed step/pulse motion.
@@ -2162,7 +2306,7 @@ static void serviceMotionProfile() {
     g.vel_request_mps = 0.0f;
   }
   float target = constrain(g.vel_request_mps, -MAX_CMD_VEL_MPS, MAX_CMD_VEL_MPS);
-  // v26.10.06.11: EdgeBox W5500 + isolated native RS485; predictive hard-limit guard.  SRVR also tapers before
+  // v26.10.08.02: EdgeBox W5500 + isolated native RS485; predictive hard-limit guard.  SRVR also tapers before
   // Near/Far, but W1P applies the same stopping-distance rule locally so a
   // delayed network packet cannot keep driving past an end limit.
   target = limitVelocityForSoftLimits(g.pos_m, target);
@@ -2500,7 +2644,10 @@ static void sendStatusLine(bool force) {
   line += " ENABLED_OUT=" + String(g.servo_enabled_output ? 1 : 0);
   line += " DO4_CFG=" + String(g.do4_brake_assignment_ok ? 1 : 0);
   line += " DO4_ASSIGN=" + String(g.do4_assignment);
+  // BRAKE_OUT remains the EL7 logical BRK-OFF timing state. BRAKE_DO0 is the
+  // physical EdgeBox brake-release command and is the operator-facing truth.
   line += " BRAKE_OUT=" + String(g.brake_output_released ? 1 : 0);
+  line += " BRAKE_DO0=" + String(g.edgebox_brake_released ? 1 : 0);
   line += " DO5_CFG=" + String(g.do5_fault_assignment_ok ? 1 : 0);
   line += " DO5_ASSIGN=" + String(g.do5_assignment);
   line += " FAULT_OUT=" + String(g.fault_output_active ? 1 : 0);
@@ -2920,12 +3067,12 @@ static void serviceUdp() {
 
 static void startDriveSerial() {
   DriveSerial.setRxBufferSize(512);
-  DriveSerial.begin(RS485_BAUD, SERIAL_8N1, RS485_RX_PIN, RS485_TX_PIN);
+  DriveSerial.begin(RS485_BAUD, SERIAL_8N2, RS485_RX_PIN, RS485_TX_PIN);
   if(!DriveSerial.setPins(RS485_RX_PIN, RS485_TX_PIN, -1, RS485_RTS_PIN))
     Serial.println("[RS485] ERROR assigning EdgeBox UART1 RTS pin");
   if(!DriveSerial.setMode(UART_MODE_RS485_HALF_DUPLEX))
     Serial.println("[RS485] ERROR enabling UART_MODE_RS485_HALF_DUPLEX");
-  Serial.printf("[RS485] EdgeBox isolated UART1 started @ %lu 8N1 (RX=%d TX=%d RTS=%d)\n",
+  Serial.printf("[RS485] EdgeBox isolated UART1 started @ %lu 8N2 (RX=%d TX=%d RTS=%d)\n",
                 (unsigned long)RS485_BAUD, RS485_RX_PIN, RS485_TX_PIN, RS485_RTS_PIN);
 }
 
@@ -3059,6 +3206,13 @@ static bool initEthernetStatic()
 }
 
 void setup() {
+  // Fail-safe first: after reset GPIOs are inputs (EdgeBox DO0 is off), and we
+  // explicitly latch DO0 LOW before any network, Modbus, OTA or motion logic.
+  digitalWrite(PIN_EDGEBOX_BRAKE_DO0, LOW);
+  pinMode(PIN_EDGEBOX_BRAKE_DO0, OUTPUT);
+  digitalWrite(PIN_EDGEBOX_BRAKE_DO0, LOW);
+  g.edgebox_brake_released = false;
+
   Serial.begin(115200);
   delay(400);
   g_boot_session_id = esp_random();
@@ -3068,11 +3222,12 @@ void setup() {
   Serial.printf("%s %s\n", FW_NAME, FW_VERSION);
   Serial.printf("[OTA] Build identity: %s\n", HV_UPDATE_BUILD_TOKEN);
   Serial.println("Leadshine EL7-RS2000P command interface (auto-enable under SRVR safety gate)");
-  Serial.println("v26.10.06.11: retains .07 motion/service/OTA safety and adds coordinated safe W1P IP readdress; existing SRVR/safety + joystick-neutral re-arm retained");
+  Serial.println("v26.10.08.02: EL7 factory RS485 38400 8N2; EdgeBox DO0 directly drives the fail-applied 24V motor brake under verified BRK-OFF sequencing");
   Serial.println("============================================================");
 
   pinMode(PIN_LOCAL_ESTOP, INPUT);
   Serial.printf("[IO] EdgeBox DI0 GPIO%d: 24V NC loop HIGH=healthy, LOW/open=E-Stop\n", PIN_LOCAL_ESTOP);
+  Serial.printf("[IO] EdgeBox DO0 GPIO%d: HIGH=brake coil energised/released, LOW=brake applied (fail-safe)\n", PIN_EDGEBOX_BRAKE_DO0);
   if(PIN_STATUS_LED >= 0) { pinMode(PIN_STATUS_LED, OUTPUT); digitalWrite(PIN_STATUS_LED, LOW); }
   if (LEADSHINE_SRVON_OUTPUT_ENABLED && PIN_LEADSHINE_SRVON >= 0) {
     pinMode(PIN_LEADSHINE_SRVON, OUTPUT);
@@ -3104,7 +3259,7 @@ void setup() {
   }
 
   Serial.printf("[CFG] IP=%s UDP=%u ETH=%s\n", ETH.localIP().toString().c_str(), (unsigned)TCP_PORT, eth_ok ? "OK" : "FAILED");
-  Serial.printf("[CFG] ESTOP_DI0=%d RS485_RX=%d RS485_TX=%d RTS=%d ID=%u\n", PIN_LOCAL_ESTOP, RS485_RX_PIN, RS485_TX_PIN, RS485_RTS_PIN, (unsigned)DRIVE_MODBUS_ID);
+  Serial.printf("[CFG] ESTOP_DI0=%d BRAKE_DO0=%d RS485=%lu/8N2 RX=%d TX=%d RTS=%d ID=%u\n", PIN_LOCAL_ESTOP, PIN_EDGEBOX_BRAKE_DO0, (unsigned long)RS485_BAUD, RS485_RX_PIN, RS485_TX_PIN, RS485_RTS_PIN, (unsigned)DRIVE_MODBUS_ID);
   Serial.printf("[CFG] POS=%.3f SPAN=%.3f NL=%.3f FL=%.3f SIM=%s UPM=%.1f WRITES=LOCKED\n",
                 g.pos_m, g.span_m, g.limit_near_m, g.limit_far_m,
                 g.simulation_enabled ? "ON" : "OFF", g_command_units_per_m);
@@ -3120,9 +3275,12 @@ void loop() {
   servicePeerTimeout();
   serviceVelocityCommandWatchdog();
   pollLeadshineFeedback();
+  serviceLeadshineBrakeTransitionStatus();
+  serviceEdgeboxBrakeOutput();
   serviceLeadshineFactoryCommsProbe();
   serviceSrvrFirmwareAuthority();
   updateMotionModel();
+  serviceEdgeboxBrakeOutput();
   serviceNetworkReaddressRollback();
   serviceUdp();
 #if ENABLE_W1P_TS
