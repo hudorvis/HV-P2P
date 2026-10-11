@@ -1,3 +1,13 @@
+# v26.10.11.02 — 2026-10-11
+
+- Fixed the GitHub source-regression failure in `tools.test_backend_logic`: `.11.01` created a separate smoke config directory for every Backend object, so the fresh-backend recovery test could not see the first instance's previous-good `.bak` and failed with `FileNotFoundError`.
+- Smoke persistence is now **process-scoped**. Separate smoke processes remain isolated from each other and the real operator config, while multiple Backend instances inside one process share the same private config exactly as a real restart would. Cleanup is registered at process exit instead of being performed by each Backend shutdown.
+- Strengthened the recovery regression to assert that both smoke Backend instances use the same config path before validating corrupt-primary -> `.bak` restoration.
+- Retained all `.11.01` frozen-runtime/toolchain hardening: Python 3.12.10, PySide6 6.11.1, Nuitka 4.2.2, compiler identity gates, 200-build DSP1 frozen smoke stress, phase logging and Apple crash-report capture.
+- Production CTRL, W1P and CTRL-TS firmware are unchanged from `.11.01` after release identity normalisation; all SRVR QML files are byte-identical. No motion, safety, calibration, updater, Leadshine, brake, E-stop, AUX, Free-D or UI behaviour was changed.
+- Post-fix validation: 386 EdgeBox integration checks, 58 build-pipeline checks, historical regressions, Modbus/wire/speed/motion contracts, release consistency, source hygiene, 71-file Python syntax, SRVR preflight and the exact backend backup/recovery regression all pass. The combined runner hit the execution limit after native-build orchestration; remaining checks were run separately and passed.
+- macOS bundle metadata: short version `26.10.11`, build `2610.11.2`.
+
 # v26.10.11.01 — 2026-10-11
 
 - Locked `v26.10.08.05`; firmware/control behaviour is unchanged apart from release identity. This revision is a desktop build/runtime hardening release driven by the user-supplied GitHub macOS Intel failure.
@@ -10,6 +20,18 @@
 - Preserved `.08.05/.08.04` Leadshine **115200/8N1/ID1**, AI0/5 V W1P E-stop, DO0 brake sequencing, updater, motion, limits, calibration, AUX, CTRL-TS marker smoothing and approved UI behaviour.
 - Added `test_macos_frozen_runtime_hardening_101101.py`; build-pipeline validation now has **58 checks** covering Python/Nuitka identity, smoke-config isolation and native-crash diagnostics.
 - macOS bundle metadata: short version `26.10.11`, build `2610.11.1`.
+
+
+# v26.10.08.05 — 2026-10-11
+
+- Locked `v26.10.08.04`; functional change is restricted to the SRVR Leadshine/RS485 diagnostic emission path that triggered the user-reported macOS Intel native crash.
+- Crash report: `EXC_BAD_ACCESS (SIGSEGV)` on the Qt main thread in Nuitka `CALL_FUNCTION_WITH_POS_ARGS1`, reached through `_tick -> _send_controller_display_packet -> _build_controller_display_packet`.
+- Confirmed `_build_controller_display_packet()` is source-identical between `.08.03` and `.08.04`; the new `.08.04` RS485 diagnostic reducer/log emitter was the only new path immediately before that builder.
+- Replaced direct boolean special-method calls in the diagnostic signature with primitive literal encoding and deferred `logChanged` emission until after DSP1 construction. Diagnostic wording/state-transition behavior is preserved.
+- Added `test_macos_frozen_rs485_diag_crash_100805.py` and extended the packaged-app smoke test to run RS485 diagnostic reduction followed by twenty DSP1 builds inside frozen macOS Intel/Apple Silicon binaries and ZIP round-trip verification.
+- Preserved `.08.04` 115200/8N1/ID1 Leadshine settings, AI0/5 V W1P E-stop, DO0 brake sequencing, updater, motion, limits, calibration, AUX and UI behavior.
+- macOS bundle metadata: short version `26.10.8`, build `2610.8.5`.
+
 
 # v26.10.08.04 — 2026-10-08
 

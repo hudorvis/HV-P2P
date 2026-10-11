@@ -12,10 +12,27 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
-import copy, http.client, ipaddress, json, math, os, queue, shutil, socket, struct, sys, tempfile, threading, time
+import atexit, copy, http.client, ipaddress, json, math, os, queue, shutil, socket, struct, sys, tempfile, threading, time
 from urllib.parse import unquote, urlparse
 
 from PySide6.QtCore import QObject, Property, Signal, Slot, QTimer
+
+# Smoke-test persistence is private to this process, not private to each Backend
+# instance.  A fresh Backend created by a regression test must see the same
+# previous-good config/backup as the first instance, exactly like a production
+# restart, while separate source/frozen smoke processes remain fully isolated
+# from one another and from the operator's real Application Support directory.
+_SMOKE_DATA_DIR: Path | None = None
+_SMOKE_DATA_DIR_LOCK = threading.Lock()
+
+
+def _process_smoke_data_dir() -> Path:
+    global _SMOKE_DATA_DIR
+    with _SMOKE_DATA_DIR_LOCK:
+        if _SMOKE_DATA_DIR is None:
+            _SMOKE_DATA_DIR = Path(tempfile.mkdtemp(prefix="hvp2p-srvr-smoke-"))
+            atexit.register(shutil.rmtree, _SMOKE_DATA_DIR, ignore_errors=True)
+        return _SMOKE_DATA_DIR
 
 # Proven controller protocol / timing carried forward from v26.06.26.25
 SERVER_BIND_PORT = 5000
@@ -430,7 +447,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.11.01", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.11.02", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -446,7 +463,7 @@ class HVP2PBackend(QObject):
         self._fw_modern_fallback_delay_s = 2.5
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.11.01+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.11.02+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -835,12 +852,13 @@ class HVP2PBackend(QObject):
 
     def _config_file_path(self):
         # Smoke tests deliberately exercise auto-save/import/migration code, but
-        # must never read or overwrite the real operator configuration.  Earlier
-        # CI smoke runs shared ~/Library/Application Support with later frozen
-        # runs, making the native regression test order-dependent.  Give every
-        # smoke-test process a private data directory and clean it at shutdown.
+        # must never read or overwrite the real operator configuration.  Each
+        # smoke-test PROCESS gets one private directory.  All Backend instances
+        # in that process share it so restart/backup recovery tests retain the
+        # same persistence semantics as production.  The directory is removed
+        # automatically when the process exits.
         if self.smoke_test:
-            home = Path(tempfile.mkdtemp(prefix="hvp2p-srvr-smoke-"))
+            home = _process_smoke_data_dir()
             self._smoke_config_dir = home
             return home / "config.json"
         home = self._app_data_dir()
@@ -4301,7 +4319,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.11.01 moves the installed joystick polarity correction into CTRL,
+        # v26.10.11.02 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same
@@ -6170,8 +6188,9 @@ class HVP2PBackend(QObject):
             self._freed_sock.close()
             self._ctrl_display_sock.close()
         except Exception: pass
-        if self.smoke_test and self._smoke_config_dir is not None:
-            try:
-                shutil.rmtree(self._smoke_config_dir, ignore_errors=True)
-            finally:
-                self._smoke_config_dir = None
+        # The smoke-test data directory is process-scoped and intentionally not
+        # removed by an individual Backend shutdown: another fresh Backend in the
+        # same smoke process may need to verify restart/backup recovery.  atexit
+        # owns the final cleanup.
+        if self.smoke_test:
+            self._smoke_config_dir = None

@@ -1,4 +1,4 @@
-# HV P2P v26.10.11.01 native build and bench checklist
+# HV P2P v26.10.11.02 native build and bench checklist
 
 ## GitHub CI / source verification
 

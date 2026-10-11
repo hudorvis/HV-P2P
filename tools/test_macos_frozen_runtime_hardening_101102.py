@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Regression guard for v26.10.11.01 frozen desktop runtime hardening."""
+"""Regression guard for v26.10.11.02 frozen desktop runtime hardening."""
 from pathlib import Path
 import ast
 
 ROOT = Path(__file__).resolve().parents[1]
-SRVR = ROOT / "SRVR_GitHub_v26.10.11.01"
+SRVR = ROOT / "SRVR_GitHub_v26.10.11.02"
 BACKEND_PATH = SRVR / "backend.py"
 MAIN_PATH = SRVR / "main.py"
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "complete-build.yml"
@@ -26,7 +26,9 @@ assert "pysidedeploy.spec did not retain pinned Nuitka 4.2.2" in workflow
 # Smoke tests exercise persistence aggressively; they must use a private temp
 # directory rather than the operator's real Application Support/config path.
 assert 'tempfile.mkdtemp(prefix="hvp2p-srvr-smoke-")' in backend
-assert 'shutil.rmtree(self._smoke_config_dir, ignore_errors=True)' in backend
+assert '_process_smoke_data_dir()' in backend
+assert 'atexit.register(shutil.rmtree, _SMOKE_DATA_DIR, ignore_errors=True)' in backend
+assert 'shutil.rmtree(self._smoke_config_dir, ignore_errors=True)' not in backend
 
 # The Apple crash stack was in the huge DSP1 builder. No function/lambda may be
 # created inside another backend function; this keeps closure-generated compiled
@@ -67,4 +69,4 @@ assert "recent Apple crash reports" in workflow
 assert "SMOKE_RC=${PIPESTATUS[0]}" in workflow
 assert "ROUNDTRIP_SMOKE_RC=${PIPESTATUS[0]}" in workflow
 
-print("MACOS_FROZEN_RUNTIME_HARDENING_101101_PASS")
+print("MACOS_FROZEN_RUNTIME_HARDENING_101102_PASS")

@@ -1,4 +1,4 @@
-HV P2P v26.10.11.01 - GitHub Ready Source
+HV P2P v26.10.11.02 - GitHub Ready Source
 ================================================
 Source baseline: v26.10.08.05.
 
@@ -49,9 +49,9 @@ The W1P 5 V E-stop input assumes AI0 is configured for voltage input like the
 commissioned CTRL EdgeBox (factory 249-ohm current shunt removed, or 0-10 V input
 hardware option). Use AGND for the analogue return.
 
-See W1P_ESTOP_WIRING_v26.10.11.01.md,
-W1P_BRAKE_WIRING_v26.10.11.01.md and
-NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.10.11.01.md before powered commissioning.
+See W1P_ESTOP_WIRING_v26.10.11.02.md,
+W1P_BRAKE_WIRING_v26.10.11.02.md and
+NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.10.11.02.md before powered commissioning.
 
 No firmware binaries are included in this source package. Native Arduino compilation
 and actual frozen desktop/PySide runtime verification remain GitHub Actions gates.

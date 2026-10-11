@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "26.10.11.01"
+VERSION = "26.10.11.02"
 ERRORS: list[str] = []
 
 
@@ -70,8 +70,9 @@ for _node in ast.walk(_backend_tree):
 require(not _nested_backend_callables,
         f"nested backend callables are not permitted in frozen runtime: {_nested_backend_callables}")
 require('tempfile.mkdtemp(prefix="hvp2p-srvr-smoke-")' in backend and
-        'shutil.rmtree(self._smoke_config_dir, ignore_errors=True)' in backend,
-        "smoke-test persistence is not isolated from the operator config path")
+        'atexit.register(shutil.rmtree, _SMOKE_DATA_DIR, ignore_errors=True)' in backend and
+        'shutil.rmtree(self._smoke_config_dir, ignore_errors=True)' not in backend,
+        "smoke-test persistence is not process-isolated from the operator config path")
 
 # Architecture guard: the new visible app must never regress to Tkinter/ttk.
 for rel, text in (("main.py", main), ("backend.py", backend)):
@@ -388,7 +389,7 @@ require('width:parent.width*.22' in qml_main and
 require(qml_main.count('width:f(72)') >= 2 and 'parent.width-f(48+72+66)' in qml_main,
         "Free-D lens decoded percentage width fix is missing")
 
-# v26.10.11.01 locked Run/Setup revision. Keep the approved panel geometry and
+# v26.10.11.02 locked Run/Setup revision. Keep the approved panel geometry and
 # setting semantics while guarding only the requested presentation/interaction deltas.
 require('text:"HV P2P\\nSRVR"' in qml_main and 'HV P2P  |  SRVR' not in qml_main and 'P2P°\\nSRVR' not in qml_main,
         "locked two-line HV P2P/SRVR logo/header revision is missing")
@@ -575,7 +576,7 @@ require('profileValue(Number(gp.x), key)' in span_qml and
         'var gv=root.sideView ? Number(gp.y)' not in span_qml,
         "Free-D geometry markers are not pinned to the exact calculated cable profile")
 
-# v26.10.11.01 integration contract: fifth CTRL-TS AUX travels in the spare A7
+# v26.10.11.02 integration contract: fifth CTRL-TS AUX travels in the spare A7
 # 16-bit flag, and display packets expose all five state-aware labels.
 require("FLAG_AUX5 = 0x0400" in backend, "AUX5 controller flag missing")
 require('f"aux5={labels[4]}"' in backend, "DSP1 AUX5 field missing")
@@ -631,7 +632,7 @@ require('cp assets/HV_P2P_SRVR_icon.png "$STAGE/HV_P2P_SRVR_icon.png"' in workfl
         "P2P SRVR bundle icon is not restored during packaging")
 require('CFBundleDisplayName' in workflow and "HV P2P SRVR'" in workflow,
         "HV P2P SRVR bundle display metadata is not enforced")
-require(all(token in workflow for token in ('CFBundleIdentifier', 'com.hvp2p.srvr', 'CFBundleShortVersionString', 'CFBundleVersion', 'HVP2PReleaseVersion', "BUNDLE_BUILD_VERSION: '2610.11.1'")),
+require(all(token in workflow for token in ('CFBundleIdentifier', 'com.hvp2p.srvr', 'CFBundleShortVersionString', 'CFBundleVersion', 'HVP2PReleaseVersion', "BUNDLE_BUILD_VERSION: '2610.11.2'")),
         "HV P2P SRVR stable bundle identity/version metadata is not enforced")
 require('three untouched native ZIPs' in workflow and 'SHA256SUMS.txt' in workflow and 'Complete Release.zip.sha256' in workflow,
         "complete release does not preserve/hash all native SRVR ZIPs and authoritative release ZIP")
@@ -658,9 +659,9 @@ require("PYTHONFAULTHANDLER=1" in workflow and "recent Apple crash reports" in w
         "macOS frozen smoke failure diagnostics are missing")
 require("Select-String -Path deploy-dry-run.txt -SimpleMatch '--assume-yes-for-downloads'" in workflow,
         "Windows deploy dry-run does not prove the actual Nuitka command is non-interactive")
-require('HV-P2P-SRVR-v26.10.11.01-macOS-Intel' in workflow and
-        'HV-P2P-SRVR-v26.10.11.01-macOS-Apple-Silicon' in workflow and
-        'HV-P2P-SRVR-v26.10.11.01-Windows-x64' in workflow,
+require('HV-P2P-SRVR-v26.10.11.02-macOS-Intel' in workflow and
+        'HV-P2P-SRVR-v26.10.11.02-macOS-Apple-Silicon' in workflow and
+        'HV-P2P-SRVR-v26.10.11.02-Windows-x64' in workflow,
         "native SRVR artifact names are incomplete")
 require('def _app_data_dir' in backend and 'LOCALAPPDATA' in backend and 'XDG_CONFIG_HOME' in backend,
         "cross-platform private config directory mapping is missing")
@@ -680,7 +681,7 @@ require('self._safety_servo_inhibited = True' in _virtual_branch,
         "Virtual Position Source does not latch the local Servo Enable inhibit independently of hardware I/O")
 require('fillText("SKATE"' not in span_qml, "Top/Side span diagrams still draw the SKATE text label")
 
-# v26.10.11.01 CTRL joystick readout labels/geometry and global preset-name mode.
+# v26.10.11.02 CTRL joystick readout labels/geometry and global preset-name mode.
 setup=(ROOT/"qml/pages/SetupPage.qml").read_text()
 require('text:"Value"' in setup and 'text:"Percentage"' in setup,
         "CTRL Setup uses Value / Percentage labels")
