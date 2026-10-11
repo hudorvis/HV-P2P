@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import faulthandler
 import os
 import sys
 
@@ -18,6 +19,12 @@ if SMOKE_TEST:
     except ValueError:
         pass
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    # Preserve a Python-level stack on native CI crashes whenever CPython can
+    # still report one.  This is smoke-test only and has no production effect.
+    try:
+        faulthandler.enable(all_threads=True)
+    except Exception:
+        pass
 
 from PySide6.QtCore import QTimer, QUrl
 from PySide6.QtGui import QGuiApplication
@@ -32,11 +39,17 @@ import PySide6.QtQuickControls2  # noqa: F401
 from backend import HVP2PBackend
 from firmware_authority import FirmwareAuthorityError, start_firmware_authority
 
-APP_VERSION = "26.10.08.05"
+APP_VERSION = "26.10.11.01"
+
+
+def _smoke_mark(label: str) -> None:
+    if SMOKE_TEST:
+        print(f"SMOKE PHASE: {label}", flush=True)
 
 
 def _exercise_qml(app: QGuiApplication, engine: QQmlApplicationEngine, backend: HVP2PBackend) -> bool:
     """Non-interactive source/frozen smoke test used by CI."""
+    _smoke_mark("QML exercise start")
     roots = engine.rootObjects()
     if not roots:
         print("SMOKE FAIL: no QML root object", file=sys.stderr)
@@ -204,12 +217,11 @@ def _exercise_qml(app: QGuiApplication, engine: QQmlApplicationEngine, backend: 
         if bool(backend._srvr_estop) != before:
             raise RuntimeError("SRVR E-stop toggle failed")
 
-        # Frozen-runtime regression for the macOS Intel v26.10.08.04 crash.
-        # Reproduce the relevant ordering: reduce a W1P RS485 diagnostic, then
-        # immediately build DSP1 repeatedly.  The .08.04 native crash occurred
-        # in Nuitka's generated call helper inside this builder after the new
-        # diagnostic path had run.  Keep this in the frozen smoke test so both
-        # macOS architectures must execute the exact path before release.
+        # Frozen-runtime regression for the macOS Intel v26.10.08.04/.08.05
+        # crash family.  v26.10.08.05 proved that the packaged Intel executable
+        # itself could still SIGSEGV even though the source tests and package/sign
+        # steps all passed.  Keep this exact hot path inside the frozen binary.
+        _smoke_mark("RS485 diagnostic reducer")
         rs485_fixture = {
             "RS_STAT": "DISCONNECTED", "LEAD_CFG": "READ_FAULT",
             "FACTORY_COMMS": "0", "MODBUS": "0", "POS_READ": "0",
@@ -220,10 +232,14 @@ def _exercise_qml(app: QGuiApplication, engine: QQmlApplicationEngine, backend: 
             "DO5_ASSIGN": "1",
         }
         backend._log_w1p_rs485_diagnostics(rs485_fixture)
-        for _ in range(20):
+        _smoke_mark("DSP1 frozen stress begin")
+        for index in range(200):
             packet = backend._build_controller_display_packet()
             if not packet.startswith("DSP1|"):
                 raise RuntimeError("DSP1 frozen-runtime regression packet invalid")
+            if index in (49, 99, 149, 199):
+                _smoke_mark(f"DSP1 frozen stress {index + 1}/200")
+        _smoke_mark("DSP1 frozen stress complete")
         if backend._pending_w1p_rs485_log:
             pending = backend._pending_w1p_rs485_log
             backend._pending_w1p_rs485_log = ""
@@ -233,6 +249,7 @@ def _exercise_qml(app: QGuiApplication, engine: QQmlApplicationEngine, backend: 
         print(f"SMOKE FAIL: {exc}", file=sys.stderr)
         return False
 
+    _smoke_mark("QML exercise complete")
     print("SMOKE PASS: locked pages, Settings/Free-D auto-save, structured Log, shortcuts and calibration overlay instantiated")
     return True
 

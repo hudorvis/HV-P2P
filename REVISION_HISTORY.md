@@ -1,12 +1,15 @@
-# v26.10.08.05 — 2026-10-11
+# v26.10.11.01 — 2026-10-11
 
-- Locked `v26.10.08.04`; functional change is restricted to the SRVR Leadshine/RS485 diagnostic emission path that triggered the user-reported macOS Intel native crash.
-- Crash report: `EXC_BAD_ACCESS (SIGSEGV)` on the Qt main thread in Nuitka `CALL_FUNCTION_WITH_POS_ARGS1`, reached through `_tick -> _send_controller_display_packet -> _build_controller_display_packet`.
-- Confirmed `_build_controller_display_packet()` is source-identical between `.08.03` and `.08.04`; the new `.08.04` RS485 diagnostic reducer/log emitter was the only new path immediately before that builder.
-- Replaced direct boolean special-method calls in the diagnostic signature with primitive literal encoding and deferred `logChanged` emission until after DSP1 construction. Diagnostic wording/state-transition behavior is preserved.
-- Added `test_macos_frozen_rs485_diag_crash_100805.py` and extended the packaged-app smoke test to run RS485 diagnostic reduction followed by twenty DSP1 builds inside frozen macOS Intel/Apple Silicon binaries and ZIP round-trip verification.
-- Preserved `.08.04` 115200/8N1/ID1 Leadshine settings, AI0/5 V W1P E-stop, DO0 brake sequencing, updater, motion, limits, calibration, AUX and UI behavior.
-- macOS bundle metadata: short version `26.10.8`, build `2610.8.5`.
+- Locked `v26.10.08.05`; firmware/control behaviour is unchanged apart from release identity. This revision is a desktop build/runtime hardening release driven by the user-supplied GitHub macOS Intel failure.
+- GitHub evidence: packaging/signing completed, then the actual frozen `HV P2P SRVR.app` exited with `SIGSEGV`/139 during `--smoke-test`. The failing job had silently installed **Nuitka 4.3** even though the project had not intentionally changed compiler versions.
+- Pinned the desktop compiler line to **PySide6 6.11.1 + Nuitka 4.2.2 + Python 3.12.10** on macOS Intel, macOS Apple Silicon and Windows. `pysidedeploy.spec` is patched and CI verifies the compiler version before dry-run, before freeze and after freeze so `pyside6-deploy` cannot silently replace it.
+- Hardened the frozen SRVR backend by removing nested functions/lambdas from `backend.py`, including the DSP1/calibration formatting helpers and telemetry/config migration closures. The normal Python semantics and on-wire fields remain unchanged, while the generated native code no longer needs closure-frame helpers on Qt/network/property paths.
+- Extended the frozen runtime gate to stress the exact RS485 diagnostic → DSP1 sequence for **200 builds**, with phase markers and `faulthandler` enabled in smoke-test mode only.
+- macOS CI now captures the frozen smoke stdout/stderr and prints the newest Apple DiagnosticReports crash file if a native failure recurs, rather than returning only exit 139.
+- Smoke-test persistence now uses a private temporary config directory, preventing source/frozen smoke runs from sharing or modifying the normal operator Application Support configuration; post-ZIP round-trip smoke failures receive the same native crash capture.
+- Preserved `.08.05/.08.04` Leadshine **115200/8N1/ID1**, AI0/5 V W1P E-stop, DO0 brake sequencing, updater, motion, limits, calibration, AUX, CTRL-TS marker smoothing and approved UI behaviour.
+- Added `test_macos_frozen_runtime_hardening_101101.py`; build-pipeline validation now has **58 checks** covering Python/Nuitka identity, smoke-config isolation and native-crash diagnostics.
+- macOS bundle metadata: short version `26.10.11`, build `2610.11.1`.
 
 # v26.10.08.04 — 2026-10-08
 

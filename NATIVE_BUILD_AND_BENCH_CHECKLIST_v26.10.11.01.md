@@ -1,12 +1,14 @@
-# HV P2P v26.10.08.05 native build and bench checklist
+# HV P2P v26.10.11.01 native build and bench checklist
 
 ## GitHub CI / source verification
 
 - [ ] Complete source/static suite passes, including `W1P_EDGEBOX_BRAKE_DO0_1008_PASS`, `W1P_ESTOP_AI0_100803_PASS`, `LEADSHINE_COMMISSIONING_CONTRACT_PASS` and `FULL_SYSTEM_UPDATE_STATUS_1008_PASS`.
-- [ ] macOS Intel / Apple Silicon and Windows backend tests pass.
+- [ ] macOS Intel / Apple Silicon and Windows backend tests pass with Python 3.12.10 / PySide6 6.11.1 / Nuitka 4.2.2.
 - [ ] Native CTRL-TS, CTRL and W1P compilation passes.
 - [ ] CTRL compilation uses the staged CTRL-TS firmware image.
-- [ ] Frozen desktop smoke tests pass on all target platforms, including the `.08.04` RS485-diagnostic -> repeated-DSP1 native-crash regression path.
+- [ ] Frozen desktop smoke tests pass on all target platforms; confirm `SMOKE PHASE` markers reach completion, including the `.08.04/.08.05` RS485-diagnostic -> 200x DSP1 native-crash regression path.
+- [ ] Confirm both the pre-package and post-ZIP macOS frozen smoke tests pass; on failure the job must print the captured smoke log and recent Apple DiagnosticReports.
+- [ ] Confirm smoke-test persistence uses a temporary directory and the normal `~/Library/Application Support/HV P2P SRVR/config.json` is not touched.
 
 ## EL7 RS485 commissioning
 

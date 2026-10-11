@@ -3,8 +3,8 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BACKEND = (ROOT / 'SRVR_GitHub_v26.10.08.05' / 'backend.py').read_text()
-MAIN = (ROOT / 'SRVR_GitHub_v26.10.08.05' / 'main.py').read_text()
+BACKEND = (ROOT / 'SRVR_GitHub_v26.10.11.01' / 'backend.py').read_text()
+MAIN = (ROOT / 'SRVR_GitHub_v26.10.11.01' / 'main.py').read_text()
 
 # The .08.04 diagnostic signature used direct bool.__str__ special-method calls
 # immediately before the huge compiled DSP1 builder. Keep the frozen path to
@@ -20,10 +20,12 @@ assert BACKEND.index('self._send_controller_display_packet()') < BACKEND.index('
 
 # The packaged PySide/Nuitka smoke test must execute the exact sequence that was
 # missing from .08.04 CI: RS485 diagnostic reduction -> repeated DSP1 builds.
-assert 'Frozen-runtime regression for the macOS Intel v26.10.08.04 crash.' in MAIN
+assert 'Frozen-runtime regression for the macOS Intel v26.10.08.04/.08.05' in MAIN
 assert 'backend._log_w1p_rs485_diagnostics(rs485_fixture)' in MAIN
-assert 'for _ in range(20):' in MAIN
+assert 'for index in range(200):' in MAIN
 assert 'packet = backend._build_controller_display_packet()' in MAIN
 assert 'DSP1 frozen-runtime regression packet invalid' in MAIN
 
+assert 'faulthandler.enable(all_threads=True)' in MAIN
+assert 'SMOKE PHASE:' in MAIN
 print('MACOS_FROZEN_RS485_DIAG_CRASH_100805_PASS')

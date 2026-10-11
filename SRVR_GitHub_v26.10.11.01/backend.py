@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
-import copy, http.client, ipaddress, json, math, os, queue, socket, struct, sys, threading, time
+import copy, http.client, ipaddress, json, math, os, queue, shutil, socket, struct, sys, tempfile, threading, time
 from urllib.parse import unquote, urlparse
 
 from PySide6.QtCore import QObject, Property, Signal, Slot, QTimer
@@ -150,6 +150,34 @@ def _atomic_write_text(path: Path, text: str, make_backup: bool = True) -> None:
         # temp file is atomically renamed into place.
         _atomic_replace_bytes(path.with_suffix(path.suffix + ".bak"), path.read_bytes())
     _atomic_replace_bytes(path, str(text).encode("utf-8"))
+
+
+def _safe_nonnegative_int(value, default=0) -> int:
+    """Convert telemetry to a fail-soft non-negative integer.
+
+    This is deliberately module-level rather than a closure. Frozen macOS builds
+    have previously crashed inside Nuitka-generated helpers for nested functions
+    on hot Qt/network paths, so runtime parsers avoid creating local functions.
+    """
+    try:
+        return max(0, int(float(value)))
+    except Exception:
+        try:
+            return max(0, int(default))
+        except Exception:
+            return 0
+
+
+def _geometry_point_x(point) -> float:
+    return float(point["x"])
+
+
+def _migrated_ramp(src: dict, span: float) -> dict:
+    mode = "Percentage" if str(src.get("ramp_mode", "Distance")).lower().startswith("percent") else "Distance"
+    dist = max(0.0, float(src.get("ramp_distance_m", 2.0) or 0.0))
+    pct_raw = src.get("ramp_percentage")
+    pct = (dist / span * 100.0) if pct_raw is None else float(pct_raw)
+    return {"mode": mode, "distance": dist, "percentage": max(0.0, min(100.0, pct))}
 
 
 @dataclass
@@ -402,7 +430,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.08.05", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.11.01", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -418,7 +446,7 @@ class HVP2PBackend(QObject):
         self._fw_modern_fallback_delay_s = 2.5
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.08.05+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.11.01+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -748,6 +776,7 @@ class HVP2PBackend(QObject):
         # immediately becoming a live motion command on the next 50 ms tick.
         self._joystick_neutral_required = False
 
+        self._smoke_config_dir = None
         self._config_path = self._config_file_path()
         self._config_write_queue = queue.Queue(maxsize=1)
         self._config_write_stop = threading.Event()
@@ -805,6 +834,15 @@ class HVP2PBackend(QObject):
         return (Path(xdg) if xdg else home / ".config") / "HV P2P SRVR"
 
     def _config_file_path(self):
+        # Smoke tests deliberately exercise auto-save/import/migration code, but
+        # must never read or overwrite the real operator configuration.  Earlier
+        # CI smoke runs shared ~/Library/Application Support with later frozen
+        # runs, making the native regression test order-dependent.  Give every
+        # smoke-test process a private data directory and clean it at shutdown.
+        if self.smoke_test:
+            home = Path(tempfile.mkdtemp(prefix="hvp2p-srvr-smoke-"))
+            self._smoke_config_dir = home
+            return home / "config.json"
         home = self._app_data_dir()
         try:
             home.mkdir(parents=True, exist_ok=True)
@@ -1229,12 +1267,9 @@ class HVP2PBackend(QObject):
             new_reset_reason = int(float(fields.get("reset_reason", self._ctrl_ts_reset_reason)))
         except Exception:
             new_reset_reason = self._ctrl_ts_reset_reason
-        def _mem_int(name, default=0):
-            try: return max(0, int(float(fields.get(name, default))))
-            except Exception: return max(0, int(default))
-        reported_heap = _mem_int("ts_heap", self._ctrl_ts_heap_free)
-        reported_min_heap = _mem_int("ts_min_heap", self._ctrl_ts_min_heap)
-        reported_psram = _mem_int("ts_psram", self._ctrl_ts_psram_free)
+        reported_heap = _safe_nonnegative_int(fields.get("ts_heap", self._ctrl_ts_heap_free), self._ctrl_ts_heap_free)
+        reported_min_heap = _safe_nonnegative_int(fields.get("ts_min_heap", self._ctrl_ts_min_heap), self._ctrl_ts_min_heap)
+        reported_psram = _safe_nonnegative_int(fields.get("ts_psram", self._ctrl_ts_psram_free), self._ctrl_ts_psram_free)
         if new_boot_id and new_boot_id != "unknown" and new_boot_id != self._ctrl_ts_boot_id:
             reset_name = self._esp_reset_reason_name(new_reset_reason)
             mem_note = f"; pre-reset heap={reported_heap} min_heap={reported_min_heap} psram={reported_psram}" if self._ctrl_ts_boot_id else ""
@@ -1273,16 +1308,17 @@ class HVP2PBackend(QObject):
         # RS485 diagnostics are cumulative monotonic counters. Never reset the
         # stored baseline after parsing them: doing so makes every non-zero value
         # look "new" on every 250 ms report and creates an unbounded Qt log storm.
-        def _diag_int(name, default=0):
-            try:
-                return max(0, int(float(fields.get(name, default))))
-            except Exception:
-                return max(0, int(default))
-        new_poll_timeouts = _diag_int("poll_timeouts", self._ctrl_ts_poll_timeouts)
-        new_events_rejected = _diag_int("events_reject", self._ctrl_ts_events_rejected)
-        new_queue_drops = _diag_int("ts_queue_drops", self._ctrl_ts_queue_drops)
-        new_parser_crc = _diag_int("parser_crc", 0) + _diag_int("ts_parser_crc", 0)
-        new_parser_resync = _diag_int("parser_resync", 0) + _diag_int("ts_parser_resync", 0)
+        new_poll_timeouts = _safe_nonnegative_int(fields.get("poll_timeouts", self._ctrl_ts_poll_timeouts), self._ctrl_ts_poll_timeouts)
+        new_events_rejected = _safe_nonnegative_int(fields.get("events_reject", self._ctrl_ts_events_rejected), self._ctrl_ts_events_rejected)
+        new_queue_drops = _safe_nonnegative_int(fields.get("ts_queue_drops", self._ctrl_ts_queue_drops), self._ctrl_ts_queue_drops)
+        new_parser_crc = (
+            _safe_nonnegative_int(fields.get("parser_crc", 0), 0)
+            + _safe_nonnegative_int(fields.get("ts_parser_crc", 0), 0)
+        )
+        new_parser_resync = (
+            _safe_nonnegative_int(fields.get("parser_resync", 0), 0)
+            + _safe_nonnegative_int(fields.get("ts_parser_resync", 0), 0)
+        )
         self._ctrl_ts_poll_timeouts = new_poll_timeouts
         self._ctrl_ts_events_rejected = new_events_rejected
         self._ctrl_ts_queue_drops = new_queue_drops
@@ -2889,12 +2925,25 @@ class HVP2PBackend(QObject):
         # calibrated coordinate remains untouched until the final transactional
         # commit at Ref.
         cal_pos = self._limit_calibration_display_position() if (self.calibration_open and self.calibration_type == "Limit") else float(self.state.pos_m or 0.0)
-        def _cal_value(name):
-            value = self._limit_cal_pending.get(name)
-            return "" if value is None else f"{float(value):.2f}"
-        def _joy_cal_value(name):
-            value = self._joystick_cal_pending.get(name)
-            return "" if value is None else f"{float(value):.4f}"
+
+        # Keep DSP1 construction closure-free.  The frozen macOS application is
+        # compiled by Nuitka, and this hot 10 Hz builder previously created two
+        # nested formatting functions on every call.  Apart from unnecessary
+        # allocation, those closures force generic compiled-function call helpers
+        # inside an already large frame.  Precompute the six optional strings
+        # directly; wire bytes and field ordering are unchanged.
+        cal_near_value = self._limit_cal_pending.get("near")
+        cal_ref_value = self._limit_cal_pending.get("ref")
+        cal_far_value = self._limit_cal_pending.get("far")
+        cal_left_value = self._joystick_cal_pending.get("left")
+        cal_centre_value = self._joystick_cal_pending.get("centre")
+        cal_right_value = self._joystick_cal_pending.get("right")
+        cal_near_text = "" if cal_near_value is None else f"{float(cal_near_value):.2f}"
+        cal_ref_text = "" if cal_ref_value is None else f"{float(cal_ref_value):.2f}"
+        cal_far_text = "" if cal_far_value is None else f"{float(cal_far_value):.2f}"
+        cal_left_text = "" if cal_left_value is None else f"{float(cal_left_value):.4f}"
+        cal_centre_text = "" if cal_centre_value is None else f"{float(cal_centre_value):.4f}"
+        cal_right_text = "" if cal_right_value is None else f"{float(cal_right_value):.4f}"
 
         mode = self.drive_modes[self.active_drive_mode]
         max_mps = float(mode.get("max_speed_mps", self.max_speed_mps))
@@ -2942,11 +2991,11 @@ class HVP2PBackend(QObject):
             f"cal_active={1 if cal_active else 0}", f"cal_kind={self._display_field(cal_kind, 16)}",
             f"cal_step={cal_step}", f"cal_title={self._display_field(cal_title, 32)}",
             f"cal_instruction={self._display_field(cal_instruction, 64, replace_comma=False)}",
-            f"cal_pos={cal_pos:.2f}", f"cal_near={_cal_value('near')}",
-            f"cal_ref={_cal_value('ref')}", f"cal_far={_cal_value('far')}",
+            f"cal_pos={cal_pos:.2f}", f"cal_near={cal_near_text}",
+            f"cal_ref={cal_ref_text}", f"cal_far={cal_far_text}",
             f"cal_joy={float(self._ctrl_axis):.4f}",
-            f"cal_left={_joy_cal_value('left')}", f"cal_centre={_joy_cal_value('centre')}",
-            f"cal_right={_joy_cal_value('right')}",
+            f"cal_left={cal_left_text}", f"cal_centre={cal_centre_text}",
+            f"cal_right={cal_right_text}",
             f"aux1={labels[0]}", f"aux2={labels[1]}", f"aux3={labels[2]}", f"aux4={labels[3]}", f"aux5={labels[4]}",
             f"max_mps={max_mps:.2f}", f"max_kmh={max_mps*3.6:.2f}", f"mode={mode_name}",
             f"drive_mode={mode_name}", f"accel_mode={self._display_field(self.acceleration_mode)}",
@@ -3514,7 +3563,7 @@ class HVP2PBackend(QObject):
             except Exception:
                 z = None
             pts.append({"x": x, "y": y, "z": z, "name": str(raw.get("name", ""))})
-        pts.sort(key=lambda p: p["x"])
+        pts.sort(key=_geometry_point_x)
         dedup = []
         for point in pts:
             if dedup and abs(point["x"] - dedup[-1]["x"]) < 1e-9:
@@ -4252,7 +4301,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.08.05 moves the installed joystick polarity correction into CTRL,
+        # v26.10.11.01 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same
@@ -4261,15 +4310,14 @@ class HVP2PBackend(QObject):
             schema_version = int(c.get("config_schema_version", 0) or 0)
         except Exception:
             schema_version = 0
-        def set_missing(key, value):
-            nonlocal changed
+        for key, value in (
+            ("ctrl_ip", c.get("controller_ip_ref")),
+            ("w1p_ip", c.get("winch_host")),
+            ("units_per_m", c.get("winch_units_per_m")),
+        ):
             if key not in c and value is not None:
                 c[key] = value
                 changed = True
-
-        set_missing("ctrl_ip", c.get("controller_ip_ref"))
-        set_missing("w1p_ip", c.get("winch_host"))
-        set_missing("units_per_m", c.get("winch_units_per_m"))
         if "joystick_calibration" not in c and isinstance(c.get("joy_cal"), dict):
             joy = c["joy_cal"]
             c["joystick_calibration"] = {
@@ -4322,18 +4370,19 @@ class HVP2PBackend(QObject):
                     changed = True
         c["drive_modes"] = modes
 
-        def norm_action(value):
-            return self._normalise_aux_action_name(value)
         if "ctrl_aux_assignments" not in c:
-            vals = [norm_action(c.get(f"aux{i}_action", "None")) for i in range(1,6)]
+            vals = [self._normalise_aux_action_name(c.get(f"aux{i}_action", "None")) for i in range(1,6)]
             c["ctrl_aux_assignments"] = vals
             changed = True
         else:
-            vals = [norm_action(x) for x in self._normalise_list(c.get("ctrl_aux_assignments"), self.ctrl_aux_assignments, 5)]
+            vals = [
+                self._normalise_aux_action_name(x)
+                for x in self._normalise_list(c.get("ctrl_aux_assignments"), self.ctrl_aux_assignments, 5)
+            ]
             if vals != c.get("ctrl_aux_assignments"):
                 c["ctrl_aux_assignments"] = vals; changed = True
         if "w1p_aux_assignments" not in c:
-            vals = [norm_action(c.get(f"w1pts_aux{i}_action", "None")) for i in range(1,6)]
+            vals = [self._normalise_aux_action_name(c.get(f"w1pts_aux{i}_action", "None")) for i in range(1,6)]
             c["w1p_aux_assignments"] = vals
             changed = True
 
@@ -4345,16 +4394,10 @@ class HVP2PBackend(QObject):
             npos = float(near.get("position_m", 0.0) or 0.0)
             fpos = float(far.get("position_m", 100.0) or 100.0)
             span = max(0.001, abs(fpos-npos))
-            def ramp(src):
-                mode = "Percentage" if str(src.get("ramp_mode", "Distance")).lower().startswith("percent") else "Distance"
-                dist = max(0.0, float(src.get("ramp_distance_m", 2.0) or 0.0))
-                pct_raw = src.get("ramp_percentage")
-                pct = (dist/span*100.0) if pct_raw is None else float(pct_raw)
-                return {"mode":mode, "distance":dist, "percentage":max(0.0,min(100.0,pct))}
             c["limits"] = {
                 "near": npos, "far": fpos, "ref": float(ref.get("position_m", (npos+fpos)/2.0) or (npos+fpos)/2.0),
                 "raw": {"near":None,"ref":None,"far":None},
-                "nearRamp": ramp(near), "farRamp": ramp(far),
+                "nearRamp": _migrated_ramp(near, span), "farRamp": _migrated_ramp(far, span),
             }
             changed = True
         if "preset_positions" not in c and isinstance(c.get("presets"), list):
@@ -5021,17 +5064,25 @@ class HVP2PBackend(QObject):
 
     @Property('QVariantMap', notify=configChanged)
     def calibrationSummary(self):
-        def item(lp, raw_key):
-            is_set = lp.position_m is not None
-            return {
-                "set": bool(is_set),
-                "position": float(lp.position_m or 0.0),
-                "raw": "—" if self._limit_raw.get(raw_key) is None else str(self._limit_raw.get(raw_key)),
-            }
+        near_raw = self._limit_raw.get("near")
+        ref_raw = self._limit_raw.get("ref")
+        far_raw = self._limit_raw.get("far")
         return {
-            "near": item(self.state.near_limit, "near"),
-            "ref": item(self.state.ref_point, "ref"),
-            "far": item(self.state.far_limit, "far"),
+            "near": {
+                "set": self.state.near_limit.position_m is not None,
+                "position": float(self.state.near_limit.position_m or 0.0),
+                "raw": "—" if near_raw is None else str(near_raw),
+            },
+            "ref": {
+                "set": self.state.ref_point.position_m is not None,
+                "position": float(self.state.ref_point.position_m or 0.0),
+                "raw": "—" if ref_raw is None else str(ref_raw),
+            },
+            "far": {
+                "set": self.state.far_limit.position_m is not None,
+                "position": float(self.state.far_limit.position_m or 0.0),
+                "raw": "—" if far_raw is None else str(far_raw),
+            },
         }
     @Property(bool, notify=configChanged)
     def freeDInputEnabled(self): return bool(self.freed_input_enabled)
@@ -5122,13 +5173,13 @@ class HVP2PBackend(QObject):
         return float(self._limit_calibration_display_position())
     @Property('QVariantMap', notify=stateChanged)
     def limitCalibrationCaptures(self):
-        def shown(name):
-            value = self._limit_cal_pending.get(name)
-            return "—" if value is None else f"{float(value):.2f} m"
+        near = self._limit_cal_pending.get("near")
+        ref = self._limit_cal_pending.get("ref")
+        far = self._limit_cal_pending.get("far")
         return {
-            "near": shown("near"),
-            "ref": shown("ref"),
-            "far": shown("far"),
+            "near": "—" if near is None else f"{float(near):.2f} m",
+            "ref": "—" if ref is None else f"{float(ref):.2f} m",
+            "far": "—" if far is None else f"{float(far):.2f} m",
             "current": f"{self._limit_calibration_display_position():.2f} m",
         }
     @Property(bool, notify=joystickCalibrationChanged)
@@ -6119,3 +6170,8 @@ class HVP2PBackend(QObject):
             self._freed_sock.close()
             self._ctrl_display_sock.close()
         except Exception: pass
+        if self.smoke_test and self._smoke_config_dir is not None:
+            try:
+                shutil.rmtree(self._smoke_config_dir, ignore_errors=True)
+            finally:
+                self._smoke_config_dir = None

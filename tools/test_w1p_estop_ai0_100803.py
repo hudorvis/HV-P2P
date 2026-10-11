@@ -2,7 +2,7 @@
 from pathlib import Path
 import re
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.10.08.05'
+VER='26.10.11.01'
 W=(ROOT/f'HV_P2P_W1P_EDGEBOX_v{VER}'/f'HV_P2P_W1P_EDGEBOX_v{VER}.ino').read_text()
 
 def func(src,name):
