@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-B=(ROOT/'SRVR_GitHub_v26.10.08.04'/'backend.py').read_text()
-W=(ROOT/'HV_P2P_W1P_EDGEBOX_v26.10.08.04'/'HV_P2P_W1P_EDGEBOX_v26.10.08.04.ino').read_text()
+B=(ROOT/'SRVR_GitHub_v26.10.08.05'/'backend.py').read_text()
+W=(ROOT/'HV_P2P_W1P_EDGEBOX_v26.10.08.05'/'HV_P2P_W1P_EDGEBOX_v26.10.08.05.ino').read_text()
 
 # Established project framing is restored, while the factory framing remains a
 # read-only stopped diagnostic probe only.
@@ -22,9 +22,12 @@ for tok in (
 # generic red Disconnected state. Logging is transition keyed to avoid 20 Hz spam.
 for tok in (
     'self._w1p_rs485_diag_signature = ""',
+    'self._pending_w1p_rs485_log = ""',
     'def _log_w1p_rs485_diagnostics(self, fields: dict)',
     'if signature == self._w1p_rs485_diag_signature:',
     'self._log_w1p_rs485_diagnostics(fields)',
+    'pending_rs485_log = self._pending_w1p_rs485_log',
+    'self._log(pending_rs485_log)',
     '[W1P RS485] FAULT: no valid EL7 Modbus reply at 115200 8N1',
     'W1P DID receive a valid ',
     'read-only reply at the EL7 factory 38400 8N2 setting',
@@ -41,7 +44,8 @@ assert 'elif "W1P" in tag_u:' in B
 print('W1P_RS485_FAULT_LOGGING_100804_PASS')
 
 # Exercise the exact helper without importing PySide6: extract the method AST and
-# bind it to a tiny dummy object exposing only _log + the signature state.
+# bind it to a tiny dummy object. The helper now queues one transition message;
+# _tick owns the actual Qt log signal after DSP1 construction.
 import ast
 module = ast.parse(B)
 backend_cls = next(n for n in module.body if isinstance(n, ast.ClassDef) and n.name == 'HVP2PBackend')
@@ -53,8 +57,7 @@ exec(compile(method_module, '<w1p-rs485-diag>', 'exec'), ns)
 
 class Dummy:
     _w1p_rs485_diag_signature = ''
-    def __init__(self): self.logs = []
-    def _log(self, msg): self.logs.append(msg)
+    def __init__(self): self.pending = []; self._pending_w1p_rs485_log = ''
 Dummy._log_w1p_rs485_diagnostics = ns['_log_w1p_rs485_diagnostics']
 
 def sample(**kw):
@@ -69,15 +72,23 @@ def sample(**kw):
     return d
 
 d = Dummy()
-d._log_w1p_rs485_diagnostics(sample())
-d._log_w1p_rs485_diagnostics(sample())  # identical 20 Hz status must not spam
-d._log_w1p_rs485_diagnostics(sample(FACTORY_COMMS=1))
-d._log_w1p_rs485_diagnostics(sample(RS_STAT='CONNECTED',LEAD_CFG='MISMATCH',MODBUS=1,POS_READ=1,IO_READ=1,READY=1,SRDY=1,RS_FMT=5,RS_BAUD=4,RS_ID=1,CTRL_MODE=6,DI1_ASSIGN=131,DO2_ASSIGN=2,DO3_ASSIGN=18,DO4_ASSIGN=3,DO5_ASSIGN=1))
-d._log_w1p_rs485_diagnostics(sample(RS_STAT='CONNECTED',LEAD_CFG='OK',MODBUS=1,POS_READ=1,IO_READ=1,READY=1,SRDY=1,RS_FMT=4,RS_BAUD=6,RS_ID=1,CTRL_MODE=6,DI1_ASSIGN=131,DO2_ASSIGN=2,DO3_ASSIGN=18,DO4_ASSIGN=3,DO5_ASSIGN=1))
-assert len(d.logs) == 4, d.logs
-assert 'no valid EL7 Modbus reply at 115200 8N1' in d.logs[0]
-assert 'factory 38400 8N2' in d.logs[1]
-assert 'P05.29=4 / 8N1 (reported 5)' in d.logs[2]
-assert 'P05.30=6 / 115200 (reported 4)' in d.logs[2]
-assert '[W1P RS485] Connected:' in d.logs[3]
+messages = []
+def run(fields):
+    before_sig = d._w1p_rs485_diag_signature
+    d._log_w1p_rs485_diagnostics(fields)
+    if d._w1p_rs485_diag_signature != before_sig and d._pending_w1p_rs485_log:
+        messages.append(d._pending_w1p_rs485_log)
+        d._pending_w1p_rs485_log = ''
+
+run(sample())
+run(sample())  # identical 20 Hz status must not spam
+run(sample(FACTORY_COMMS=1))
+run(sample(RS_STAT='CONNECTED',LEAD_CFG='MISMATCH',MODBUS=1,POS_READ=1,IO_READ=1,READY=1,SRDY=1,RS_FMT=5,RS_BAUD=4,RS_ID=1,CTRL_MODE=6,DI1_ASSIGN=131,DO2_ASSIGN=2,DO3_ASSIGN=18,DO4_ASSIGN=3,DO5_ASSIGN=1))
+run(sample(RS_STAT='CONNECTED',LEAD_CFG='OK',MODBUS=1,POS_READ=1,IO_READ=1,READY=1,SRDY=1,RS_FMT=4,RS_BAUD=6,RS_ID=1,CTRL_MODE=6,DI1_ASSIGN=131,DO2_ASSIGN=2,DO3_ASSIGN=18,DO4_ASSIGN=3,DO5_ASSIGN=1))
+assert len(messages) == 4, messages
+assert 'no valid EL7 Modbus reply at 115200 8N1' in messages[0]
+assert 'factory 38400 8N2' in messages[1]
+assert 'P05.29=4 / 8N1 (reported 5)' in messages[2]
+assert 'P05.30=6 / 115200 (reported 4)' in messages[2]
+assert '[W1P RS485] Connected:' in messages[3]
 print('W1P_RS485_FAULT_LOGGING_RUNTIME_PASS')

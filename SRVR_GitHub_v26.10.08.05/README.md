@@ -1,20 +1,26 @@
-# HV P2P SRVR v26.10.08.04 — Qt Quick desktop build source
+# HV P2P SRVR v26.10.08.05 — Qt Quick desktop build source
 
-This SRVR source continues from the audited/hardened v26.08.31.08 control baseline. v26.10.08.04 retains the approved **Run** and **Setup** layout while correcting Settings state convergence, firmware-progress readouts, signed service-mode distance display and true W1P-independent Virtual simulation.
+This SRVR source is locked to `v26.10.08.04` except for the macOS frozen-runtime hardening described below. Approved Run/Setup layout, motion, calibration, AUX, firmware authority, 115200/8N1 Leadshine communications, AI0 W1P E-stop and DO0 brake behavior remain unchanged.
 
-## v26.10.08.04 Leadshine RS485 diagnostics
+## v26.10.08.05 macOS frozen-runtime crash fix
 
-W1P normal Leadshine communication is restored to the established project format **115200 baud / 8N1 / Modbus ID 1** (`P05.29=4`, `P05.30=6`, `P05.31=1`). The EL7 factory **38400/8N2** format is retained only as a stopped, read-only diagnostic probe.
+The `.08.04` macOS Intel crash report showed a native `EXC_BAD_ACCESS` in Nuitka's generated call helper while `_tick` was building the CTRL DSP1 display packet. The DSP1 builder is source-identical to `.08.03`; the new `.08.04` RS485 diagnostic path ran immediately before it. `.08.05` keeps the same `[W1P RS485]` messages but makes diagnostic reduction plain-data only and defers the Qt log signal until after DSP1 construction.
 
-SRVR now converts W1P's existing RS485/configuration/feedback STATUS evidence into transition-based `[W1P RS485]` log entries. No-response, alternate-format detection, configuration-read faults, parameter mismatch, feedback/SRDY faults and verified recovery are therefore visible on the Log page and in saved log files without flooding the log at the W1P status rate.
+The packaged-app smoke test now executes the exact RS485-diagnostic -> repeated-DSP1 sequence inside the frozen macOS Intel and Apple Silicon binaries, so this native path is exercised before release publication.
 
-## v26.10.08.04 automatic-update recovery
+## Leadshine RS485 diagnostics retained from v26.10.08.04
+
+W1P normal Leadshine communication remains **115200 baud / 8N1 / Modbus ID 1** (`P05.29=4`, `P05.30=6`, `P05.31=1`). The EL7 factory **38400/8N2** format remains only a stopped, read-only diagnostic probe.
+
+SRVR converts W1P's existing RS485/configuration/feedback STATUS evidence into transition-based `[W1P RS485]` log entries. No-response, alternate-format detection, configuration-read faults, parameter mismatch, feedback/SRDY faults and verified recovery remain visible on the Log page and in saved log files without flooding the log at the W1P status rate.
+
+## v26.10.08.05 automatic-update recovery
 
 This revision keeps the `.06.02` operator/motion/UI changes locked and changes only SRVR firmware coordination/recovery. The normal background `SRVR_FW` node-pull path remains first choice, but the verified HTTP fallback is now evaluated by the background communications worker as well as the Qt path, so a stale CTRL/W1P no longer needs a manual reboot merely because the primary pull was missed.
 
 CTRL remains the mandatory first stage and W1P is attempted second. A present W1P that is actively flashing receives a long completion window; a W1P that cannot converge (for example `update_waiting_safe_idle`) receives a bounded ordered recovery window and remains fail-closed, while the independent CTRL-TS final stage is eventually released instead of remaining at `Waiting` forever. The CTRL-TS safe RS485 flash/reboot protocol itself is unchanged.
 
-## v26.10.08.04 operator revisions
+## v26.10.08.05 operator revisions
 
 ### Run
 
@@ -34,7 +40,7 @@ CTRL remains the mandatory first stage and W1P is attempted second. A present W1
 - The `CTRL-TS` panel now matches CTRL/W1P firmware presentation: `Link`, a divider, and one `Firmware` readout that normally shows the detected running version and switches to update progress during CTRL-TS firmware activity.
 
 
-### v26.10.08.04 transport/display integration
+### v26.10.08.05 transport/display integration
 
 - CTRL now reports its own authority-OTA progress back to SRVR over the existing UDP control link as well as to CTRL-TS; W1P continues to report `FW_PROGRESS` directly to SRVR.
 - CTRL/W1P/CTRL-TS Settings firmware fields therefore use one version-or-progress model.
@@ -104,9 +110,9 @@ Use the repository-root workflow:
 
 `.github/workflows/complete-build.yml`
 
-It builds the matched v26.10.08.04 CTRL-TS, CTRL and W1P firmware, freezes/smoke-tests the Intel (`x86_64`) macOS SRVR application, preserves the original SRVR distribution ZIP, and publishes the complete matched release.
+It builds the matched v26.10.08.05 CTRL-TS, CTRL and W1P firmware, freezes/smoke-tests the Intel (`x86_64`) macOS SRVR application, preserves the original SRVR distribution ZIP, and publishes the complete matched release.
 
-A successful GitHub compile is not powered-motion commissioning approval. Complete the repository `NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.10.08.04.md` before hardware sign-off.
+A successful GitHub compile is not powered-motion commissioning approval. Complete the repository `NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.10.08.05.md` before hardware sign-off.
 
 
 ## Native desktop targets

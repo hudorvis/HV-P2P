@@ -1,4 +1,4 @@
-# HV P2P v26.10.08.04 native build and bench checklist
+# HV P2P v26.10.08.05 native build and bench checklist
 
 ## GitHub CI / source verification
 
@@ -6,7 +6,7 @@
 - [ ] macOS Intel / Apple Silicon and Windows backend tests pass.
 - [ ] Native CTRL-TS, CTRL and W1P compilation passes.
 - [ ] CTRL compilation uses the staged CTRL-TS firmware image.
-- [ ] Frozen desktop smoke tests pass on all target platforms.
+- [ ] Frozen desktop smoke tests pass on all target platforms, including the `.08.04` RS485-diagnostic -> repeated-DSP1 native-crash regression path.
 
 ## EL7 RS485 commissioning
 

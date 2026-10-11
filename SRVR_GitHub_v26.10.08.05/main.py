@@ -32,7 +32,7 @@ import PySide6.QtQuickControls2  # noqa: F401
 from backend import HVP2PBackend
 from firmware_authority import FirmwareAuthorityError, start_firmware_authority
 
-APP_VERSION = "26.10.08.04"
+APP_VERSION = "26.10.08.05"
 
 
 def _exercise_qml(app: QGuiApplication, engine: QQmlApplicationEngine, backend: HVP2PBackend) -> bool:
@@ -203,6 +203,31 @@ def _exercise_qml(app: QGuiApplication, engine: QQmlApplicationEngine, backend: 
         backend.toggleSrvrEStop()
         if bool(backend._srvr_estop) != before:
             raise RuntimeError("SRVR E-stop toggle failed")
+
+        # Frozen-runtime regression for the macOS Intel v26.10.08.04 crash.
+        # Reproduce the relevant ordering: reduce a W1P RS485 diagnostic, then
+        # immediately build DSP1 repeatedly.  The .08.04 native crash occurred
+        # in Nuitka's generated call helper inside this builder after the new
+        # diagnostic path had run.  Keep this in the frozen smoke test so both
+        # macOS architectures must execute the exact path before release.
+        rs485_fixture = {
+            "RS_STAT": "DISCONNECTED", "LEAD_CFG": "READ_FAULT",
+            "FACTORY_COMMS": "0", "MODBUS": "0", "POS_READ": "0",
+            "IO_READ": "0", "READY": "0", "SRDY": "0", "MB_EX": "0",
+            "RS_FAIL_SEQ": "7", "RS_FMT": "4", "RS_BAUD": "6",
+            "RS_ID": "1", "CTRL_MODE": "6", "DI1_ASSIGN": "131",
+            "DO2_ASSIGN": "2", "DO3_ASSIGN": "18", "DO4_ASSIGN": "3",
+            "DO5_ASSIGN": "1",
+        }
+        backend._log_w1p_rs485_diagnostics(rs485_fixture)
+        for _ in range(20):
+            packet = backend._build_controller_display_packet()
+            if not packet.startswith("DSP1|"):
+                raise RuntimeError("DSP1 frozen-runtime regression packet invalid")
+        if backend._pending_w1p_rs485_log:
+            pending = backend._pending_w1p_rs485_log
+            backend._pending_w1p_rs485_log = ""
+            backend._log(pending)
         app.processEvents()
     except Exception as exc:
         print(f"SMOKE FAIL: {exc}", file=sys.stderr)

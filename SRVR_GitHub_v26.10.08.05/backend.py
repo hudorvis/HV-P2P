@@ -402,7 +402,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.08.04", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.08.05", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -418,7 +418,7 @@ class HVP2PBackend(QObject):
         self._fw_modern_fallback_delay_s = 2.5
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.08.04+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.08.05+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -611,6 +611,13 @@ class HVP2PBackend(QObject):
         # serial console has richer commissioning prints, but an operator should
         # not need a second cable/terminal to learn why SRVR says Disconnected.
         self._w1p_rs485_diag_signature = ""
+        # Queue operator-facing RS485 diagnostics until the end of the Qt timer
+        # cycle.  v26.10.08.04 emitted logChanged synchronously while parsing a
+        # W1P frame immediately before DSP1 construction.  The frozen macOS Intel
+        # build could then hit a Nuitka/PySide native-call crash in the following
+        # display-packet build.  Deferring the signal keeps the diagnostic feature
+        # while removing that re-entrant compiled call sequence.
+        self._pending_w1p_rs485_log = ""
         # SRVR is authoritative for persistent W1P configuration.  W1P STATUS
         # is confirmation, not a source that may silently overwrite a freshly
         # selected operator setting after a lost UDP SET command.
@@ -1525,12 +1532,13 @@ class HVP2PBackend(QObject):
             self._log(f"[W1P STATUS] rejected frame #{self._w1p_status_rejected}: {reason}")
 
     def _log_w1p_rs485_diagnostics(self, fields: dict) -> None:
-        """Log only meaningful Leadshine/RS485 state changes reported by W1P.
+        """Queue one transition-only Leadshine/RS485 diagnostic for SRVR Log.
 
-        W1P already publishes the transport, configuration and feedback evidence
-        in STATUS. Earlier SRVR releases consumed that evidence for the red/green
-        UI state but did not explain it in the saved/operator log. Keep this
-        transition-based so the 20 Hz W1P status stream cannot flood the log.
+        Do not emit the Qt logChanged signal from inside W1P frame parsing.  The
+        frozen macOS Intel v26.10.08.04 app proved that this new synchronous path
+        could destabilise the immediately-following compiled DSP1 builder.  This
+        method therefore performs only plain-Python field reduction and stores a
+        message; _tick flushes it after motion/display work is complete.
         """
         rs = str(fields.get("RS_STAT", "WAITING")).strip().upper()
         cfg = str(fields.get("LEAD_CFG", "READ_FAULT")).strip().upper()
@@ -1543,12 +1551,13 @@ class HVP2PBackend(QObject):
         mb_ex = str(fields.get("MB_EX", "0")).strip()
         fail_seq = str(fields.get("RS_FAIL_SEQ", "0")).strip()
 
-        # Include the diagnostic dimensions in the signature so an unchanged red
-        # status does log again when W1P discovers the drive at the alternate
-        # factory format or obtains a new configuration-read result.
+        # Keep this signature deliberately primitive.  Avoid direct special-method
+        # calls such as bool.__str__() in the frozen path; they add no value and
+        # were unique to the .08.04 regression.
         signature = "|".join((
-            rs, cfg, "1" if factory else "0", fb_ok.__str__(), pos_ok.__str__(),
-            io_ok.__str__(), ready.__str__(), srdy.__str__(), mb_ex,
+            rs, cfg, "1" if factory else "0", "1" if fb_ok else "0",
+            "1" if pos_ok else "0", "1" if io_ok else "0",
+            "1" if ready else "0", "1" if srdy else "0", mb_ex,
             str(fields.get("RS_FMT", "")), str(fields.get("RS_BAUD", "")),
             str(fields.get("RS_ID", "")), str(fields.get("CTRL_MODE", "")),
             str(fields.get("DI1_ASSIGN", "")), str(fields.get("DO2_ASSIGN", "")),
@@ -1559,9 +1568,10 @@ class HVP2PBackend(QObject):
             return
         self._w1p_rs485_diag_signature = signature
 
+        message = ""
         if rs not in ("CONNECTED", "OK", "1"):
             if factory:
-                self._log(
+                message = (
                     "[W1P RS485] FAULT: no valid EL7 Modbus reply at the HV P2P "
                     "setting 115200 8N1 / slave 1, but W1P DID receive a valid "
                     "read-only reply at the EL7 factory 38400 8N2 setting. Set "
@@ -1569,23 +1579,19 @@ class HVP2PBackend(QObject):
                     "EL7, then leave the W1P wiring/polarity unchanged."
                 )
             else:
-                self._log(
+                message = (
                     f"[W1P RS485] FAULT: no valid EL7 Modbus reply at 115200 8N1 "
                     f"/ slave 1 (consecutive failures={fail_seq}). W1P has also not "
                     "verified the alternate 38400 8N2 factory probe. Check EL7 "
                     "power, CN3 custom harness, A/B polarity and end termination."
                 )
-            return
-
-        if cfg == "READ_FAULT":
-            self._log(
+        elif cfg == "READ_FAULT":
+            message = (
                 f"[W1P RS485] FAULT: EL7 is replying on RS485, but required "
                 f"configuration registers could not all be read (Modbus exception={mb_ex}). "
                 "Physical wiring/framing is alive; inspect the EL7 parameter/register access."
             )
-            return
-
-        if cfg == "MISMATCH":
+        elif cfg == "MISMATCH":
             mismatches = []
             expected = (
                 ("CTRL_MODE", "6", "P00.01=6 PR mode"),
@@ -1603,19 +1609,21 @@ class HVP2PBackend(QObject):
                 if got and got != want:
                     mismatches.append(f"{label} (reported {got})")
             detail = "; ".join(mismatches) if mismatches else "one or more required EL7 parameters do not match"
-            self._log(f"[W1P RS485] FAULT: physical Modbus link is connected, but EL7 configuration mismatch: {detail}.")
-            return
-
-        if not (fb_ok and pos_ok and io_ok and ready and srdy):
-            self._log(
+            message = f"[W1P RS485] FAULT: physical Modbus link is connected, but EL7 configuration mismatch: {detail}."
+        elif not (fb_ok and pos_ok and io_ok and ready and srdy):
+            message = (
                 "[W1P RS485] FAULT: Modbus link/configuration are valid but drive "
-                f"feedback is not ready: MODBUS={int(fb_ok)} POS_READ={int(pos_ok)} "
-                f"IO_READ={int(io_ok)} READY={int(ready)} SRDY={int(srdy)}. "
+                f"feedback is not ready: MODBUS={1 if fb_ok else 0} POS_READ={1 if pos_ok else 0} "
+                f"IO_READ={1 if io_ok else 0} READY={1 if ready else 0} SRDY={1 if srdy else 0}. "
                 "Check EL7 main power/alarm state and DO2/SRDY status."
             )
-            return
+        else:
+            message = "[W1P RS485] Connected: EL7 verified at 115200 8N1 / slave 1; configuration and feedback are healthy."
 
-        self._log("[W1P RS485] Connected: EL7 verified at 115200 8N1 / slave 1; configuration and feedback are healthy.")
+        # Multiple W1P frames can be drained in one 25 ms tick.  Only the newest
+        # transition needs to be emitted; the state signature still records every
+        # processed transition and prevents steady-state log spam.
+        self._pending_w1p_rs485_log = message
 
     def _w1p_status_fresh(self):
         return bool(self._w1p_status_last_seen > 0 and
@@ -3783,6 +3791,13 @@ class HVP2PBackend(QObject):
             # They are owned by _srvr_alive_worker so a stalled/background Qt
             # event loop cannot prevent CTRL/W1P/CTRL-TS release convergence.
             self._motion_tick(); self._service_w1p_setting_sync(); self._service_legacy_firmware_push(); self._send_freed(); self._send_controller_marker_packet(); self._send_controller_display_packet()
+            # Flush W1P/EL7 diagnostics only after the display packet is built.
+            # This avoids the .08.04 frozen-macOS re-entrant log-signal sequence
+            # while preserving the same transition-only operator information.
+            pending_rs485_log = self._pending_w1p_rs485_log
+            if pending_rs485_log:
+                self._pending_w1p_rs485_log = ""
+                self._log(pending_rs485_log)
             # Keep the 25 ms control/safety cadence, but do not force the whole
             # QML property graph to re-evaluate at 40 Hz. 20 Hz is ample for the
             # desktop display and materially reduces Intel-mac UI load.
@@ -4237,7 +4252,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.08.04 moves the installed joystick polarity correction into CTRL,
+        # v26.10.08.05 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same

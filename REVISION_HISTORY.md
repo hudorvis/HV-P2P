@@ -1,3 +1,13 @@
+# v26.10.08.05 — 2026-10-11
+
+- Locked `v26.10.08.04`; functional change is restricted to the SRVR Leadshine/RS485 diagnostic emission path that triggered the user-reported macOS Intel native crash.
+- Crash report: `EXC_BAD_ACCESS (SIGSEGV)` on the Qt main thread in Nuitka `CALL_FUNCTION_WITH_POS_ARGS1`, reached through `_tick -> _send_controller_display_packet -> _build_controller_display_packet`.
+- Confirmed `_build_controller_display_packet()` is source-identical between `.08.03` and `.08.04`; the new `.08.04` RS485 diagnostic reducer/log emitter was the only new path immediately before that builder.
+- Replaced direct boolean special-method calls in the diagnostic signature with primitive literal encoding and deferred `logChanged` emission until after DSP1 construction. Diagnostic wording/state-transition behavior is preserved.
+- Added `test_macos_frozen_rs485_diag_crash_100805.py` and extended the packaged-app smoke test to run RS485 diagnostic reduction followed by twenty DSP1 builds inside frozen macOS Intel/Apple Silicon binaries and ZIP round-trip verification.
+- Preserved `.08.04` 115200/8N1/ID1 Leadshine settings, AI0/5 V W1P E-stop, DO0 brake sequencing, updater, motion, limits, calibration, AUX and UI behavior.
+- macOS bundle metadata: short version `26.10.8`, build `2610.8.5`.
+
 # v26.10.08.04 — 2026-10-08
 
 - Locked `v26.10.08.03`; functional changes are restricted to W1P↔EL7 communication framing and SRVR RS485 diagnostics.
