@@ -1,4 +1,4 @@
-# HV P2P v26.10.08.03 native build and bench checklist
+# HV P2P v26.10.08.04 native build and bench checklist
 
 ## GitHub CI / source verification
 
@@ -10,8 +10,9 @@
 
 ## EL7 RS485 commissioning
 
-- [ ] EL7 `P05.29 = 5` (8N2), `P05.30 = 4` (38400 baud), `P05.31 = 1` (axis/slave ID 1), then restart the drive if parameters were changed.
-- [ ] W1P reports the operational link at 38400/8N2/ID1 without relying on the legacy 115200/8N1 diagnostic probe.
+- [ ] EL7 `P05.29 = 4` (8N1), `P05.30 = 6` (115200 baud), `P05.31 = 1` (axis/slave ID 1), then restart the drive if parameters were changed.
+- [ ] W1P reports the operational link at 115200/8N1/ID1 without relying on the read-only 38400/8N2 factory diagnostic probe.
+- [ ] With the EL7 disconnected or misconfigured, confirm SRVR Log records a specific `[W1P RS485] FAULT` reason and records recovery after the fault is corrected.
 - [ ] Confirm the drive is in the required HV P2P PR/Modbus control configuration before enabling drive writes.
 - [ ] Confirm RS485 A/B and reference wiring follows the EL7/EdgeBox hardware documentation.
 

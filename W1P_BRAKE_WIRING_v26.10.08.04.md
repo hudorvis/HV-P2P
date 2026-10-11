@@ -1,4 +1,4 @@
-# HV P2P W1P direct motor-brake wiring — v26.10.08.03
+# HV P2P W1P direct motor-brake wiring — v26.10.08.04
 
 ## Scope
 
@@ -43,7 +43,7 @@ The brake is spring-applied and electrically released:
 
 Therefore an E-stop must **not** energise DO0. W1P's stop path removes motion/Servo Enable authority and the physical brake then applies when the EL7's fresh logical BRK-OFF sequence clears. If the EL7 output-status/RS485 path becomes invalid or stale, W1P fails DO0 LOW. DO0 is forced LOW during the earliest startup stage before network, Modbus, updater or motion initialization.
 
-The local W1P E-stop remains active, but v26.10.08.03 moves its status input to **AI0 / 5 V NC loop**. See `W1P_ESTOP_WIRING_v26.10.08.03.md`. There is no firmware bypass.
+The local W1P E-stop remains active, but v26.10.08.04 moves its status input to **AI0 / 5 V NC loop**. See `W1P_ESTOP_WIRING_v26.10.08.04.md`. There is no firmware bypass.
 
 ## Current estimate
 
@@ -59,7 +59,7 @@ Once released, W1P follows fresh logical BRK-OFF during orderly shutdown rather 
 
 ## EL7 RS485 settings used by this release
 
-W1P normal operation is **38400 baud, 8N2, Modbus ID 1**, matching `P05.29=5`, `P05.30=4`, `P05.31=1`. If any of those drive parameters are changed, restart the EL7 before expecting the new communication setting to take effect.
+W1P normal operation is **115200 baud, 8N1, Modbus ID 1**, matching `P05.29=4`, `P05.30=6`, `P05.31=1`. If any of those drive parameters are changed, restart the EL7 before expecting the new communication setting to take effect.
 
 ## Commissioning checks
 

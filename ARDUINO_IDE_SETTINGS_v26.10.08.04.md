@@ -1,4 +1,4 @@
-# Arduino IDE Commissioning Settings — v26.10.08.03
+# Arduino IDE Commissioning Settings — v26.10.08.04
 
 GitHub Actions remains authoritative for release compilation. These settings are
 for initial/manual bench flashing only.
@@ -23,10 +23,10 @@ for initial/manual bench flashing only.
 
 ## W1P / Leadshine EL7-RS communication
 
-- Operational W1P Modbus: **38400 baud, 8N2, slave ID 1**.
-- EL7 parameters: **P05.29=5**, **P05.30=4**, **P05.31=1**.
+- Operational W1P Modbus: **115200 baud, 8N1, slave ID 1**.
+- EL7 parameters: **P05.29=4**, **P05.30=6**, **P05.31=1**.
 - Restart/power-cycle the EL7 after changing those communication parameters.
-- The firmware's 115200/8N1 path is diagnostic-only and is never the normal control link.
+- The firmware may safely probe **38400/8N2** read-only while stopped if the normal link is absent; that probe is diagnostic-only and never becomes the control link.
 
 ## Waveshare ESP32-S3-Touch-LCD-7
 
@@ -45,7 +45,7 @@ RS485.
 
 ## CTRL-TS library/build note
 
-v26.10.08.03 deliberately restores the pinned Waveshare display port's own RGB
+v26.10.08.04 deliberately restores the pinned Waveshare display port's own RGB
 configuration. The release build **does not** patch its 10-line RGB bounce buffer,
 does not change RGB PCLK at runtime during OTA and does not restart the RGB panel
 after firmware blocks. The only Waveshare source patch in CI is the narrow
@@ -80,7 +80,7 @@ release version, a matched CTRL can legitimately perform one automatic
 same-version update to install/verify the exact GitHub-staged image and SHA.
 
 During that exact-image synchronization the CTRL-TS display intentionally goes
-black in the headless flash phase. v26.10.08.03 relays the transfer percentage to
+black in the headless flash phase. v26.10.08.04 relays the transfer percentage to
 SRVR Setup so progress can be monitored there. After the verified reboot, the
 reported SHA should match CTRL's embedded required image and the repeat update
 should stop.

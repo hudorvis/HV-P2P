@@ -1,5 +1,5 @@
 // ============================================================
-// HV P2P W1P EdgeBox v26.10.08.03
+// HV P2P W1P EdgeBox v26.10.08.04
 // Seeed EdgeBox-ESP-100 Leadshine EL7-RS2000P commissioning interface
 //
 // Purpose:
@@ -51,11 +51,11 @@
 
 // -------------------- Version / identity --------------------
 static const char* FW_NAME    = "HV P2P W1P";
-static const char* FW_VERSION = "v26.10.08.03";
+static const char* FW_VERSION = "v26.10.08.04";
 static const char* NODE_BANNER = "HV_P2P_W1P";
 static const char* HV_AUTH_ROLE = "W1P";
 static const char* HV_AUTH_TARGET = "EDGEBOX_ESP100";
-static const char* HV_AUTH_VERSION = "v26.10.08.03";
+static const char* HV_AUTH_VERSION = "v26.10.08.04";
 
 // -------------------- Network defaults --------------------
 static IPAddress LOCAL_IP(172, 20, 1, 102);
@@ -266,7 +266,7 @@ static const uint32_t EDGEBOX_BRAKE_TRANSITION_POLL_MS = 25;
 static const uint32_t EDGEBOX_BRAKE_STATUS_STALE_MS = 120;
 
 // -------------------- Leadshine Servo Enable strategy --------------------
-// v26.10.08.03: EdgeBox W5500 + isolated native RS485; corrected EL7 SRV-ON configuration to PA4.00 / P04.00
+// v26.10.08.04: EdgeBox W5500 + isolated native RS485; corrected EL7 SRV-ON configuration to PA4.00 / P04.00
 // Input Selection DI1. MotionStudio confirmed the usable no-extra-wire setup
 // is DI1 = Servo ON Input (SRV-ON), Normally Closed, which reads/writes as
 // 0x83. Do not use the old DI5 / P04.04 path; do not use Normally Open
@@ -297,7 +297,7 @@ static const uint32_t SRVON_SETTLE_MS = 500;
 static const int RS485_RX_PIN = EDGEBOX_RS485_RX;
 static const int RS485_TX_PIN = EDGEBOX_RS485_TX;
 static const int RS485_RTS_PIN = EDGEBOX_RS485_RTS;
-static const uint32_t RS485_BAUD = 38400;
+static const uint32_t RS485_BAUD = 115200;
 HardwareSerial DriveSerial(1);
 
 // -------------------- W1P-TS disabled for this integration round --------------------
@@ -328,7 +328,7 @@ static uint32_t g_lastHmiDisplayKeepaliveMs = 0;
 // -------------------- Leadshine EL7-RS2000P Modbus --------------------
 // Exact EL7-RS P-series register map from Leadshine User Manual V2.0.1.
 // The drive must be configured in PR mode (P00.01 = 6). RS485 uses the EL7
-// factory communication format: Modbus RTU 8N2, 38400 baud, slave address 1.
+// established HV P2P communication format: Modbus RTU 8N1, 115200 baud, slave address 1.
 // Position is 10,000 pulses per motor revolution.
 static const uint8_t  DRIVE_MODBUS_ID = 1;
 static const uint16_t REG_CONTROL_MODE = 0x0003;        // P00.01, expected 6 = PR mode
@@ -339,8 +339,8 @@ static const uint16_t REG_DO2_ASSIGN = 0x0417;           // P04.11, expected 2 =
 static const uint16_t REG_DO3_ASSIGN = 0x0419;           // P04.12, expected 0x12 = Servo Status / Enabled (SRV-ST)
 static const uint16_t REG_DO4_ASSIGN = 0x041B;           // P04.13, expected 3 = BRK-OFF logical timing/status interlock (physical DO4 unused)
 static const uint16_t REG_DO5_ASSIGN = 0x041D;           // P04.14, expected 1 = Alarm / Fault (ALARM, NO)
-static const uint16_t REG_RS485_MODE = 0x053B;          // P05.29, expected 5 = 8N2 (factory default)
-static const uint16_t REG_RS485_BAUD = 0x053D;          // P05.30, expected 4 = 38400 (factory default)
+static const uint16_t REG_RS485_MODE = 0x053B;          // P05.29, expected 4 = 8N1
+static const uint16_t REG_RS485_BAUD = 0x053D;          // P05.30, expected 6 = 115200
 static const uint16_t REG_RS485_ADDRESS = 0x053F;       // P05.31, expected 1
 static const uint16_t REG_PR_CONTROL = 0x6002;          // P08.02 trigger/reset/E-stop
 static const uint16_t REG_MOTOR_POSITION_H = 0x602C;    // P08.44 high word
@@ -368,8 +368,8 @@ static const uint16_t OUTPUT_DO2_MASK = 0x0002;          // P08.47 bit 1 = DO2 /
 static const uint16_t OUTPUT_DO3_MASK = 0x0004;          // P08.47 bit 2 = DO3 / configured SRV-ST
 static const uint16_t OUTPUT_DO4_MASK = 0x0008;          // P08.47 bit 3 = logical BRK-OFF state; physical DO4 is not wired to the brake
 static const uint16_t OUTPUT_DO5_MASK = 0x0010;          // P08.47 bit 4 = DO5 / configured ALARM
-static const uint16_t EXPECTED_RS485_MODE = 5;
-static const uint16_t EXPECTED_RS485_BAUD_CODE = 4;
+static const uint16_t EXPECTED_RS485_MODE = 4;
+static const uint16_t EXPECTED_RS485_BAUD_CODE = 6;
 static const uint16_t EXPECTED_RS485_ADDRESS = 1;
 static const uint16_t PR_MODE_VELOCITY = 0x0002;
 static const uint16_t PR_TRIGGER_PATH0 = 0x0010;
@@ -383,9 +383,9 @@ static const uint32_t MODBUS_FAULT_POLL_MS = 150;
 static const uint32_t MODBUS_REPLY_TIMEOUT_MS = 50;
 static const uint8_t  MODBUS_READ_RETRIES = 3;
 static const uint32_t MODBUS_INTERFRAME_GAP_US = 2000; // > Modbus fixed 1.75 ms t3.5 recommendation above 19.2 kbps
-// v26.10.08.03: EdgeBox W5500 + isolated native RS485; fail the physical link after two consecutive invalid/no-reply
+// v26.10.08.04: EdgeBox W5500 + isolated native RS485; fail the physical link after two consecutive invalid/no-reply
 // transactions, with a 250 ms stale-reply backstop. Require two valid replies
-// before recovering. The 50 ms reply timeout remains generous at 38400 baud,
+// before recovering. The 50 ms reply timeout remains generous at 115200 baud,
 // while reducing the time for a removed CN3 lead to become a safety fault.
 static const uint8_t  RS485_FAIL_CONFIRM_COUNT = 2;
 static const uint8_t  RS485_RECOVER_CONFIRM_COUNT = 2;
@@ -418,7 +418,7 @@ static const float MAX_PROFILE_ACCEL_MPS2 = 20.0f;
 static const float MOTION_ZERO_EPS_MPS = 0.005f;
 static const float DYNAMIC_LEAD_TIME_S = 0.50f;
 static const float DYNAMIC_MIN_LEAD_MPS = 0.05f;
-// v26.10.08.03: EdgeBox W5500 + isolated native RS485; Dynamic mode is a closed cable-speed hold. Joystick sets
+// v26.10.08.04: EdgeBox W5500 + isolated native RS485; Dynamic mode is a closed cable-speed hold. Joystick sets
 // target line speed; this PI trim lets the command nudge above/below the shaped
 // target to hold measured feedback speed more precisely under changing load.
 static const float DYNAMIC_SPEED_KP = 0.14f;
@@ -589,7 +589,7 @@ static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_W1P";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL,CTRL_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_W1P_v*.ino.bin firmware. CTRL/CTRL-TS files are rejected.";
 static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=W1P;";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=W1P;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.08.03;";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=W1P;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.08.04;";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
@@ -1088,6 +1088,11 @@ static void modbusTransactionFinished() {
 }
 
 static void noteRsOk() {
+  // Any valid reply at the operational UART proves a previous alternate-format
+  // probe result is no longer current. The stopped diagnostic probe sets the
+  // factory flag again explicitly after it restores normal UART/link state.
+  g_factoryCommsDetected = false;
+  g_factoryFmt = g_factoryBaud = g_factoryAddr = 0xFFFF;
   g.rs_last_ok_ms = millis();
   g.rs_consecutive_failures = 0;
   if (g.rs_consecutive_successes < 0xFF) ++g.rs_consecutive_successes;
@@ -1459,16 +1464,16 @@ static void serviceLeadshineFactoryCommsProbe(){
   const uint32_t savedLastErr = g.rs_last_err_ms;
   const uint8_t savedException = g.last_modbus_exception;
 
-  Serial.println("[RS485 DIAG] no reply at operational 38400 8N2; probing prior HV setting 115200 8N1 read-only");
-  startDriveSerialConfig(115200, SERIAL_8N1);
+  Serial.println("[RS485 DIAG] no reply at operational 115200 8N1; probing EL7 factory 38400 8N2 read-only");
+  startDriveSerialConfig(38400, SERIAL_8N2);
   uint16_t fmt=0xFFFF, baud=0xFFFF, addr=0xFFFF;
   bool okFmt = modbusReadHoldingRegisters(DRIVE_MODBUS_ID, REG_RS485_MODE, 1, &fmt);
   bool okBaud = okFmt && modbusReadHoldingRegisters(DRIVE_MODBUS_ID, REG_RS485_BAUD, 1, &baud);
   bool okAddr = okBaud && modbusReadHoldingRegisters(DRIVE_MODBUS_ID, REG_RS485_ADDRESS, 1, &addr);
 
   // Alternate-format probing is diagnostic only: never let it promote operational
-  // link health or alter normal Modbus counters, and always restore 38400/8N2.
-  startDriveSerialConfig(RS485_BAUD, SERIAL_8N2);
+  // link health or alter normal Modbus counters, and always restore 115200/8N1.
+  startDriveSerialConfig(RS485_BAUD, SERIAL_8N1);
   g.rs_link_ok = savedLink;
   g.rs_consecutive_successes = savedOk;
   g.rs_consecutive_failures = savedFail;
@@ -1479,11 +1484,11 @@ static void serviceLeadshineFactoryCommsProbe(){
   g_factoryCommsDetected = okFmt && okBaud && okAddr;
   if(g_factoryCommsDetected){
     g_factoryFmt = fmt; g_factoryBaud = baud; g_factoryAddr = addr;
-    Serial.printf("[RS485 DIAG] EL7 responds at prior 115200 8N1 setting: P05.29=%u P05.30=%u P05.31=%u. For this release set P05.29=5, P05.30=4, P05.31=1 and restart the EL7.\n",
+    Serial.printf("[RS485 DIAG] EL7 responds at factory 38400 8N2 setting: P05.29=%u P05.30=%u P05.31=%u. Set P05.29=4, P05.30=6, P05.31=1 and restart the EL7 before HV P2P operation.\n",
                   (unsigned)fmt, (unsigned)baud, (unsigned)addr);
   } else {
     g_factoryFmt = g_factoryBaud = g_factoryAddr = 0xFFFF;
-    Serial.println("[RS485 DIAG] no valid EL7 reply at 115200 8N1 either; check CN3 custom harness, A/B polarity, termination and drive power.");
+    Serial.println("[RS485 DIAG] no valid EL7 reply at 38400 8N2 either; check CN3 custom harness, A/B polarity, termination and drive power.");
   }
 }
 
@@ -1573,7 +1578,7 @@ static void pollLeadshineFeedback() {
     if (diagState != lastDiagState) {
       lastDiagState = diagState;
       if (diagState == 0) {
-        Serial.printf("[RS485] No valid Modbus reply at 38400 8N2, slave ID %u. Check tested T/R harness, A/B/GND and EL7 P05.29/P05.30/P05.31.\n", (unsigned)DRIVE_MODBUS_ID);
+        Serial.printf("[RS485] No valid Modbus reply at 115200 8N1, slave ID %u. Check tested T/R harness, A/B/GND and EL7 P05.29/P05.30/P05.31.\n", (unsigned)DRIVE_MODBUS_ID);
       } else if (diagState == 1) {
         Serial.printf("[RS485] Configuration read fault: P00.01=%s, P04.00=%s, P04.11=%s, P04.12=%s, P04.13=%s, P04.14=%s, P05.29=%s, P05.30=%s, P05.31=%s; last Modbus exception=0x%02X.\n",
                       okCtrl ? "OK" : "NO REPLY",
@@ -1587,7 +1592,7 @@ static void pollLeadshineFeedback() {
                       okAddr ? "OK" : "NO REPLY",
                       (unsigned)g.last_modbus_exception);
       } else if (diagState == 2) {
-        Serial.printf("[RS485] Link OK but configuration value mismatch: P00.01=%u (need 6), P04.00=%u (need 0x83/131=DI1 SRV-ON NC), legacy P04.04/DI5=%u (must not be SRV-ON), P04.11/DO2=%u (need 2=SRDY), P04.12/DO3=%u (need 0x12=SRV-ST), P04.13/DO4=%u (need 3=BRK-OFF), P04.14/DO5=%u (need 1=ALARM), P05.29=%u (need 5/8N2), P05.30=%u (need 4/38400), P05.31=%u (need 1).\n",
+        Serial.printf("[RS485] Link OK but configuration value mismatch: P00.01=%u (need 6), P04.00=%u (need 0x83/131=DI1 SRV-ON NC), legacy P04.04/DI5=%u (must not be SRV-ON), P04.11/DO2=%u (need 2=SRDY), P04.12/DO3=%u (need 0x12=SRV-ST), P04.13/DO4=%u (need 3=BRK-OFF), P04.14/DO5=%u (need 1=ALARM), P05.29=%u (need 4/8N1), P05.30=%u (need 6/115200), P05.31=%u (need 1).\n",
                       (unsigned)g.control_mode, (unsigned)g.di1_assignment, (unsigned)g.legacy_di5_assignment,
                       (unsigned)g.do2_assignment, (unsigned)g.do3_assignment, (unsigned)g.do4_assignment, (unsigned)g.do5_assignment,
                       (unsigned)g.rs485_mode, (unsigned)g.rs485_baud_code, (unsigned)g.rs485_address);
@@ -2321,7 +2326,7 @@ static bool driveAutoEnableReady() {
   if (g.no_motion_feedback_fault && requestingMotion) return false;
 
   if (!g.drive_writes_enabled) {
-    // v26.10.08.03: EdgeBox W5500 + isolated native RS485; only arm from WAIT on a fresh, non-zero joystick command.
+    // v26.10.08.04: EdgeBox W5500 + isolated native RS485; only arm from WAIT on a fresh, non-zero joystick command.
     // Do not re-arm from stale VEL state, and do not arm while the motor is still
     // coasting from a previous PR stop. Once armed, do not drop writes just because
     // feedback velocity becomes non-zero; that caused the observed step/pulse motion.
@@ -2442,7 +2447,7 @@ static void serviceMotionProfile() {
     g.vel_request_mps = 0.0f;
   }
   float target = constrain(g.vel_request_mps, -MAX_CMD_VEL_MPS, MAX_CMD_VEL_MPS);
-  // v26.10.08.03: EdgeBox W5500 + isolated native RS485; predictive hard-limit guard.  SRVR also tapers before
+  // v26.10.08.04: EdgeBox W5500 + isolated native RS485; predictive hard-limit guard.  SRVR also tapers before
   // Near/Far, but W1P applies the same stopping-distance rule locally so a
   // delayed network packet cannot keep driving past an end limit.
   target = limitVelocityForSoftLimits(g.pos_m, target);
@@ -3203,12 +3208,12 @@ static void serviceUdp() {
 
 static void startDriveSerial() {
   DriveSerial.setRxBufferSize(512);
-  DriveSerial.begin(RS485_BAUD, SERIAL_8N2, RS485_RX_PIN, RS485_TX_PIN);
+  DriveSerial.begin(RS485_BAUD, SERIAL_8N1, RS485_RX_PIN, RS485_TX_PIN);
   if(!DriveSerial.setPins(RS485_RX_PIN, RS485_TX_PIN, -1, RS485_RTS_PIN))
     Serial.println("[RS485] ERROR assigning EdgeBox UART1 RTS pin");
   if(!DriveSerial.setMode(UART_MODE_RS485_HALF_DUPLEX))
     Serial.println("[RS485] ERROR enabling UART_MODE_RS485_HALF_DUPLEX");
-  Serial.printf("[RS485] EdgeBox isolated UART1 started @ %lu 8N2 (RX=%d TX=%d RTS=%d)\n",
+  Serial.printf("[RS485] EdgeBox isolated UART1 started @ %lu 8N1 (RX=%d TX=%d RTS=%d)\n",
                 (unsigned long)RS485_BAUD, RS485_RX_PIN, RS485_TX_PIN, RS485_RTS_PIN);
 }
 
@@ -3358,7 +3363,7 @@ void setup() {
   Serial.printf("%s %s\n", FW_NAME, FW_VERSION);
   Serial.printf("[OTA] Build identity: %s\n", HV_UPDATE_BUILD_TOKEN);
   Serial.println("Leadshine EL7-RS2000P command interface (auto-enable under SRVR safety gate)");
-  Serial.println("v26.10.08.03: W1P E-stop on AI0 5V NC loop; EL7 RS485 38400 8N2; EdgeBox DO0 drives fail-applied 24V brake");
+  Serial.println("v26.10.08.04: W1P E-stop on AI0 5V NC loop; EL7 RS485 115200 8N1; EdgeBox DO0 drives fail-applied 24V brake");
   Serial.println("============================================================");
 
   // Fail closed until the isolated analogue input proves a healthy NC loop.

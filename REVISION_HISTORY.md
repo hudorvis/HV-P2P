@@ -1,3 +1,13 @@
+# v26.10.08.04 — 2026-10-08
+
+- Locked `v26.10.08.03`; functional changes are restricted to W1P↔EL7 communication framing and SRVR RS485 diagnostics.
+- Restored the established HV P2P operational EL7 Modbus format: **115200 baud / 8N1 / slave ID 1**, with expected `P05.29=4`, `P05.30=6`, `P05.31=1`.
+- Restored **38400/8N2** to a stopped/read-only factory-format diagnostic probe only; it cannot promote link/motion authority and always restores the operational UART and saved link counters.
+- Added transition-only `[W1P RS485]` SRVR log entries for no reply, factory-format detection, configuration read failure, exact parameter mismatch, feedback/SRDY fault and verified recovery. These messages are included in normal saved SRVR logs.
+- Preserved `.08.03` AI0/5 V W1P E-stop, `.08.02` DO0 brake sequencing, updater order/status, motion, limits, calibration, AUX and UI behavior.
+- Added `test_w1p_rs485_fault_logging_100804.py` and updated the Leadshine commissioning contract for the restored operational format.
+- macOS bundle metadata: short version `26.10.8`, build `2610.8.4`.
+
 # v26.10.08.03 — 2026-10-08
 
 - Locked `v26.10.08.02`; the only functional production change is W1P local E-stop acquisition.
