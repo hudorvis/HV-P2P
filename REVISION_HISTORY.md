@@ -1,3 +1,11 @@
+# v26.10.16.02 — 2026-10-16
+
+- Based on approved `.16.01` baseline. Added SRVR cold-start connection discovery, 3-second grace, explicit per-link Active/Fault/Offline/Unverified status and recovery logging for CTRL, W1P, Leadshine EL7 Modbus, CTRL-TS, joystick input, firmware agreement and Free-D.
+- Debounced link degradation, with immediate recovery logging. All entries use the existing Log/Save Log UI and appear after DSP1 construction to preserve the Intel Mac frozen-runtime mitigation.
+- Added independent headless source regression for startup/no-link, brief dropout, sustained fault, healthy recovery, firmware mismatch and optional CTRL-TS loss, plus the actual frozen-binary smoke-stage exercise.
+- Safety/motion, calibrations, AUX, drive/brake/E-stop and updater behavior unchanged. QML unchanged; embedded firmware changed only for release identity. Native CI/bench checks remain required.
+- macOS metadata: short version `26.10.16`, build `2610.16.2`.
+
 # v26.10.11.02 — 2026-10-11
 
 - Fixed the GitHub source-regression failure in `tools.test_backend_logic`: `.11.01` created a separate smoke config directory for every Backend object, so the fresh-backend recovery test could not see the first instance's previous-good `.bak` and failed with `FileNotFoundError`.
@@ -543,3 +551,8 @@
 - Corrected the display-speed layering exposed by the GitHub PySide runtime regression: DSP1/HMM1 retain signed speed for direction-aware transport/debug semantics, while SRVR and CTRL-TS continue rendering Current Speed as an absolute positive magnitude.
 - Updated the bench regression to enforce signed transport plus magnitude-only operator presentation, preventing this contract from drifting again.
 - No W1P motion/safety architecture changes.
+
+## v26.10.16.01 — 2026-10-16
+
+- SRVR Setup RS485 indicator now reflects fresh W1P CRC-verified EL7 Modbus transport replies only. Drive readiness/configuration remain separate; internal motion and E-stop gates unchanged.
+- Added UI/safety separation regression tests. All firmware behavior otherwise unchanged except release identity.

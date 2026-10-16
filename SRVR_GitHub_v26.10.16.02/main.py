@@ -39,7 +39,7 @@ import PySide6.QtQuickControls2  # noqa: F401
 from backend import HVP2PBackend
 from firmware_authority import FirmwareAuthorityError, start_firmware_authority
 
-APP_VERSION = "26.10.11.02"
+APP_VERSION = "26.10.16.02"
 
 
 def _smoke_mark(label: str) -> None:
@@ -240,6 +240,12 @@ def _exercise_qml(app: QGuiApplication, engine: QQmlApplicationEngine, backend: 
             if index in (49, 99, 149, 199):
                 _smoke_mark(f"DSP1 frozen stress {index + 1}/200")
         _smoke_mark("DSP1 frozen stress complete")
+        # Exercise startup/recovery logging in the real frozen PySide/Nuitka
+        # process AFTER DSP1 construction. No live network or motion required.
+        _smoke_mark("startup connection diagnostic reducer")
+        backend._service_connection_log(force=True)
+        if not any("[LINK] CTRL UDP:" in line for line in backend._logs):
+            raise RuntimeError("Frozen startup connection status was not logged")
         if backend._pending_w1p_rs485_log:
             pending = backend._pending_w1p_rs485_log
             backend._pending_w1p_rs485_log = ""

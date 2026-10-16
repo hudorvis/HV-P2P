@@ -1,4 +1,4 @@
-# HV P2P v26.10.11.02 native build and bench checklist
+# HV P2P v26.10.16.02 native build and bench checklist
 
 ## GitHub CI / source verification
 
@@ -61,3 +61,25 @@
 - [ ] CTRL/CTRL-TS RS485, AUX, calibration and ordinary HMI behavior remain unchanged.
 - [ ] v26.10.06.11 marker-only DMP1/HMP1 smoothing remains unchanged.
 - [ ] Firmware authority and automatic updating converge normally.
+
+## v26.10.16.02 isolated RS485 indicator commissioning
+
+1. With EL7 enabled for communications but servo motion inhibited, verify valid operational 115200/8N1/ID1 Modbus replies cause SRVR Setup RS485 = Active.
+2. With EL7 in a drive alarm, SRVR Setup RS485 remains Active **if valid Modbus replies continue**; other safety/status indicators must remain faulted.
+3. Remove RS485 connectivity: after W1P confirms loss, SRVR Setup RS485 reads Disconnected.
+4. Confirm W1P and SRVR E-stops, DO0 brake, motion/firmware authority, and updater still respect existing safety gates.
+5. Run new contract: `python tools/test_rs485_transport_only_1016.py`, and `python -m tools.test_backend_logic` on CI with installed PySide6.
+
+A green RS485 indicator is not a declaration that the servo is ready or motion-safe.
+
+## v26.10.16.02 SRVR startup/network-log commissioning
+
+- [ ] With CTRL, W1P and EL7 initially unpowered, start SRVR and confirm the Log shows a startup discovery line, then individual fault/unverified states after about 3 seconds. Logs should not repeat continuously.
+- [ ] Power CTRL and W1P. Confirm `[LINK] CTRL UDP: ACTIVE` and `[LINK] W1P UDP: ACTIVE` entries when validated packets arrive.
+- [ ] With EL7 supplying valid Modbus replies while Servo OFF or `Err211` active, confirm `[LINK] EL7 RS485: ACTIVE` while drive motion still remains inhibited.
+- [ ] Disconnect or misconfigure EL7 RS485: confirm a fresh W1P-reported failure yields `[LINK] EL7 RS485: FAULT`. Reconnect; confirm a single `ACTIVE` recovery entry.
+- [ ] Disconnect CTRL-TS and verify `[LINK] CTRL-TS: OFFLINE ... optional HMI` is logged but does not itself change an existing safety condition. Reconnect and look for `ACTIVE` recovery.
+- [ ] Verify CTRL joystick analogue ADC FAULT and recovery, firmware MATCHED/MISMATCH, and (if enabled) Free-D input active/no-signal entries.
+- [ ] Confirm saved text log includes these startup and recovery entries; Log filters still work, and 25 ms tick never floods the log with repeated lines.
+- [ ] On GitHub, run `python tools/test_srvr_startup_connection_logging_101602.py` and ensure frozen desktop smoke reaches `startup connection diagnostic reducer` after `DSP1 frozen stress complete`.
+

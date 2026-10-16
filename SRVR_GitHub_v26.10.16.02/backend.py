@@ -447,7 +447,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.11.02", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.16.02", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -463,7 +463,7 @@ class HVP2PBackend(QObject):
         self._fw_modern_fallback_delay_s = 2.5
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.11.02+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.16.02+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -501,6 +501,15 @@ class HVP2PBackend(QObject):
         # maintaining structured entries for the locked Log page filters/table.
         self._log_entries = deque(maxlen=1200)
         self._log_revision = 0
+        # Operator-only connection log monitor. It reads existing accepted status;
+        # none of these fields participate in motion, watchdogs or brake control.
+        self._link_log_started_at = time.monotonic()
+        self._link_log_last_poll = 0.0
+        self._link_log_observed = {}
+        self._link_log_published = {}
+        self._link_log_boot_done = False
+        self._link_log_startup_grace_s = 3.0
+        self._link_log_transition_debounce_s = 0.75
         self.state = WinchState()
         self.ctrl_ip = "172.20.1.101"
         self.w1p_ip = "172.20.1.102"
@@ -566,6 +575,7 @@ class HVP2PBackend(QObject):
         self._winch_last_pos_accept_t = 0.0
         self._winch_last_pos_reject_log_t = 0.0
         self.winch_rs_status = "Disconnected"
+        self._w1p_rs485_transport_active = False
         self.winch_drive_writes_enabled = False
         self.winch_sw_srvon = False
         self.winch_sw_srvon_ready = False
@@ -828,6 +838,12 @@ class HVP2PBackend(QObject):
         self.timer.timeout.connect(self._tick)
         self.timer.start()
         self._log("[SRVR] Qt Quick backend ready")
+        self._log(
+            f"[LINK] Startup discovery: SRVR v{self.version}; "
+            f"CTRL UDP={self.ctrl_ip}:{SERVER_BIND_PORT}; "
+            f"W1P UDP={self.w1p_ip}:{self.w1p_port}; "
+            "checking CTRL, W1P, EL7 RS485, CTRL-TS and joystick input."
+        )
 
     @staticmethod
     def _app_data_dir(platform_name: str | None = None, env: dict | None = None, home: Path | None = None) -> Path:
@@ -925,6 +941,126 @@ class HVP2PBackend(QObject):
             self._log_entries.append(entry)
             self._log_revision += 1
         self.logChanged.emit()
+
+    def _log_link_batch(self, messages):
+        """Append one connection-state batch and notify Log QML just once.
+
+        The 1200-entry limits and saved plain-text/structured formats are the
+        same as _log(); this avoids one QML model rebuild per boot-time link.
+        """
+        if not messages:
+            return
+        with self._lock:
+            for message in messages:
+                raw = str(message).strip()
+                level, source, view, clean = self._classify_log_message(raw)
+                self._logs.append(f"{time.strftime('%H:%M:%S')}  {raw}")
+                self._log_entries.append({
+                    "time": datetime.now().strftime("%H:%M:%S.%f")[:-3],
+                    "level": level, "source": source, "view": view,
+                    "message": clean or raw,
+                })
+                self._log_revision += 1
+        self.logChanged.emit()
+
+    def _connection_log_snapshot(self):
+        """Presentation-only health of existing link/status telemetry.
+
+        Deliberately do not infer Modbus connectivity from Servo Ready or a
+        firmware match. Optional CTRL-TS/Free-D loss is never a motion gate.
+        Call from the Qt timer, not from either UDP receive thread.
+        """
+        ctrl = bool(self._ctrl_connected())
+        w1p_udp = bool(self.w1p.connected)
+        w1p_status = bool(w1p_udp and self._w1p_status_fresh())
+        ctrl_hmi = bool(ctrl and self._ctrl_authority_fresh())
+        result = {}
+        if ctrl:
+            result["CTRL UDP"] = ("ACTIVE", f"receiving valid control packets from {self.ctrl_ip}")
+        else:
+            result["CTRL UDP"] = ("FAULT", f"no recent valid controller packets from {self.ctrl_ip}")
+        if w1p_status:
+            result["W1P UDP"] = ("ACTIVE", f"receiving validated W1P STATUS from {self.w1p_ip}")
+        elif w1p_udp:
+            result["W1P UDP"] = ("FAULT", "W1P is reachable, but complete STATUS is missing/stale")
+        else:
+            result["W1P UDP"] = ("FAULT", f"no recent W1P UDP response from {self.w1p_ip}")
+        if self.rs485Connected:
+            result["EL7 RS485"] = ("ACTIVE", "recent valid Leadshine Modbus response (drive readiness checked separately)")
+        elif w1p_status:
+            result["EL7 RS485"] = ("FAULT", "W1P reports no fresh valid Leadshine Modbus reply")
+        else:
+            result["EL7 RS485"] = ("UNVERIFIED", "no fresh W1P STATUS to establish Leadshine link health")
+        if self.ctrlTsConnected:
+            result["CTRL-TS"] = ("ACTIVE", "touchscreen HMI online via CTRL")
+        elif self.ctrlTsRs485Active:
+            result["CTRL-TS"] = ("DEGRADED", "RS485 transport alive but touchscreen HMI not operational")
+        else:
+            result["CTRL-TS"] = ("OFFLINE", "touchscreen not reporting; optional HMI")
+        if ctrl_hmi and self._joystick_input_connected():
+            result["CTRL joystick AI1"] = ("ACTIVE", "analogue-input health verified by CTRL")
+        elif ctrl_hmi:
+            result["CTRL joystick AI1"] = ("FAULT", "CTRL reports analogue-input/ADC not healthy")
+        else:
+            result["CTRL joystick AI1"] = ("UNVERIFIED", "waiting for CTRL HMI_STATUS input diagnostics")
+        if ctrl_hmi:
+            if self._ctrl_fw_match:
+                result["CTRL firmware"] = ("MATCHED", f"{self._ctrl_fw_version} matches SRVR release")
+            else:
+                result["CTRL firmware"] = ("MISMATCH", f"reported {self._ctrl_fw_version or 'unknown'}, required v{self.version}; authority {self._ctrl_fw_authority}")
+        else:
+            result["CTRL firmware"] = ("UNVERIFIED", "no fresh CTRL firmware authority report")
+        if w1p_status:
+            if self._w1p_fw_match:
+                result["W1P firmware"] = ("MATCHED", f"{self._w1p_fw_version} matches SRVR release")
+            else:
+                result["W1P firmware"] = ("MISMATCH", f"reported {self._w1p_fw_version or 'unknown'}, required v{self.version}; authority {self._w1p_fw_authority}")
+        else:
+            result["W1P firmware"] = ("UNVERIFIED", "no fresh W1P firmware authority report")
+        if self.freed_input_enabled:
+            if self.freed_input_last_rx and time.time() - self.freed_input_last_rx < 2.0:
+                result["Free-D RX"] = ("ACTIVE", "camera tracking data received")
+            else:
+                result["Free-D RX"] = ("NO SIGNAL", "input enabled but no recent Free-D packets; optional external feed")
+        else:
+            result["Free-D RX"] = ("DISABLED", "Free-D input intentionally disabled")
+        return result
+
+    def _service_connection_log(self, *, force=False):
+        """Publish startup status and debounced changes; never log every tick.
+
+        Initial absence is held for a short discovery grace. Recovery is logged
+        promptly; losses need a stable reading to avoid red/green log storms.
+        The logger runs AFTER DSP1 construction to avoid the prior frozen macOS
+        Nuitka/PySide re-entrant logChanged crash path.
+        """
+        now = time.monotonic()
+        if not force and now - self._link_log_last_poll < 0.25:
+            return
+        self._link_log_last_poll = now
+        startup_finished = now - self._link_log_started_at >= self._link_log_startup_grace_s
+        snapshots = self._connection_log_snapshot()
+        messages = []
+        for name, current in snapshots.items():
+            previous = self._link_log_observed.get(name)
+            if previous is None or previous[0] != current[0]:
+                self._link_log_observed[name] = (current[0], now)
+            observed_state, changed_at = self._link_log_observed[name]
+            # Health text can include changing versions/authority; only report
+            # the actual status transition to keep logs bounded.
+            if not startup_finished and not force and current[0] not in ("ACTIVE", "MATCHED"):
+                continue
+            if current[0] not in ("ACTIVE", "MATCHED") and not force:
+                if now - changed_at < self._link_log_transition_debounce_s:
+                    continue
+            if self._link_log_published.get(name) == observed_state:
+                continue
+            self._link_log_published[name] = observed_state
+            messages.append(f"[LINK] {name}: {observed_state} — {current[1]}")
+        if startup_finished and not self._link_log_boot_done:
+            self._link_log_boot_done = True
+            messages.append("[LINK] Startup discovery complete; subsequent status changes will be logged on transition.")
+        self._log_link_batch(messages)
 
     # --- controller ---
     def _start_controller_listener(self):
@@ -1566,6 +1702,7 @@ class HVP2PBackend(QObject):
         self._w1p_fw_match = False
         self._w1p_fw_authority = "unknown"
         self.winch_rs_status = "Disconnected"
+        self._w1p_rs485_transport_active = False
         self.winch_drive_writes_enabled = False
         self.winch_sw_srvon = False
         self.winch_sw_srvon_ready = False
@@ -1846,6 +1983,10 @@ class HVP2PBackend(QObject):
             self.winch_service_safety_lock = fields.get("SERVICE_LOCK", "0") == "1"
             self._w1p_internal_safety = self.winch_vel_watchdog_fault or self.winch_service_safety_lock
             rs = fields.get("RS_STAT", fields.get("MODBUS","0")).upper()
+            # Communication-only indicator: CRC-verified, recent Modbus reply,
+            # independent of EL7 alarm, settings, SRDY or firmware authority.
+            # Never use this presentation flag for any motion/safety gate.
+            self._w1p_rs485_transport_active = rs in ("1", "OK", "CONNECTED")
             cfg = fields.get("LEAD_CFG","MISMATCH").upper()
             fb_ok = fields.get("MODBUS","0").upper() in ("1","OK","CONNECTED","TRUE","ON")
             ready = fields.get("READY","0").upper() in ("1","OK","READY","TRUE","ON")
@@ -3865,6 +4006,7 @@ class HVP2PBackend(QObject):
             if pending_rs485_log:
                 self._pending_w1p_rs485_log = ""
                 self._log(pending_rs485_log)
+            self._service_connection_log()
             # Keep the 25 ms control/safety cadence, but do not force the whole
             # QML property graph to re-evaluate at 40 Hz. 20 Hz is ample for the
             # desktop display and materially reduces Intel-mac UI load.
@@ -4319,7 +4461,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.11.02 moves the installed joystick polarity correction into CTRL,
+        # v26.10.16.02 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same
@@ -4827,7 +4969,13 @@ class HVP2PBackend(QObject):
         return bool(self.w1p.connected and self._w1p_ts_connected_reported and
                     self._w1p_ts_last_seen > 0 and time.time() - self._w1p_ts_last_seen <= HMI_STATUS_TIMEOUT_S)
     @Property(bool, notify=stateChanged)
-    def rs485Connected(self): return bool(self.w1p.connected and self._w1p_status_fresh() and self._w1p_fw_match and self.winch_rs_status == "Connected")
+    def rs485Connected(self):
+        # Setup-panel link indication only. W1P reports RS_STAT from recent,
+        # CRC-verified operational Modbus replies. Do NOT require EL7 SRDY,
+        # position feedback, parameter agreement or matching release identity:
+        # these have separate motion-inhibiting safety/authority gates.
+        return bool(self.w1p.connected and self._w1p_status_fresh() and
+                    self._w1p_rs485_transport_active)
     @Property(float, notify=stateChanged)
     def joystickValue(self): return float(self._operator_joystick_axis(self._calibrated_joystick(self._ctrl_axis)))
     @Property(float, notify=stateChanged)
