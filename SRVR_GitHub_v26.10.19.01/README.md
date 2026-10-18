@@ -1,8 +1,14 @@
-# HV P2P SRVR v26.10.16.02 — Qt Quick desktop build source
+# HV P2P SRVR v26.10.19.01
+
+Based on approved v26.10.16.02. Encoder feedback now validates physical movement using W1P Modbus sample times and encoder counts per metre, accepts valid out-of-limit **measured** position without weakening independent motion limits, and uses W1P rollover-safe `RAW_POS_EXT`. New pure-Python helper `position_feedback.py` is included in both source and native bundle staging. No approved QML layouts changed. Full release/audit/test results: parent directory `DEEP_CODE_AUDIT_v26.10.19.01.md`.
+
+---
+
+# HV P2P SRVR v26.10.19.01 — Qt Quick desktop build source
 
 This SRVR source is locked to `v26.10.08.04` except for the macOS frozen-runtime hardening described below. Approved Run/Setup layout, motion, calibration, AUX, firmware authority, 115200/8N1 Leadshine communications, AI0 W1P E-stop and DO0 brake behavior remain unchanged.
 
-## v26.10.16.02 macOS frozen-runtime crash fix
+## v26.10.19.01 macOS frozen-runtime crash fix
 
 The `.08.04` macOS Intel crash report showed a native `EXC_BAD_ACCESS` in Nuitka's generated call helper while `_tick` was building the CTRL DSP1 display packet. The DSP1 builder is source-identical to `.08.03`; the new `.08.04` RS485 diagnostic path ran immediately before it. `.08.05` keeps the same `[W1P RS485]` messages but makes diagnostic reduction plain-data only and defers the Qt log signal until after DSP1 construction.
 
@@ -14,13 +20,13 @@ W1P normal Leadshine communication remains **115200 baud / 8N1 / Modbus ID 1** (
 
 SRVR converts W1P's existing RS485/configuration/feedback STATUS evidence into transition-based `[W1P RS485]` log entries. No-response, alternate-format detection, configuration-read faults, parameter mismatch, feedback/SRDY faults and verified recovery remain visible on the Log page and in saved log files without flooding the log at the W1P status rate.
 
-## v26.10.16.02 automatic-update recovery
+## v26.10.19.01 automatic-update recovery
 
 This revision keeps the `.06.02` operator/motion/UI changes locked and changes only SRVR firmware coordination/recovery. The normal background `SRVR_FW` node-pull path remains first choice, but the verified HTTP fallback is now evaluated by the background communications worker as well as the Qt path, so a stale CTRL/W1P no longer needs a manual reboot merely because the primary pull was missed.
 
 CTRL remains the mandatory first stage and W1P is attempted second. A present W1P that is actively flashing receives a long completion window; a W1P that cannot converge (for example `update_waiting_safe_idle`) receives a bounded ordered recovery window and remains fail-closed, while the independent CTRL-TS final stage is eventually released instead of remaining at `Waiting` forever. The CTRL-TS safe RS485 flash/reboot protocol itself is unchanged.
 
-## v26.10.16.02 operator revisions
+## v26.10.19.01 operator revisions
 
 ### Run
 
@@ -40,7 +46,7 @@ CTRL remains the mandatory first stage and W1P is attempted second. A present W1
 - The `CTRL-TS` panel now matches CTRL/W1P firmware presentation: `Link`, a divider, and one `Firmware` readout that normally shows the detected running version and switches to update progress during CTRL-TS firmware activity.
 
 
-### v26.10.16.02 transport/display integration
+### v26.10.19.01 transport/display integration
 
 - CTRL now reports its own authority-OTA progress back to SRVR over the existing UDP control link as well as to CTRL-TS; W1P continues to report `FW_PROGRESS` directly to SRVR.
 - CTRL/W1P/CTRL-TS Settings firmware fields therefore use one version-or-progress model.
@@ -110,9 +116,9 @@ Use the repository-root workflow:
 
 `.github/workflows/complete-build.yml`
 
-It builds the matched v26.10.16.02 CTRL-TS, CTRL and W1P firmware, freezes/smoke-tests the Intel (`x86_64`) macOS SRVR application, preserves the original SRVR distribution ZIP, and publishes the complete matched release.
+It builds the matched v26.10.19.01 CTRL-TS, CTRL and W1P firmware, freezes/smoke-tests the Intel (`x86_64`) macOS SRVR application, preserves the original SRVR distribution ZIP, and publishes the complete matched release.
 
-A successful GitHub compile is not powered-motion commissioning approval. Complete the repository `NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.10.16.02.md` before hardware sign-off.
+A successful GitHub compile is not powered-motion commissioning approval. Complete the repository `NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.10.19.01.md` before hardware sign-off.
 
 
 ## Native desktop targets

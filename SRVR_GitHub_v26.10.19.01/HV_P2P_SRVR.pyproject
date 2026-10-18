@@ -2,6 +2,7 @@
   "files": [
     "main.py",
     "backend.py",
+    "position_feedback.py",
     "firmware_authority.py",
     "resources.qrc",
     "qml/Main.qml",

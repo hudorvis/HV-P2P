@@ -1,5 +1,5 @@
 // ============================================================
-// HV P2P W1P EdgeBox v26.10.16.02
+// HV P2P W1P EdgeBox v26.10.19.01
 // Seeed EdgeBox-ESP-100 Leadshine EL7-RS2000P commissioning interface
 //
 // Purpose:
@@ -47,15 +47,18 @@
 #include <math.h>
 #include <ctype.h>
 #include <stdlib.h>
+#include <stdint.h>
+#include <limits.h>
+#include <stdio.h>
 #include "HV_P2P_SRVR_Authority_OTA.h"
 
 // -------------------- Version / identity --------------------
 static const char* FW_NAME    = "HV P2P W1P";
-static const char* FW_VERSION = "v26.10.16.02";
+static const char* FW_VERSION = "v26.10.19.01";
 static const char* NODE_BANNER = "HV_P2P_W1P";
 static const char* HV_AUTH_ROLE = "W1P";
 static const char* HV_AUTH_TARGET = "EDGEBOX_ESP100";
-static const char* HV_AUTH_VERSION = "v26.10.16.02";
+static const char* HV_AUTH_VERSION = "v26.10.19.01";
 
 // -------------------- Network defaults --------------------
 static IPAddress LOCAL_IP(172, 20, 1, 102);
@@ -266,7 +269,7 @@ static const uint32_t EDGEBOX_BRAKE_TRANSITION_POLL_MS = 25;
 static const uint32_t EDGEBOX_BRAKE_STATUS_STALE_MS = 120;
 
 // -------------------- Leadshine Servo Enable strategy --------------------
-// v26.10.16.02: EdgeBox W5500 + isolated native RS485; corrected EL7 SRV-ON configuration to PA4.00 / P04.00
+// v26.10.19.01: EdgeBox W5500 + isolated native RS485; corrected EL7 SRV-ON configuration to PA4.00 / P04.00
 // Input Selection DI1. MotionStudio confirmed the usable no-extra-wire setup
 // is DI1 = Servo ON Input (SRV-ON), Normally Closed, which reads/writes as
 // 0x83. Do not use the old DI5 / P04.04 path; do not use Normally Open
@@ -383,7 +386,7 @@ static const uint32_t MODBUS_FAULT_POLL_MS = 150;
 static const uint32_t MODBUS_REPLY_TIMEOUT_MS = 50;
 static const uint8_t  MODBUS_READ_RETRIES = 3;
 static const uint32_t MODBUS_INTERFRAME_GAP_US = 2000; // > Modbus fixed 1.75 ms t3.5 recommendation above 19.2 kbps
-// v26.10.16.02: EdgeBox W5500 + isolated native RS485; fail the physical link after two consecutive invalid/no-reply
+// v26.10.19.01: EdgeBox W5500 + isolated native RS485; fail the physical link after two consecutive invalid/no-reply
 // transactions, with a 250 ms stale-reply backstop. Require two valid replies
 // before recovering. The 50 ms reply timeout remains generous at 115200 baud,
 // while reducing the time for a removed CN3 lead to become a safety fault.
@@ -418,7 +421,7 @@ static const float MAX_PROFILE_ACCEL_MPS2 = 20.0f;
 static const float MOTION_ZERO_EPS_MPS = 0.005f;
 static const float DYNAMIC_LEAD_TIME_S = 0.50f;
 static const float DYNAMIC_MIN_LEAD_MPS = 0.05f;
-// v26.10.16.02: EdgeBox W5500 + isolated native RS485; Dynamic mode is a closed cable-speed hold. Joystick sets
+// v26.10.19.01: EdgeBox W5500 + isolated native RS485; Dynamic mode is a closed cable-speed hold. Joystick sets
 // target line speed; this PI trim lets the command nudge above/below the shaped
 // target to hold measured feedback speed more precisely under changing load.
 static const float DYNAMIC_SPEED_KP = 0.14f;
@@ -550,8 +553,36 @@ static float motorDirectionSign() {
   return g.motor_reverse ? -1.0f : 1.0f;
 }
 
-static float rawUnitsToDisplayPositionM(int32_t rawUnits) {
-  return motorDirectionSign() * (float(rawUnits) / g_command_units_per_m) + g.drive_position_offset_m;
+// P08.44/P08.45 are a signed 32-bit counter. Unwrap the modulo-2^32
+// encoder reading while W1P is powered; keep calculations in double precision.
+// Signed and raw on-wire positions are retained for diagnostics/compatibility.
+static int64_t g_drive_unwrapped_units = 0;
+static int32_t g_drive_last_wrapped_units = 0;
+static bool g_drive_unwrapped_valid = false;
+static uint32_t g_drive_position_sequence = 0;
+
+static int64_t wrappedPositionDelta(int32_t current, int32_t previous) {
+  int64_t delta = int64_t(current) - int64_t(previous);
+  if (delta > INT32_MAX) delta -= 4294967296LL;
+  if (delta < INT32_MIN) delta += 4294967296LL;
+  return delta;
+}
+
+static int64_t unwrapDrivePosition(int32_t current) {
+  if (!g_drive_unwrapped_valid) {
+    g_drive_unwrapped_units = int64_t(current);
+    g_drive_unwrapped_valid = true;
+  } else {
+    g_drive_unwrapped_units += wrappedPositionDelta(current, g_drive_last_wrapped_units);
+  }
+  g_drive_last_wrapped_units = current;
+  return g_drive_unwrapped_units;
+}
+
+static float rawUnitsToDisplayPositionM(int64_t extendedUnits) {
+  return float(double(motorDirectionSign()) *
+               (double(extendedUnits) / double(g_command_units_per_m)) +
+               double(g.drive_position_offset_m));
 }
 
 static float rawUnitsDeltaToDisplayMps(int64_t deltaUnits, float dt_s) {
@@ -560,7 +591,7 @@ static float rawUnitsDeltaToDisplayMps(int64_t deltaUnits, float dt_s) {
 }
 
 static void preserveDisplayedPositionForMotorDirectionChange(float displayedPositionM) {
-  g.drive_position_offset_m = displayedPositionM - motorDirectionSign() * (float(g.raw_pos_units) / g_command_units_per_m);
+  g.drive_position_offset_m = displayedPositionM - motorDirectionSign() * float(double(g_drive_unwrapped_units) / double(g_command_units_per_m));
   g.pos_m = displayedPositionM;
 }
 
@@ -589,7 +620,7 @@ static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_W1P";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL,CTRL_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_W1P_v*.ino.bin firmware. CTRL/CTRL-TS files are rejected.";
 static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=W1P;";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=W1P;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.16.02;";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=W1P;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.19.01;";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
@@ -1004,12 +1035,12 @@ static bool hvPrepareSafeServiceState(String& reason) {
     }
     const unsigned long now = millis();
     const unsigned long dtMs = now - prevMs;
-    const float observedMps = dtMs > 0 ? rawUnitsDeltaToDisplayMps(int64_t(pos) - int64_t(prevPos), float(dtMs) / 1000.0f) : 999.0f;
+    const float observedMps = dtMs > 0 ? rawUnitsDeltaToDisplayMps(wrappedPositionDelta(pos, prevPos), float(dtMs) / 1000.0f) : 999.0f;
     const bool servoEnabled = (outputIo & OUTPUT_DO3_MASK) != 0;
     const bool brakeReleased = (outputIo & OUTPUT_DO4_MASK) != 0;
 
     g.raw_pos_units = pos;
-    g.pos_m = rawUnitsToDisplayPositionM(pos);
+    g.pos_m = rawUnitsToDisplayPositionM(unwrapDrivePosition(pos));
     g.input_io_status = inputIo;
     g.output_io_status = outputIo;
     g.servo_enabled_output = servoEnabled;
@@ -1618,7 +1649,7 @@ static void pollLeadshineFeedback() {
     if (lastRawDrivePositionMs > 0) {
       unsigned long dt_ms = now - lastRawDrivePositionMs;
       if (dt_ms > 0 && dt_ms < 1000) {
-        int64_t delta = int64_t(rawPos) - int64_t(lastRawDrivePosition);
+        int64_t delta = wrappedPositionDelta(rawPos, lastRawDrivePosition);
         float raw_mps = rawUnitsDeltaToDisplayMps(delta, float(dt_ms) / 1000.0f);
         if (isfinite(raw_mps) && fabsf(raw_mps) <= 30.0f) {
           // v16: display/control feedback follows the real drive velocity much
@@ -1641,7 +1672,8 @@ static void pollLeadshineFeedback() {
     lastRawDrivePositionMs = now;
     g.raw_pos_units = rawPos;
     g.raw_vel_units_s = int32_t(filteredDriveVelocityMps * g_command_units_per_m);
-    g.pos_m = rawUnitsToDisplayPositionM(rawPos);
+    g.pos_m = rawUnitsToDisplayPositionM(unwrapDrivePosition(rawPos));
+    ++g_drive_position_sequence;
     g.vel_actual_mps = filteredDriveVelocityMps;
     g.input_io_status = inio;
     g.output_io_status = outio;
@@ -2326,7 +2358,7 @@ static bool driveAutoEnableReady() {
   if (g.no_motion_feedback_fault && requestingMotion) return false;
 
   if (!g.drive_writes_enabled) {
-    // v26.10.16.02: EdgeBox W5500 + isolated native RS485; only arm from WAIT on a fresh, non-zero joystick command.
+    // v26.10.19.01: EdgeBox W5500 + isolated native RS485; only arm from WAIT on a fresh, non-zero joystick command.
     // Do not re-arm from stale VEL state, and do not arm while the motor is still
     // coasting from a previous PR stop. Once armed, do not drop writes just because
     // feedback velocity becomes non-zero; that caused the observed step/pulse motion.
@@ -2447,7 +2479,7 @@ static void serviceMotionProfile() {
     g.vel_request_mps = 0.0f;
   }
   float target = constrain(g.vel_request_mps, -MAX_CMD_VEL_MPS, MAX_CMD_VEL_MPS);
-  // v26.10.16.02: EdgeBox W5500 + isolated native RS485; predictive hard-limit guard.  SRVR also tapers before
+  // v26.10.19.01: EdgeBox W5500 + isolated native RS485; predictive hard-limit guard.  SRVR also tapers before
   // Near/Far, but W1P applies the same stopping-distance rule locally so a
   // delayed network packet cannot keep driving past an end limit.
   target = limitVelocityForSoftLimits(g.pos_m, target);
@@ -2797,6 +2829,13 @@ static void sendStatusLine(bool force) {
   line += " MOTOR_REV=" + String(g.motor_reverse ? 1 : 0);
   line += " POS_SRC=" + String(g.feedback_from_drive ? "DRIVE" : (g.simulation_enabled ? "SIM" : "NONE"));
   line += " RAW_POS=" + String(g.raw_pos_units);
+  // Extended integer count is calibration-grade (no String(float) conversion).
+  char rawExt[24];
+  snprintf(rawExt, sizeof(rawExt), "%lld", (long long)g_drive_unwrapped_units);
+  line += " RAW_POS_EXT=" + String(rawExt);
+  line += " POS_SEQ=" + String(g_drive_position_sequence);
+  line += " POS_T_MS=" + String(lastRawDrivePositionMs);
+  line += " POS_AGE_MS=" + String(lastDriveFeedbackMs ? now - lastDriveFeedbackMs : 0xFFFFFFFFUL);
   line += " RAW_VEL=" + String(g.raw_vel_units_s);
   line += " MODBUS=" + String(g.drive_feedback_ok ? 1 : 0);
   line += " UPM=" + String(g_command_units_per_m, 1);
@@ -3113,7 +3152,7 @@ static void handleCommand(const String& rawLine) {
       return;
     }
     if (g.feedback_from_drive) {
-      g.drive_position_offset_m = val - motorDirectionSign() * (float(g.raw_pos_units) / g_command_units_per_m);
+      g.drive_position_offset_m = val - motorDirectionSign() * float(double(g_drive_unwrapped_units) / double(g_command_units_per_m));
       g.pos_m = val;
     } else {
       g.pos_m = g.service_mode ? val : constrain(val, g.limit_near_m, g.limit_far_m);
@@ -3363,7 +3402,7 @@ void setup() {
   Serial.printf("%s %s\n", FW_NAME, FW_VERSION);
   Serial.printf("[OTA] Build identity: %s\n", HV_UPDATE_BUILD_TOKEN);
   Serial.println("Leadshine EL7-RS2000P command interface (auto-enable under SRVR safety gate)");
-  Serial.println("v26.10.16.02: W1P E-stop on AI0 5V NC loop; EL7 RS485 115200 8N1; EdgeBox DO0 drives fail-applied 24V brake");
+  Serial.println("v26.10.19.01: W1P E-stop on AI0 5V NC loop; EL7 RS485 115200 8N1; EdgeBox DO0 drives fail-applied 24V brake");
   Serial.println("============================================================");
 
   // Fail closed until the isolated analogue input proves a healthy NC loop.

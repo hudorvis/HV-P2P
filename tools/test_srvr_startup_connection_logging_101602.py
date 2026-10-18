@@ -9,7 +9,7 @@ from pathlib import Path
 import textwrap
 
 ROOT = Path(__file__).resolve().parents[1]
-BACKEND = ROOT / "SRVR_GitHub_v26.10.16.02" / "backend.py"
+BACKEND = ROOT / "SRVR_GitHub_v26.10.19.01" / "backend.py"
 source = BACKEND.read_text(encoding="utf-8")
 module = ast.parse(source)
 cls = next(node for node in module.body if isinstance(node, ast.ClassDef) and node.name == "HVP2PBackend")
@@ -32,7 +32,7 @@ class Fake:
     _connection_log_snapshot = namespace["_connection_log_snapshot"]
     _service_connection_log = namespace["_service_connection_log"]
     def __init__(self):
-        self.version = "26.10.16.02"
+        self.version = "26.10.19.01"
         self.ctrl_ip = "172.20.1.101"
         self.w1p_ip = "172.20.1.102"
         self.w1p_port = 5000
@@ -99,11 +99,11 @@ b.ctrl = True
 b.hmi = True
 b.joystick = True
 b._ctrl_fw_match = True
-b._ctrl_fw_version = "v26.10.16.02"
+b._ctrl_fw_version = "v26.10.19.01"
 b.w1p.connected = True
 b.w1p_fresh = True
 b._w1p_fw_match = True
-b._w1p_fw_version = "v26.10.16.02"
+b._w1p_fw_version = "v26.10.19.01"
 b.rs485Connected = True
 b.ctrlTsRs485Active = True
 clock.t = 10.3

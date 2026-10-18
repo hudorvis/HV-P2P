@@ -1,4 +1,4 @@
-# HV P2P v26.10.16.02 initial / recovery bootstrap
+# HV P2P v26.10.19.01 initial / recovery bootstrap
 
 ## Normal update from v26.10.08.04
 

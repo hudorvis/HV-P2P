@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Regression guard for v26.10.16.02 frozen desktop runtime hardening."""
+"""Regression guard for v26.10.19.01 frozen desktop runtime hardening."""
 from pathlib import Path
 import ast
 
 ROOT = Path(__file__).resolve().parents[1]
-SRVR = ROOT / "SRVR_GitHub_v26.10.16.02"
+SRVR = ROOT / "SRVR_GitHub_v26.10.19.01"
 BACKEND_PATH = SRVR / "backend.py"
 MAIN_PATH = SRVR / "main.py"
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "complete-build.yml"

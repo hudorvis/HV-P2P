@@ -556,3 +556,10 @@
 
 - SRVR Setup RS485 indicator now reflects fresh W1P CRC-verified EL7 Modbus transport replies only. Drive readiness/configuration remain separate; internal motion and E-stop gates unchanged.
 - Added UI/safety separation regression tests. All firmware behavior otherwise unchanged except release identity.
+
+## v26.10.19.01 — 2026-10-19
+
+- Focused measured-encoder feedback fix: 0.35 m command-dependent position rejection and 0.5 m Near/Far clipping removed from the **telemetry validation path only**. Independent motor soft limits are unchanged.
+- W1P extended signed 64-bit encoder counter and wrap-safe observed speed; four extra UDP sample metadata fields; SRVR sample-timestamp/reorder validation and integer-precision calibration.
+- Added 125/250/500/2500 RPM and 3000 RPM allowance / >1100 m / rollover/communications host tests. Coordinated release identities, native staging, safety invariant locks and docs updated.
+- Requires GitHub native builds and hardware commissioning; this is a source-tested release candidate, not a certified motion-safe hardware result.

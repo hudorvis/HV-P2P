@@ -1,0 +1,56 @@
+HV P2P v26.10.19.01 — verified source test report
+===================================================
+Baseline: uploaded and previously approved v26.10.16.02
+Test environment: hosted Linux source inspection, Python 3, host g++
+
+SOURCE REGRESSION SUITE
+  Command (at repository root): python3 tools/run_all_source_checks.py
+  Actual outcome: ALL_SOURCE_CHECKS_PASS, process exit code 0
+  Number of invoked Python checks: 62
+  Python syntax: 75 files passed
+  Build pipeline structural/static validation: 58 checks passed
+  SRVR preflight: PASS
+  Startup connection/transition logging: PASS, 19 expected messages
+  W1P brake DO0, W1P AI0 E-stop, RS485, firmware authority/OTA,
+  CTRL/CTRL-TS, Free-D calibration, limit controls, HMI smoothing,
+  GitHub native build orchestration, firmware staging, source integrity
+  and release consistency contracts: PASS.
+
+ENCODER REPRODUCTION / LONG-TRAVEL SIMULATION
+  Actual production SRVR position acceptance function is extracted and exercised
+  with physically scaled feedback, periodic and interrupted transmissions.
+  SIMULATED_ENCODER_TRAVEL_PASS 125 RPM 1100.0953 m 22411 samples
+  SIMULATED_ENCODER_TRAVEL_PASS 250 RPM 1100.1444 m 11206 samples
+  SIMULATED_ENCODER_TRAVEL_PASS 500 RPM 1100.3407 m 5604 samples
+  SIMULATED_ENCODER_TRAVEL_PASS 2500 RPM 1101.5188 m 1122 samples
+  SIMULATED_ENCODER_TRAVEL_PASS 3000 RPM 1101.5188 m 935 samples
+  Note: 3,000 RPM is a telemetry filter test ceiling/margin, NOT proof the
+  fitted motor is rated to 3,000 RPM; existing W1P commanded RPM ceiling
+  is 2,500 RPM. All five simulated traversals exceed 1,100 metres.
+  Other cases: actual signed Near/Far overshoot, invalid/jump rejection,
+  delayed 1-second and 7-second feedback, duplicate/out-of-order UDP,
+  stale feedback, W1P session reset, 32-bit sequence/timestamp wrap,
+  NaN/infinite position rejection and recovery, calibration count hygiene.
+
+W1P C++ TEST
+  W1P_ACTUAL_CPP_ROLLOVER_PASS forward_and_reverse
+  Actual production W1P C++ unwrap functions extracted, compiled with host
+  g++, and executed for both directions across signed-32-bit rollover.
+
+NOT EXECUTED — MUST REMAIN EXPLICIT RELEASE GATES
+  BACKEND_RUNTIME_TEST_SKIPPED: PySide6 not available here.
+  GitHub Actions actual hosted native builds: NOT EXECUTED here.
+  ESP32 Arduino toolchain compile and link: NOT EXECUTED here.
+  Native macOS x86_64, macOS arm64 and Windows x64 Nuitka freezes and
+  packaged runtime smoke tests: NOT EXECUTED here.
+  Real EL7 Modbus/RS485 telemetry, encoder scaling, motor maximum nameplate,
+  125/250/500/max RPM loaded drive, brake DO0, E-stop interlocks,
+  watchdogs, soft motion limits and field commissioning: NOT EXECUTED.
+  Do not infer operational/loaded-use clearance from this source check.
+
+VERIFICATION MATERIALS
+  Full captured successful suite: SOURCE_REGRESSION_LOG_v26.10.19.01.txt
+  Exact changed-versus-locked source inventory: SOURCE_CHANGE_INVENTORY_v26.10.19.01.txt
+  Scope explanation: DEEP_CODE_AUDIT_v26.10.19.01.md
+  Native/hardware gates: NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.10.19.01.md
+  Full file SHA-256 digests: CHECKSUMS_SHA256.txt

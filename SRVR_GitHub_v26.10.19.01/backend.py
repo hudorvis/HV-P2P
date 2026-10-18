@@ -16,6 +16,7 @@ import atexit, copy, http.client, ipaddress, json, math, os, queue, shutil, sock
 from urllib.parse import unquote, urlparse
 
 from PySide6.QtCore import QObject, Property, Signal, Slot, QTimer
+from position_feedback import position_step_allowed, is_newer_sequence, uint32_elapsed_ms
 
 # Smoke-test persistence is private to this process, not private to each Backend
 # instance.  A fresh Backend created by a regression test must see the same
@@ -447,7 +448,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.16.02", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.10.19.01", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -463,7 +464,7 @@ class HVP2PBackend(QObject):
         self._fw_modern_fallback_delay_s = 2.5
         # Operator-visible coordinated firmware update state. W1P reports its
         # own authority-download progress, while the legacy SRVR bridge updates
-        # the same structure for older CTRL/W1P releases. CTRL v26.10.16.02+
+        # the same structure for older CTRL/W1P releases. CTRL v26.10.19.01+
         # additionally reports directly to CTRL-TS while its own loop is blocked.
         self._fw_progress = {
             "ctrl": {"active": False, "phase": "Idle", "pct": 0},
@@ -573,6 +574,8 @@ class HVP2PBackend(QObject):
         self.last_winch_output = 0.0
         self._winch_position_accept_jump_until = 0.0
         self._winch_last_pos_accept_t = 0.0
+        self._winch_last_pos_sample_ms = None
+        self._winch_last_pos_seq = None
         self._winch_last_pos_reject_log_t = 0.0
         self.winch_rs_status = "Disconnected"
         self._w1p_rs485_transport_active = False
@@ -1865,6 +1868,9 @@ class HVP2PBackend(QObject):
             # while W1P/drive power was absent. A Slip or Limit Calibration must
             # explicitly establish the new physical reference.
             self._invalidate_w1p_status()
+            self._winch_last_pos_seq = None
+            self._winch_last_pos_sample_ms = None
+            self._winch_last_pos_accept_t = 0.0
             boot_id = ""
             for token in line.split()[1:]:
                 if token.startswith("VER="):
@@ -1916,7 +1922,7 @@ class HVP2PBackend(QObject):
             self._reject_w1p_status("invalid enum field LEAD_CFG")
             return
         try:
-            for numeric_key in ("POS_M", "RAW_POS", "VEL_MPS", "DO2_ASSIGN", "DO3_ASSIGN", "DO4_ASSIGN", "DO5_ASSIGN"):
+            for numeric_key in ("POS_M", "RAW_POS", "RAW_POS_EXT", "VEL_MPS", "DO2_ASSIGN", "DO3_ASSIGN", "DO4_ASSIGN", "DO5_ASSIGN"):
                 if numeric_key in fields:
                     numeric_value = float(fields[numeric_key])
                     if not math.isfinite(numeric_value):
@@ -1929,12 +1935,22 @@ class HVP2PBackend(QObject):
             if boot_id:
                 if self._w1p_boot_id and boot_id != self._w1p_boot_id:
                     self._invalidate_position_reference("W1P boot identifier changed")
+                    self._winch_last_pos_seq = None
+                    self._winch_last_pos_sample_ms = None
+                    self._winch_last_pos_accept_t = 0.0
                 self._w1p_boot_id = boot_id
+            accepted_position = False
             if "POS_M" in fields and self.position_source != "Virtual":
                 new_pos = float(fields["POS_M"])
-                if self._sanity_accept_winch_position(new_pos, fields):
+                accepted_position = self._sanity_accept_winch_position(new_pos, fields)
+                if accepted_position:
                     self.state.pos_m = new_pos
-            if "RAW_POS" in fields: self._last_raw_pos = int(float(fields["RAW_POS"]))
+            # Calibration counts must come from the same validated sample as
+            # the visible encoder position, never a stale/rejected RAW_POS.
+            # Parse the extended integer directly, without float precision loss.
+            if accepted_position:
+                if "RAW_POS_EXT" in fields: self._last_raw_pos = int(fields["RAW_POS_EXT"])
+                elif "RAW_POS" in fields: self._last_raw_pos = int(fields["RAW_POS"])
             if "VEL_MPS" in fields and self.position_source != "Virtual": self.current_speed_mps = float(fields["VEL_MPS"])
             if "FW" in fields: self._w1p_fw_version = str(fields["FW"])
             reported_w1p_match = str(fields.get("FW_MATCH", "0")).strip() == "1"
@@ -2007,48 +2023,72 @@ class HVP2PBackend(QObject):
             self._reject_w1p_status(f"parse error: {exc}")
 
     def _sanity_accept_winch_position(self, new_pos_m: float, fields: dict) -> bool:
-        """Fail closed on implausible W1P position jumps.
+        """Validate *measured* encoder travel, independent of SRVR commands/limits.
 
-        Ported from the proven v26.06.26.25 backend. A deliberate Slip/SYNC_POS
-        opens a short grace window so the new reference is accepted; otherwise
-        stationary feedback is strict and active-motion feedback is bounded by
-        the configured maximum speed and elapsed status interval.
+        Leadshine MotionStudio may move the EL7 without SRVR issuing VEL. The
+        previous 0.35 m stationary limit rejected real telemetry indefinitely;
+        the additional +/-0.5 m limit gate hid real external travel. Those
+        constraints remain in the independent motion command safety path, NOT
+        in the measured-position presentation path.
+
+        W1P POS_T_MS is the time of the successful Modbus position sample,
+        rather than UDP reception/Qt processing time. POS_SEQ prevents duplicate
+        or reordered packets corrupting position. When legacy frames lack
+        those fields, fall back to a monotonic host clock.
         """
         try:
             new_pos = float(new_pos_m)
             if not math.isfinite(new_pos):
                 return False
+            if fields.get("POS_SRC", "DRIVE") == "DRIVE":
+                if fields.get("POS_READ", "0") != "1":
+                    return False
+                age = int(fields.get("POS_AGE_MS", "0"))
+                if age < 0 or age > 500:
+                    return False
+            now = time.monotonic()
+            sequence = None
+            if fields.get("POS_SRC", "DRIVE") == "DRIVE" and "POS_SEQ" in fields:
+                sequence = int(fields["POS_SEQ"])
+                if not 0 <= sequence <= 0xFFFFFFFF:
+                    return False
+                if self._winch_last_pos_seq is not None and not is_newer_sequence(sequence, self._winch_last_pos_seq):
+                    return False
+            sample_ms = None
+            if fields.get("POS_SRC", "DRIVE") == "DRIVE" and "POS_T_MS" in fields:
+                sample_ms = int(fields["POS_T_MS"])
+                if not 0 <= sample_ms <= 0xFFFFFFFF:
+                    return False
             old_pos = self.state.pos_m
-            now = time.time()
-            if old_pos is None:
-                self._winch_last_pos_accept_t = now
-                return True
-            if now <= float(self._winch_position_accept_jump_until or 0.0):
-                self._winch_last_pos_accept_t = now
-                return True
-            old_pos = float(old_pos)
-            dt = now - float(self._winch_last_pos_accept_t or now)
-            if dt <= 0.0 or dt > 1.0:
-                dt = 0.075
-            jump = abs(new_pos - old_pos)
-            commanded = abs(float(self.last_winch_output or 0.0))
-            max_speed = abs(float(self.max_speed_mps or 20.0))
-            if commanded < 0.05 and self.goto_target_m is None:
-                allowed_jump = 0.35
+            first_sample = self._winch_last_pos_accept_t <= 0.0 or old_pos is None
+            within_sync_grace = time.time() <= float(self._winch_position_accept_jump_until or 0.0)
+            if first_sample or within_sync_grace:
+                valid = True
+                allowance = 0.0
             else:
-                allowed_jump = max(0.35, (max_speed + 2.0) * max(dt, 0.05) * 2.5)
-            if not self._service_override_active():
-                nl = float(self.state.near_limit.position_m or 0.0)
-                fl = float(self.state.far_limit.position_m if self.state.far_limit.position_m is not None else nl + self.state.total_length_m)
-                lo, hi = (nl, fl) if nl <= fl else (fl, nl)
-                if new_pos < lo - 0.5 or new_pos > hi + 0.5:
-                    jump = max(jump, allowed_jump + 1.0)
-            if jump <= allowed_jump:
+                elapsed = max(0.0, now - self._winch_last_pos_accept_t)
+                if sample_ms is not None and self._winch_last_pos_sample_ms is not None:
+                    device_elapsed = uint32_elapsed_ms(sample_ms, self._winch_last_pos_sample_ms)
+                    if device_elapsed > 0:
+                        elapsed = device_elapsed / 1000.0
+                # Validate against the drive's encoder-rate capability, not a
+                # joystick command or operator software speed/limit setting.
+                # The 3000 RPM validation allowance covers the firmware's
+                # existing 2500 RPM ceiling with headroom; this does NOT
+                # change or authorise the motor's configured RPM limit.
+                upm = float(fields.get("UPM", self.winch_units_per_m))
+                valid, allowance = position_step_allowed(
+                    float(old_pos), new_pos, elapsed, upm, rpm_allowance=3000.0)
+            if valid:
                 self._winch_last_pos_accept_t = now
+                self._winch_last_pos_sample_ms = sample_ms
+                self._winch_last_pos_seq = sequence
                 return True
             if now - float(self._winch_last_pos_reject_log_t or 0.0) >= 2.0:
                 self._winch_last_pos_reject_log_t = now
-                self._log(f"[W1P-POS] Rejected implausible position jump {old_pos:.3f} -> {new_pos:.3f} m")
+                self._log(f"[W1P-POS] Implausible measured encoder step "
+                          f"{float(old_pos):.3f} -> {new_pos:.3f} m "
+                          f"(max {allowance:.3f} m); ignoring telemetry only")
             return False
         except Exception as exc:
             self._log(f"[W1P-POS] Position validation failed closed: {exc}")
@@ -4461,7 +4501,7 @@ class HVP2PBackend(QObject):
         c = copy.deepcopy(config)
         changed = False
 
-        # v26.10.16.02 moves the installed joystick polarity correction into CTRL,
+        # v26.10.19.01 moves the installed joystick polarity correction into CTRL,
         # so physical Left/Right is consistent before SRVR calibration. Migrate
         # older saved captures exactly once. Untouched identity defaults stay as
         # identity; real captured values are sign-flipped to describe the same

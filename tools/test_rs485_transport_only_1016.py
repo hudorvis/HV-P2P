@@ -2,7 +2,7 @@
 import ast
 from pathlib import Path
 root = Path(__file__).resolve().parents[1]
-src = (root / "SRVR_GitHub_v26.10.16.02" / "backend.py").read_text()
+src = (root / "SRVR_GitHub_v26.10.19.01" / "backend.py").read_text()
 mod = ast.parse(src)
 cls = next(n for n in mod.body if isinstance(n, ast.ClassDef) and n.name == "HVP2PBackend")
 prop = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "rs485Connected")
@@ -17,6 +17,6 @@ for method in ("_motion_tick", "_estop_status_text"):
     text = ast.get_source_segment(src, fn)
     assert 'winch_rs_status != "Connected"' in text
     assert '_w1p_rs485_transport_active' not in text
-qml = (root / "SRVR_GitHub_v26.10.16.02" / "qml/pages/SetupPage.qml").read_text()
+qml = (root / "SRVR_GitHub_v26.10.19.01" / "qml/pages/SetupPage.qml").read_text()
 assert 'backend.rs485Connected?"Active":"Disconnected"' in qml
 print('RS485 TRANSPORT-ONLY DISPLAY CONTRACT PASS')

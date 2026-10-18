@@ -3,8 +3,8 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BACKEND = (ROOT / 'SRVR_GitHub_v26.10.16.02' / 'backend.py').read_text()
-MAIN = (ROOT / 'SRVR_GitHub_v26.10.16.02' / 'main.py').read_text()
+BACKEND = (ROOT / 'SRVR_GitHub_v26.10.19.01' / 'backend.py').read_text()
+MAIN = (ROOT / 'SRVR_GitHub_v26.10.19.01' / 'main.py').read_text()
 
 # The .08.04 diagnostic signature used direct bool.__str__ special-method calls
 # immediately before the huge compiled DSP1 builder. Keep the frozen path to
