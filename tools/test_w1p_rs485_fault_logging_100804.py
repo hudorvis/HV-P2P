@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-B=(ROOT/'SRVR_GitHub_v26.10.19.01'/'backend.py').read_text()
-W=(ROOT/'HV_P2P_W1P_EDGEBOX_v26.10.19.01'/'HV_P2P_W1P_EDGEBOX_v26.10.19.01.ino').read_text()
+B=(ROOT/'SRVR_GitHub_v26.11.08.01'/'backend.py').read_text()
+W=(ROOT/'HV_P2P_W1P_EDGEBOX_v26.11.08.01'/'HV_P2P_W1P_EDGEBOX_v26.11.08.01.ino').read_text()
 
 # Established project framing is restored, while the factory framing remains a
 # read-only stopped diagnostic probe only.
@@ -15,8 +15,10 @@ for tok in (
     'EXPECTED_RS485_MODE = 4',
     'EXPECTED_RS485_BAUD_CODE = 6',
     'g_factoryCommsDetected = false;',
+    'RS485=%lu/8N1 RX=',
 ):
     assert tok in W, tok
+assert 'RS485=%lu/8N2 RX=' not in W
 
 # SRVR must turn W1P evidence into operator/saved-log diagnostics, not merely a
 # generic red Disconnected state. Logging is transition keyed to avoid 20 Hz spam.
@@ -47,16 +49,18 @@ print('W1P_RS485_FAULT_LOGGING_100804_PASS')
 # bind it to a tiny dummy object. The helper now queues one transition message;
 # _tick owns the actual Qt log signal after DSP1 construction.
 import ast
+import time
 module = ast.parse(B)
 backend_cls = next(n for n in module.body if isinstance(n, ast.ClassDef) and n.name == 'HVP2PBackend')
 method = next(n for n in backend_cls.body if isinstance(n, ast.FunctionDef) and n.name == '_log_w1p_rs485_diagnostics')
 method_module = ast.Module(body=[method], type_ignores=[])
 ast.fix_missing_locations(method_module)
-ns = {}
+ns = {'time': time}
 exec(compile(method_module, '<w1p-rs485-diag>', 'exec'), ns)
 
 class Dummy:
     _w1p_rs485_diag_signature = ''
+    _w1p_rs485_diag_started_at = None
     def __init__(self): self.pending = []; self._pending_w1p_rs485_log = ''
 Dummy._log_w1p_rs485_diagnostics = ns['_log_w1p_rs485_diagnostics']
 
@@ -80,15 +84,19 @@ def run(fields):
         messages.append(d._pending_w1p_rs485_log)
         d._pending_w1p_rs485_log = ''
 
+run(sample(RS_STAT='WAITING'))
+assert not messages, "unprobed startup is not a Modbus fault"
 run(sample())
 run(sample())  # identical 20 Hz status must not spam
 run(sample(FACTORY_COMMS=1))
 run(sample(RS_STAT='CONNECTED',LEAD_CFG='MISMATCH',MODBUS=1,POS_READ=1,IO_READ=1,READY=1,SRDY=1,RS_FMT=5,RS_BAUD=4,RS_ID=1,CTRL_MODE=6,DI1_ASSIGN=131,DO2_ASSIGN=2,DO3_ASSIGN=18,DO4_ASSIGN=3,DO5_ASSIGN=1))
+run(sample(RS_STAT='CONNECTED',LEAD_CFG='MISMATCH',RS_FMT=5,RS_BAUD=6,RS_ID=1,CTRL_MODE=6,DI1_ASSIGN=3,DI1_CFG=1,DO2_ASSIGN=2,DO3_ASSIGN=18,DO4_ASSIGN=3,DO5_ASSIGN=1))
 run(sample(RS_STAT='CONNECTED',LEAD_CFG='OK',MODBUS=1,POS_READ=1,IO_READ=1,READY=1,SRDY=1,RS_FMT=4,RS_BAUD=6,RS_ID=1,CTRL_MODE=6,DI1_ASSIGN=131,DO2_ASSIGN=2,DO3_ASSIGN=18,DO4_ASSIGN=3,DO5_ASSIGN=1))
-assert len(messages) == 4, messages
+assert len(messages) == 5, messages
 assert 'no valid EL7 Modbus reply at 115200 8N1' in messages[0]
 assert 'factory 38400 8N2' in messages[1]
 assert 'P05.29=4 / 8N1 (reported 5)' in messages[2]
 assert 'P05.30=6 / 115200 (reported 4)' in messages[2]
-assert '[W1P RS485] Connected:' in messages[3]
+assert 'P04.00=' not in messages[3], "the inhibited DI1 assignment was verified valid by W1P"
+assert '[W1P RS485] Connected:' in messages[4]
 print('W1P_RS485_FAULT_LOGGING_RUNTIME_PASS')

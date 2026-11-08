@@ -1,3 +1,11 @@
+# v26.11.08.01 — 2026-11-08
+
+- Audited SRVR, W1P, CTRL and CTRL-TS against the approved v26.10.19.01 ChatGPT source ZIP.
+- Rejects encoder timestamp rollback and malformed raw counts, timestamps validated W1P Modbus replies, and corrects RS485 startup diagnostics.
+- Corrects SRVR clock-based freshness and joystick input validation, plus rollover handling for CTRL pulses and CTRL-TS confirmation and update deadlines.
+- Runs all 64 source checks including the Qt backend runtime regression, plus Qt resource compilation, QML lint and offscreen application smoke.
+- macOS metadata uses short version 26.11.8 and build 2611.8.1.
+
 # v26.10.16.02 — 2026-10-16
 
 - Based on approved `.16.01` baseline. Added SRVR cold-start connection discovery, 3-second grace, explicit per-link Active/Fault/Offline/Unverified status and recovery logging for CTRL, W1P, Leadshine EL7 Modbus, CTRL-TS, joystick input, firmware agreement and Free-D.

@@ -9,7 +9,7 @@ Native compilation and real-hardware timing remain GitHub/bench gates.
 """
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
-VER = "26.10.19.01"
+VER = "26.11.08.01"
 T = (ROOT/f"HV_P2P_CTRL_TS_v{VER}"/f"HV_P2P_CTRL_TS_v{VER}.ino").read_text()
 C = (ROOT/f"HV_P2P_CTRL_EDGEBOX_v{VER}"/f"HV_P2P_CTRL_EDGEBOX_v{VER}.ino").read_text()
 P = (ROOT/'tools'/'prepare_waveshare_library.py').read_text()
@@ -55,7 +55,7 @@ handoff = begin[headless_gate:update_begin]
 for token in ('fw_stage_safe_update_handoff(version, sha)',
               'Make the transition explicit',
               'fw_safe_reboot_retry',
-              'g_fw_safe_reboot_due_ms = millis() + 1800',
+              'g_fw_safe_reboot_due_ms = HVP2PRS485::deadlineAfter(millis(), 1800)',
               'return;'):
     assert token in handoff, token
 for forbidden in ('g_fw_prefs', 'Preferences', '.put', '.remove', 'Update.begin', 'Update.write', 'lv_refr_now'):
@@ -74,11 +74,11 @@ assert begin.index('if(g_fw_safe_reboot_due_ms)') < begin.index('fw_stage_safe_u
 # CTRL must also stay quiet long enough for the 1800 ms touchscreen handoff to
 # actually happen. This is non-blocking: it suppresses only HMI discovery/OTA,
 # not the real-time CTRL control loop.
-for token in ('g_hmiSafeRebootHoldUntilMs', 'millis() + 3000',
+for token in ('g_hmiSafeRebootHoldUntilMs', 'HVP2PRS485::deadlineAfter(millis(), 3000)',
               'holding discovery until reboot completes', 'safeRebootHold'):
     assert token in C, token
 safe_reply = C[C.index('text == "fw_safe_reboot_retry"'):C.index('Serial.printf("[HMI FW] CTRL-TS updater error')]
-assert 'g_hmiSafeRebootHoldUntilMs = millis() + 3000;' in safe_reply
+assert 'g_hmiSafeRebootHoldUntilMs = HVP2PRS485::deadlineAfter(millis(), 3000);' in safe_reply
 hello_service = C[C.index('static void handleHmiRx'):C.index('static bool initEthernetStatic')]
 assert 'if(!g_ctrlAuthorityUpdatePending && !safeRebootHold && (now - g_lastHmiHelloTxMs) >= 500)' in hello_service
 

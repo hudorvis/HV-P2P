@@ -249,7 +249,7 @@ class W1PClient(threading.Thread):
 
     @property
     def connected(self):
-        return self.last_seen > 0 and time.time() - self.last_seen <= WINCH_STATUS_TIMEOUT_S
+        return self.last_seen > 0 and time.monotonic() - self.last_seen <= WINCH_STATUS_TIMEOUT_S
 
     def _update_firmware_snapshot(self, line: str) -> None:
         text = str(line or "").strip()
@@ -412,9 +412,8 @@ class W1PClient(threading.Thread):
                 except Exception as exc:
                     self.log(f"[W1P VEL REFRESH] {exc}")
 
-            now = time.time()
-            if now - self.last_probe >= WINCH_PROBE_INTERVAL_S:
-                self.last_probe = now
+            if mono_now - self.last_probe >= WINCH_PROBE_INTERVAL_S:
+                self.last_probe = mono_now
                 try:
                     with self._tx_lock:
                         self.sock.sendto(b"STATUS\n", (self.host, self.port))
@@ -426,7 +425,7 @@ class W1PClient(threading.Thread):
                     for raw in data.decode("ascii", "ignore").splitlines():
                         line = raw.strip()
                         if line.startswith(("STATUS", "HELLO", "PONG", "OK", "ERR", "FW_PROGRESS", "W1PTS_AUX", "W1P_HMI_STATUS")):
-                            self.last_seen = time.time()
+                            self.last_seen = time.monotonic()
                             self._update_firmware_snapshot(line)
                             try: self.rxq.put_nowait(line)
                             except queue.Full: pass
@@ -448,7 +447,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.10.19.01", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.11.08.01", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)
@@ -577,6 +576,7 @@ class HVP2PBackend(QObject):
         self._winch_last_pos_sample_ms = None
         self._winch_last_pos_seq = None
         self._winch_last_pos_reject_log_t = 0.0
+        self._last_raw_pos = None
         self.winch_rs_status = "Disconnected"
         self._w1p_rs485_transport_active = False
         self.winch_drive_writes_enabled = False
@@ -669,6 +669,7 @@ class HVP2PBackend(QObject):
         # serial console has richer commissioning prints, but an operator should
         # not need a second cable/terminal to learn why SRVR says Disconnected.
         self._w1p_rs485_diag_signature = ""
+        self._w1p_rs485_diag_started_at = None
         # Queue operator-facing RS485 diagnostics until the end of the Qt timer
         # cycle.  v26.10.08.04 emitted logChanged synchronously while parsing a
         # W1P frame immediately before DSP1 construction.  The frozen macOS Intel
@@ -1263,7 +1264,7 @@ class HVP2PBackend(QObject):
                 continue
             msg = self._parse_control_packet(data)
             if not msg: continue
-            now = time.time()
+            now = time.monotonic()
             flags_now = int(msg[0])
             # Edge-capture runs in the UDP receive thread, independently of the
             # Qt event loop. The UI/motion timer later drains this persistent
@@ -1316,6 +1317,8 @@ class HVP2PBackend(QObject):
             elif data[0] == 0xA7 and len(data) >= 10:
                 flags = (int(data[1]) << 8) | int(data[2]); joy = struct.unpack("!f", data[3:7])[0]
             else: return None
+            if not math.isfinite(joy):
+                return None
             return flags, max(-1.0, min(1.0, float(joy)))
         except Exception: return None
 
@@ -1387,7 +1390,8 @@ class HVP2PBackend(QObject):
         """
         fields = self._parse_pipe_fields(line)
         now = time.time()
-        self._ctrl_ts_last_seen = now
+        seen_at = time.monotonic()
+        self._ctrl_ts_last_seen = seen_at
         self._ctrl_ts_connected_reported = str(fields.get("ctrl_ts", "0")).strip() == "1"
         self._ctrl_fw_version = str(fields.get("ctrl_version", self._ctrl_fw_version or ""))
         self._ctrl_fw_authority = str(fields.get("fw_authority", "unknown"))
@@ -1488,7 +1492,7 @@ class HVP2PBackend(QObject):
         # the same UI timer that owns motion/AUX processing.
         diag_now = (new_poll_timeouts, new_events_rejected, new_queue_drops, new_parser_crc, new_parser_resync)
         if diag_now != self._ctrl_ts_diag_last_logged and any(v > p for v, p in zip(diag_now, self._ctrl_ts_diag_last_logged)):
-            if (now - self._ctrl_ts_diag_last_log_at) >= 2.0:
+            if (seen_at - self._ctrl_ts_diag_last_log_at) >= 2.0:
                 prev = self._ctrl_ts_diag_last_logged
                 delta = tuple(max(0, v - p) for v, p in zip(diag_now, prev))
                 self._log(
@@ -1500,8 +1504,8 @@ class HVP2PBackend(QObject):
                     f"resync={diag_now[4]} (+{delta[4]})"
                 )
                 self._ctrl_ts_diag_last_logged = diag_now
-                self._ctrl_ts_diag_last_log_at = now
-        self._ads1115_status_last_seen = now
+                self._ctrl_ts_diag_last_log_at = seen_at
+        self._ads1115_status_last_seen = seen_at
         self._ads1115_connected_reported = str(fields.get("ads", fields.get("ads1115", "0"))).strip() == "1"
 
         # Any proven stale CTRL gets an immediate authority beacon from the RX
@@ -1662,7 +1666,7 @@ class HVP2PBackend(QObject):
         return 0.0 if abs(value * 100.0) <= neutral_pct else value
 
     def _ctrl_connected(self):
-        now = time.time()
+        now = time.monotonic()
         while self._ctrl_rx_times and now - self._ctrl_rx_times[0] > CTRL_RX_WINDOW_S:
             self._ctrl_rx_times.popleft()
         return len(self._ctrl_rx_times) >= CTRL_RX_MIN_PKTS
@@ -1687,11 +1691,25 @@ class HVP2PBackend(QObject):
             self.stateChanged.emit()
 
     # --- W1P parsing / motion ---
+    def _reset_winch_position_samples(self) -> None:
+        self._winch_last_pos_seq = None
+        self._winch_last_pos_sample_ms = None
+        self._winch_last_pos_accept_t = 0.0
+        self._winch_position_accept_jump_until = 0.0
+        self._last_raw_pos = None
+
     def _invalidate_position_reference(self, reason: str) -> None:
         """Require a known-position reference after process/W1P power-session loss."""
         was_calibrated = not bool(self._not_calibrated)
         self._not_calibrated = True
+        self._reset_winch_position_samples()
+        self._w1p_rs485_diag_signature = ""
+        self._w1p_rs485_diag_started_at = None
+        self._pending_w1p_rs485_log = ""
         self._cancel_goto()
+        if self.calibration_open and self.position_source != "Virtual":
+            self._winch_cal_zero_raw = None
+            self.cancelCalibration()
         if was_calibrated:
             self._log(f"[Calibration] Position reference invalidated: {reason}")
         self._sync_service_mode_to_winch(force=True)
@@ -1737,6 +1755,12 @@ class HVP2PBackend(QObject):
         rs = str(fields.get("RS_STAT", "WAITING")).strip().upper()
         cfg = str(fields.get("LEAD_CFG", "READ_FAULT")).strip().upper()
         factory = str(fields.get("FACTORY_COMMS", "0")).strip() == "1"
+        if self._w1p_rs485_diag_started_at is None:
+            self._w1p_rs485_diag_started_at = time.monotonic()
+        if rs == "WAITING" and not factory:
+            self._w1p_rs485_diag_signature = ""
+            self._pending_w1p_rs485_log = ""
+            return
         fb_ok = str(fields.get("MODBUS", "0")).strip() == "1"
         pos_ok = str(fields.get("POS_READ", "0")).strip() == "1"
         io_ok = str(fields.get("IO_READ", "0")).strip() == "1"
@@ -1754,7 +1778,8 @@ class HVP2PBackend(QObject):
             "1" if ready else "0", "1" if srdy else "0", mb_ex,
             str(fields.get("RS_FMT", "")), str(fields.get("RS_BAUD", "")),
             str(fields.get("RS_ID", "")), str(fields.get("CTRL_MODE", "")),
-            str(fields.get("DI1_ASSIGN", "")), str(fields.get("DO2_ASSIGN", "")),
+            str(fields.get("DI1_ASSIGN", "")), str(fields.get("DI1_CFG", "")),
+            str(fields.get("DO2_ASSIGN", "")),
             str(fields.get("DO3_ASSIGN", "")), str(fields.get("DO4_ASSIGN", "")),
             str(fields.get("DO5_ASSIGN", "")),
         ))
@@ -1800,6 +1825,8 @@ class HVP2PBackend(QObject):
             )
             for key, want, label in expected:
                 got = str(fields.get(key, "")).strip()
+                if key == "DI1_ASSIGN" and fields.get("DI1_CFG") == "1":
+                    continue
                 if got and got != want:
                     mismatches.append(f"{label} (reported {got})")
             detail = "; ".join(mismatches) if mismatches else "one or more required EL7 parameters do not match"
@@ -1821,11 +1848,11 @@ class HVP2PBackend(QObject):
 
     def _w1p_status_fresh(self):
         return bool(self._w1p_status_last_seen > 0 and
-                    time.time() - self._w1p_status_last_seen <= WINCH_STATUS_TIMEOUT_S)
+                    time.monotonic() - self._w1p_status_last_seen <= WINCH_STATUS_TIMEOUT_S)
 
     def _ctrl_authority_fresh(self):
         return bool(self._ctrl_ts_last_seen > 0 and
-                    time.time() - self._ctrl_ts_last_seen <= HMI_STATUS_TIMEOUT_S)
+                    time.monotonic() - self._ctrl_ts_last_seen <= HMI_STATUS_TIMEOUT_S)
 
     def _parse_w1p(self, line):
         line = str(line or "").strip()
@@ -1842,8 +1869,7 @@ class HVP2PBackend(QObject):
             return
         if line.startswith("W1P_HMI_STATUS|"):
             fields = self._parse_pipe_fields(line)
-            now = time.time()
-            self._w1p_ts_last_seen = now
+            self._w1p_ts_last_seen = time.monotonic()
             self._w1p_ts_connected_reported = str(fields.get("w1p_ts", fields.get("w1pts", "0"))).strip() == "1"
             self._w1p_ts_version = str(fields.get("version", ""))
             try:
@@ -1868,9 +1894,6 @@ class HVP2PBackend(QObject):
             # while W1P/drive power was absent. A Slip or Limit Calibration must
             # explicitly establish the new physical reference.
             self._invalidate_w1p_status()
-            self._winch_last_pos_seq = None
-            self._winch_last_pos_sample_ms = None
-            self._winch_last_pos_accept_t = 0.0
             boot_id = ""
             for token in line.split()[1:]:
                 if token.startswith("VER="):
@@ -1922,7 +1945,13 @@ class HVP2PBackend(QObject):
             self._reject_w1p_status("invalid enum field LEAD_CFG")
             return
         try:
-            for numeric_key in ("POS_M", "RAW_POS", "RAW_POS_EXT", "VEL_MPS", "DO2_ASSIGN", "DO3_ASSIGN", "DO4_ASSIGN", "DO5_ASSIGN"):
+            raw_pos = None
+            for key, signed_limit in (("RAW_POS", 1 << 31), ("RAW_POS_EXT", 1 << 63)):
+                if key in fields:
+                    raw_pos = int(fields[key])
+                    if not -signed_limit <= raw_pos < signed_limit:
+                        raise ValueError(f"{key} is out of range")
+            for numeric_key in ("POS_M", "VEL_MPS", "DO2_ASSIGN", "DO3_ASSIGN", "DO4_ASSIGN", "DO5_ASSIGN"):
                 if numeric_key in fields:
                     numeric_value = float(fields[numeric_key])
                     if not math.isfinite(numeric_value):
@@ -1935,22 +1964,13 @@ class HVP2PBackend(QObject):
             if boot_id:
                 if self._w1p_boot_id and boot_id != self._w1p_boot_id:
                     self._invalidate_position_reference("W1P boot identifier changed")
-                    self._winch_last_pos_seq = None
-                    self._winch_last_pos_sample_ms = None
-                    self._winch_last_pos_accept_t = 0.0
                 self._w1p_boot_id = boot_id
-            accepted_position = False
             if "POS_M" in fields and self.position_source != "Virtual":
                 new_pos = float(fields["POS_M"])
-                accepted_position = self._sanity_accept_winch_position(new_pos, fields)
-                if accepted_position:
+                if self._sanity_accept_winch_position(new_pos, fields):
                     self.state.pos_m = new_pos
-            # Calibration counts must come from the same validated sample as
-            # the visible encoder position, never a stale/rejected RAW_POS.
-            # Parse the extended integer directly, without float precision loss.
-            if accepted_position:
-                if "RAW_POS_EXT" in fields: self._last_raw_pos = int(fields["RAW_POS_EXT"])
-                elif "RAW_POS" in fields: self._last_raw_pos = int(fields["RAW_POS"])
+                    # Keep counts paired with the accepted physical position.
+                    self._last_raw_pos = raw_pos if fields.get("POS_SRC", "DRIVE") == "DRIVE" else None
             if "VEL_MPS" in fields and self.position_source != "Virtual": self.current_speed_mps = float(fields["VEL_MPS"])
             if "FW" in fields: self._w1p_fw_version = str(fields["FW"])
             reported_w1p_match = str(fields.get("FW_MATCH", "0")).strip() == "1"
@@ -2018,7 +2038,7 @@ class HVP2PBackend(QObject):
             else: self.winch_rs_status = "Disconnected"
             self._log_w1p_rs485_diagnostics(fields)
             self._update_w1p_reported_config(fields)
-            self._w1p_status_last_seen = time.time()
+            self._w1p_status_last_seen = time.monotonic()
         except Exception as exc:
             self._reject_w1p_status(f"parse error: {exc}")
 
@@ -2040,7 +2060,10 @@ class HVP2PBackend(QObject):
             new_pos = float(new_pos_m)
             if not math.isfinite(new_pos):
                 return False
-            if fields.get("POS_SRC", "DRIVE") == "DRIVE":
+            source = fields.get("POS_SRC", "DRIVE")
+            if source not in ("DRIVE", "SIM"):
+                return False
+            if source == "DRIVE":
                 if fields.get("POS_READ", "0") != "1":
                     return False
                 age = int(fields.get("POS_AGE_MS", "0"))
@@ -2048,29 +2071,32 @@ class HVP2PBackend(QObject):
                     return False
             now = time.monotonic()
             sequence = None
-            if fields.get("POS_SRC", "DRIVE") == "DRIVE" and "POS_SEQ" in fields:
+            if source == "DRIVE" and "POS_SEQ" in fields:
                 sequence = int(fields["POS_SEQ"])
                 if not 0 <= sequence <= 0xFFFFFFFF:
                     return False
                 if self._winch_last_pos_seq is not None and not is_newer_sequence(sequence, self._winch_last_pos_seq):
                     return False
             sample_ms = None
-            if fields.get("POS_SRC", "DRIVE") == "DRIVE" and "POS_T_MS" in fields:
+            elapsed = max(0.0, now - self._winch_last_pos_accept_t)
+            if source == "DRIVE" and "POS_T_MS" in fields:
                 sample_ms = int(fields["POS_T_MS"])
                 if not 0 <= sample_ms <= 0xFFFFFFFF:
                     return False
+                if self._winch_last_pos_sample_ms is not None:
+                    device_elapsed = uint32_elapsed_ms(sample_ms, self._winch_last_pos_sample_ms)
+                    # A true rollover gives a small forward delta. A rollback
+                    # or duplicate must never grant a larger position envelope.
+                    if not 0 < device_elapsed < 0x80000000:
+                        return False
+                    elapsed = device_elapsed / 1000.0
             old_pos = self.state.pos_m
             first_sample = self._winch_last_pos_accept_t <= 0.0 or old_pos is None
-            within_sync_grace = time.time() <= float(self._winch_position_accept_jump_until or 0.0)
+            within_sync_grace = now <= self._winch_position_accept_jump_until
             if first_sample or within_sync_grace:
                 valid = True
                 allowance = 0.0
             else:
-                elapsed = max(0.0, now - self._winch_last_pos_accept_t)
-                if sample_ms is not None and self._winch_last_pos_sample_ms is not None:
-                    device_elapsed = uint32_elapsed_ms(sample_ms, self._winch_last_pos_sample_ms)
-                    if device_elapsed > 0:
-                        elapsed = device_elapsed / 1000.0
                 # Validate against the drive's encoder-rate capability, not a
                 # joystick command or operator software speed/limit setting.
                 # The 3000 RPM validation allowance covers the firmware's
@@ -2562,6 +2588,7 @@ class HVP2PBackend(QObject):
         self.current_speed_mps = 0.0
         self._virtual_velocity_mps = 0.0
         self._virtual_last_tick = time.monotonic()
+        self._reset_winch_position_samples()
         self.position_source = new_source
         if new_source == "Virtual":
             # The local safety state is part of the mode transition itself and
@@ -2685,7 +2712,7 @@ class HVP2PBackend(QObject):
             else:
                 self.w1p.arm_velocity_refresh(cmd, source_axis=self._ctrl_axis)
 
-        now = time.time()
+        now = time.monotonic()
         same = abs(vel-self.last_sent_vel) < .01
         if not force and same:
             if abs(vel) < .001 or (now-getattr(self, "_last_vel_tx", 0.0)) < VEL_KEEPALIVE_S:
@@ -3241,7 +3268,7 @@ class HVP2PBackend(QObject):
         target = str(self.ctrl_ip or "").strip()
         if not target:
             return
-        now = time.time()
+        now = time.monotonic()
         # Building DSP1 walks a large amount of live/config state. CTRL forwards
         # bulk HMI at only 4 Hz, so rebuilding it at the 25 ms safety tick wastes
         # UI-thread time without increasing touchscreen responsiveness.
@@ -4043,7 +4070,10 @@ class HVP2PBackend(QObject):
             # This avoids the .08.04 frozen-macOS re-entrant log-signal sequence
             # while preserving the same transition-only operator information.
             pending_rs485_log = self._pending_w1p_rs485_log
-            if pending_rs485_log:
+            if pending_rs485_log and self._w1p_status_fresh() and (
+                not pending_rs485_log.startswith("[W1P RS485] FAULT:")
+                or time.monotonic() - self._w1p_rs485_diag_started_at >= self._link_log_startup_grace_s
+            ):
                 self._pending_w1p_rs485_log = ""
                 self._log(pending_rs485_log)
             self._service_connection_log()
@@ -4937,11 +4967,11 @@ class HVP2PBackend(QObject):
     @Property(bool, notify=stateChanged)
     def ctrlTsConnected(self):
         return bool(self._ctrl_connected() and self._ctrl_ts_connected_reported and
-                    self._ctrl_ts_last_seen > 0 and time.time() - self._ctrl_ts_last_seen <= HMI_STATUS_TIMEOUT_S)
+                    self._ctrl_authority_fresh())
     @Property(bool, notify=stateChanged)
     def ctrlTsRs485Active(self):
         return bool(self._ctrl_connected() and self._ctrl_ts_rs485_alive_reported and
-                    self._ctrl_ts_last_seen > 0 and time.time() - self._ctrl_ts_last_seen <= HMI_STATUS_TIMEOUT_S)
+                    self._ctrl_authority_fresh())
     @Property(str, notify=stateChanged)
     def ctrlTsVersion(self): return str(self._ctrl_ts_version or "—")
     @Property(str, notify=stateChanged)
@@ -4988,8 +5018,7 @@ class HVP2PBackend(QObject):
     def ctrlTsImageAvailable(self): return bool(self._ctrl_ts_image_available)
     @Property(bool, notify=stateChanged)
     def ctrlTsCompatible(self):
-        return bool(self._ctrl_ts_compatible_reported and self._ctrl_ts_last_seen > 0 and
-                    time.time() - self._ctrl_ts_last_seen <= HMI_STATUS_TIMEOUT_S and
+        return bool(self._ctrl_ts_compatible_reported and self._ctrl_authority_fresh() and
                     self._firmware_version_matches_current(self._ctrl_ts_version) and self._ctrl_fw_match)
     def _joystick_input_connected(self):
         if not self._ctrl_connected() or bool(self._ctrl_flags & FLAG_ADS1115_FAULT):
@@ -4997,7 +5026,7 @@ class HVP2PBackend(QObject):
         # Prefer the explicit HMI_STATUS ads= field when available. ``ads`` and
         # FLAG_ADS1115_FAULT are retained wire names; on EdgeBox they mean the
         # onboard SGM58031 / AI1 joystick-input health, not an external ADS1115.
-        if self._ads1115_status_last_seen > 0 and time.time() - self._ads1115_status_last_seen <= HMI_STATUS_TIMEOUT_S:
+        if self._ads1115_status_last_seen > 0 and time.monotonic() - self._ads1115_status_last_seen <= HMI_STATUS_TIMEOUT_S:
             return bool(self._ads1115_connected_reported)
         return True
     @Property(bool, notify=stateChanged)
@@ -5007,7 +5036,7 @@ class HVP2PBackend(QObject):
     @Property(bool, notify=stateChanged)
     def w1pTsConnected(self):
         return bool(self.w1p.connected and self._w1p_ts_connected_reported and
-                    self._w1p_ts_last_seen > 0 and time.time() - self._w1p_ts_last_seen <= HMI_STATUS_TIMEOUT_S)
+                    self._w1p_ts_last_seen > 0 and time.monotonic() - self._w1p_ts_last_seen <= HMI_STATUS_TIMEOUT_S)
     @Property(bool, notify=stateChanged)
     def rs485Connected(self):
         # Setup-panel link indication only. W1P reports RS_STAT from recent,
@@ -5661,7 +5690,7 @@ class HVP2PBackend(QObject):
 
     def _sync_position(self, pos_m: float):
         self.state.pos_m = float(pos_m)
-        self._winch_position_accept_jump_until = time.time() + 2.0
+        self._winch_position_accept_jump_until = time.monotonic() + 2.0
         self._winch_last_pos_accept_t = 0.0
         self._send_velocity(0.0, force=True)
         if not self.smoke_test and self.position_source != "Virtual":
@@ -5757,7 +5786,7 @@ class HVP2PBackend(QObject):
                     self.w1p.send(f"SET_LIMIT_FAR {span:.3f}")
                     self.w1p.send(f"SYNC_POS {ref:.3f}")
                     self.w1p.send("SERVICE_MODE 0")
-                    self._winch_position_accept_jump_until = time.time() + 2.0
+                    self._winch_position_accept_jump_until = time.monotonic() + 2.0
                     self.state.pos_m = ref
 
                 self.calibration_open = False
@@ -5776,7 +5805,10 @@ class HVP2PBackend(QObject):
                 self.calibration_open = False
                 self._sync_service_mode_to_winch(force=True)
         else:
-            raw = int(getattr(self, "_last_raw_pos", 0) or 0)
+            raw = self._last_raw_pos
+            if self.calibration_step < 2 and (raw is None or time.monotonic() - self._winch_last_pos_accept_t > 0.5):
+                self._log("[Calibration] Winch capture requires fresh encoder feedback")
+                return
             if self.calibration_step == 0:
                 self._winch_cal_zero_raw = raw
                 self.calibration_step = 1

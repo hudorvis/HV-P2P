@@ -16,7 +16,7 @@
 static bool g_ads_inited = false;
 static uint8_t ADS_ADDR = 0x48;
 
-#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.10.19.01"
+#define CTRL_VERSION "HV P2P CTRL EdgeBox v26.11.08.01"
 #define CTRL_HMI_ARCH "EdgeBox ESP-100 + isolated RS485 Waveshare thin HMI"
 
 IPAddress local_IP(172,20,1,101);
@@ -245,7 +245,7 @@ static uint32_t lastHmiLayoutForward = 0;
 #define HMI_LAYOUT_MAX_LEN 2200
 static const char* HMI_LAYOUT_NVS_NS = "hmiui";
 static const char* HMI_LAYOUT_NVS_KEY = "layout";
-static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.10.19.01|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
+static const char* DEFAULT_HMI_LAYOUT_LINE = "UIL1|title=HV P2P CTRL-TS|subtitle=v26.11.08.01|layout=main5|theme=hv|aux1=AUX 1|aux2=AUX 2|aux3=AUX 3|aux4=AUX 4|aux5=AUX 5|hint=Ready";
 
 
 
@@ -270,10 +270,10 @@ static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_CTRL";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL_TS,W1P,W1P_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_CTRL_v*.ino.bin firmware. CTRL-TS and W1P files are rejected.";
 static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=CTRL;";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.19.01;";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=CTRL;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.11.08.01;";
 static const char* HV_AUTH_ROLE = "CTRL";
 static const char* HV_AUTH_TARGET = "EDGEBOX_ESP100";
-static const char* HV_AUTH_VERSION = "v26.10.19.01";
+static const char* HV_AUTH_VERSION = "v26.11.08.01";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
@@ -998,7 +998,7 @@ static bool hmiLinkConnected()
 
 static const char* hmiFwStateText()
 {
-  if(g_hmiSafeRebootHoldUntilMs && millis() < g_hmiSafeRebootHoldUntilMs) return "safe_reboot";
+  if(HVP2PRS485::deadlineActive(millis(), g_hmiSafeRebootHoldUntilMs)) return "safe_reboot";
   switch(g_hmiFwState) {
     case HMI_FW_WAIT_READY:      return "starting";
     case HMI_FW_WAIT_BLOCK_ACK:  return "transferring";
@@ -1016,7 +1016,7 @@ static const char* hmiFwStateText()
 
 static int hmiFwProgressPct()
 {
-  if(g_hmiSafeRebootHoldUntilMs && millis() < g_hmiSafeRebootHoldUntilMs) return 0;
+  if(HVP2PRS485::deadlineActive(millis(), g_hmiSafeRebootHoldUntilMs)) return 0;
   if(g_hmiFwState == HMI_FW_WAIT_RESULT) return 99;
   if(g_hmiFwState == HMI_FW_WAIT_REBOOT_ACK || g_hmiFwState == HMI_FW_WAIT_REBOOT_CONFIRM) return 100;
   if(g_hmiFwState == HMI_FW_WAIT_READY) return 0;
@@ -1036,7 +1036,7 @@ static void sendHmiStatusToSrvr()
   uint32_t age = g_lastHmiRxMs ? (now - g_lastHmiRxMs) : 999999;
   String line = "HMI_STATUS";
   line += "|ctrl_ts=" + String(hmiLinkConnected() ? 1 : 0);
-  line += "|ctrl_version=v26.10.19.01";
+  line += "|ctrl_version=v26.11.08.01";
   line += "|fw_match=" + String(g_srvrFirmwareMatched ? 1 : 0);
   line += "|fw_authority=" + g_srvrFirmwareState;
   line += "|fw_required=" + (g_srvrRequiredVersion.length() ? g_srvrRequiredVersion : String("unknown"));
@@ -1314,11 +1314,11 @@ static void handleUdpRx()
 
   String line = String((const char*)buf);
   line.trim();
-  if(line == "AUX1") { g_virtualAuxUntil[0] = millis() + 300; return; }
-  if(line == "AUX2") { g_virtualAuxUntil[1] = millis() + 300; return; }
-  if(line == "AUX3") { g_virtualAuxUntil[2] = millis() + 300; return; }
-  if(line == "AUX4") { g_virtualAuxUntil[3] = millis() + 300; return; }
-  if(line == "AUX5") { g_virtualAuxUntil[4] = millis() + 300; return; }
+  if(line == "AUX1") { g_virtualAuxUntil[0] = HVP2PRS485::deadlineAfter(millis(), 300); return; }
+  if(line == "AUX2") { g_virtualAuxUntil[1] = HVP2PRS485::deadlineAfter(millis(), 300); return; }
+  if(line == "AUX3") { g_virtualAuxUntil[2] = HVP2PRS485::deadlineAfter(millis(), 300); return; }
+  if(line == "AUX4") { g_virtualAuxUntil[3] = HVP2PRS485::deadlineAfter(millis(), 300); return; }
+  if(line == "AUX5") { g_virtualAuxUntil[4] = HVP2PRS485::deadlineAfter(millis(), 300); return; }
   if(line == "SRVR_ALIVE") {
     // Background-safe liveness packet from SRVR communications worker. It carries
     // no safety/config state; it only proves that the SRVR process/transport is
@@ -1426,12 +1426,12 @@ static void pollButtonsAndUpdateLatches(uint16_t &flags_out)
   if(hmi_safety) flags_out |= FLAG_CTRL_HMI_FAULT;
   if(firmware_safety) flags_out |= FLAG_CTRL_FW_FAULT;
 
-  if(now < g_virtualAuxUntil[0]) flags_out |= FLAG_AUX1;
-  if(now < g_virtualAuxUntil[1]) flags_out |= FLAG_AUX2;
-  if(now < g_virtualAuxUntil[2]) flags_out |= FLAG_AUX3;
-  if(now < g_virtualAuxUntil[3]) flags_out |= FLAG_AUX4;
-  if(now < g_virtualAuxUntil[4]) flags_out |= FLAG_AUX5;
-  if(now < g_virtualCalCancelUntil) flags_out |= FLAG_CAL_CANCEL;
+  if(HVP2PRS485::deadlineActive(now, g_virtualAuxUntil[0])) flags_out |= FLAG_AUX1;
+  if(HVP2PRS485::deadlineActive(now, g_virtualAuxUntil[1])) flags_out |= FLAG_AUX2;
+  if(HVP2PRS485::deadlineActive(now, g_virtualAuxUntil[2])) flags_out |= FLAG_AUX3;
+  if(HVP2PRS485::deadlineActive(now, g_virtualAuxUntil[3])) flags_out |= FLAG_AUX4;
+  if(HVP2PRS485::deadlineActive(now, g_virtualAuxUntil[4])) flags_out |= FLAG_AUX5;
+  if(HVP2PRS485::deadlineActive(now, g_virtualCalCancelUntil)) flags_out |= FLAG_CAL_CANCEL;
 }
 
 static void handleHmiEventLine(String line)
@@ -1439,12 +1439,12 @@ static void handleHmiEventLine(String line)
   line.trim();
   if(!line.length()) return;
   g_lastHmiRxMs = millis();
-  if(line == "AUX1") g_virtualAuxUntil[0] = millis() + 300;
-  else if(line == "AUX2") g_virtualAuxUntil[1] = millis() + 300;
-  else if(line == "AUX3") g_virtualAuxUntil[2] = millis() + 300;
-  else if(line == "AUX4") g_virtualAuxUntil[3] = millis() + 300;
-  else if(line == "AUX5") g_virtualAuxUntil[4] = millis() + 300;
-  else if(line == "CAL_CANCEL") g_virtualCalCancelUntil = millis() + 300;
+  if(line == "AUX1") g_virtualAuxUntil[0] = HVP2PRS485::deadlineAfter(millis(), 300);
+  else if(line == "AUX2") g_virtualAuxUntil[1] = HVP2PRS485::deadlineAfter(millis(), 300);
+  else if(line == "AUX3") g_virtualAuxUntil[2] = HVP2PRS485::deadlineAfter(millis(), 300);
+  else if(line == "AUX4") g_virtualAuxUntil[3] = HVP2PRS485::deadlineAfter(millis(), 300);
+  else if(line == "AUX5") g_virtualAuxUntil[4] = HVP2PRS485::deadlineAfter(millis(), 300);
+  else if(line == "CAL_CANCEL") g_virtualCalCancelUntil = HVP2PRS485::deadlineAfter(millis(), 300);
   else if(line == "LAYOUT?") sendHmiLayout();
   else if(line == "CFG?") sendNetworkConfigToHmi();
   else if(line.startsWith("CFG1|")) {
@@ -1467,7 +1467,7 @@ static inline void hmiMasterTurnaroundGuard()
 
 static bool hmiBusRecoveryQuiet()
 {
-  return g_hmiBusQuietUntilMs && ((int32_t)(millis() - g_hmiBusQuietUntilMs) < 0);
+  return HVP2PRS485::deadlineActive(millis(), g_hmiBusQuietUntilMs);
 }
 
 static bool hmiNormalTxAllowed()
@@ -1690,10 +1690,10 @@ static bool hmiFwHandleFrame(const HVP2PRS485::Frame &frame){
       Serial.println("[HMI FW] CTRL-TS entering safe headless updater; holding discovery until reboot completes");
       g_hmiSafeUpdateContinuation = true;
       hmiFwReset(nullptr);
-      // CTRL-TS schedules its software restart 350 ms after this response. Give
-      // it a generous non-blocking 1.8 s quiet window. The main CTRL control loop
+      // CTRL-TS schedules its software restart after 1.8 s. Give it a 3 s
+      // non-blocking quiet window. The main CTRL control loop
       // continues normally; only HMI discovery/firmware traffic is held.
-      g_hmiSafeRebootHoldUntilMs = millis() + 3000;
+      g_hmiSafeRebootHoldUntilMs = HVP2PRS485::deadlineAfter(millis(), 3000);
       g_lastHmiHelloTxMs = millis();
       return true;
     }
@@ -2036,7 +2036,7 @@ static void handleHmiRx()
       // A late EVENT can still be in the slave's LVGL/RS485 service path. Keep
       // the master silent before reusing the bus, otherwise abandoning a timed
       // out sequence can recreate a half-duplex collision with that late EVENT.
-      g_hmiBusQuietUntilMs = now + HMI_POLL_RECOVERY_QUIET_MS;
+      g_hmiBusQuietUntilMs = HVP2PRS485::deadlineAfter(now, HMI_POLL_RECOVERY_QUIET_MS);
       Serial.printf("[HMI] POLL timeout seq=%u timeouts=%lu; recovery quiet %u ms\n", unsigned(g_hmiPollSeq), (unsigned long)g_hmiPollTimeouts, unsigned(HMI_POLL_RECOVERY_QUIET_MS));
     }
   } else if(hmiBusRecoveryQuiet()) {
@@ -2044,7 +2044,7 @@ static void handleHmiRx()
     // post-timeout quiet window. A late EVENT is deliberately left un-ACKed and
     // will be retried on the next clean POLL.
   } else if(!g_hmiCompatible) {
-    const bool safeRebootHold = g_hmiSafeRebootHoldUntilMs && ((int32_t)(now - g_hmiSafeRebootHoldUntilMs) < 0);
+    const bool safeRebootHold = HVP2PRS485::deadlineActive(now, g_hmiSafeRebootHoldUntilMs);
     // If SRVR grants the final stage after we already learned the mismatched
     // touchscreen identity, start the transfer from that fresh identity without
     // waiting for a lucky grant/HELLO coincidence.  A fresh HELLO is required

@@ -1,9 +1,21 @@
 #!/usr/bin/env python3
 from pathlib import Path
-import subprocess, tempfile, textwrap, zlib, struct
+import re, subprocess, tempfile, zlib
 ROOT=Path(__file__).resolve().parents[1]
-HDR=ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.19.01'/'HV_P2P_RS485_Frame.h'
+HDR=ROOT/'HV_P2P_CTRL_EDGEBOX_v26.11.08.01'/'HV_P2P_RS485_Frame.h'
 assert HDR.is_file()
+ctrl = next(HDR.parent.glob('*.ino')).read_text()
+hmi_dir = ROOT/'HV_P2P_CTRL_TS_v26.11.08.01'
+hmi = next(hmi_dir.glob('*.ino')).read_text()
+assert (hmi_dir/HDR.name).read_bytes() == HDR.read_bytes()
+
+
+def function(source, name):
+    match = re.search(rf'^static (?:void|bool) {name}\([^;\n]*\)\s*\{{.*?^\}}', source, re.M | re.S)
+    assert match, name
+    return match.group()
+
+
 with tempfile.TemporaryDirectory() as td:
     td=Path(td)
     (td/'Arduino.h').write_text(r'''
@@ -35,6 +47,77 @@ public:
 #include <vector>
 #include <cassert>
 #include "HV_P2P_RS485_Frame.h"
+'''
+    test += '\n'.join(re.findall(r'^#define FLAG_[^\n]+', ctrl, re.M))
+    test += r'''
+
+static uint32_t g_virtualAuxUntil[5] = {}, g_virtualCalCancelUntil = 0, g_hmiBusQuietUntilMs = 0;
+static bool g_ctrlEstopActive = false, g_srvrFirmwareMatched = true;
+static bool hmiLinkConnected() { return true; }
+static uint32_t g_fw_safe_reboot_due_ms = 0, g_fw_reboot_due_ms = 0;
+static int lcdWrites = 0, restarts = 0;
+static constexpr int LCD_BL = 1, LCD_RST = 2, LOW = 0;
+static struct Panel {
+  void digitalWrite(int pin, int value) { assert((pin == LCD_BL || pin == LCD_RST) && value == LOW); ++lcdWrites; }
+} panel, *expander = &panel;
+static void delay(uint32_t ms) { __ms += ms; }
+static struct {
+  void restart() { ++restarts; }
+} ESP;
+'''
+    test += '\n'.join((
+        function(ctrl, 'pollButtonsAndUpdateLatches'), function(ctrl, 'hmiBusRecoveryQuiet'),
+        function(hmi, 'fw_service_reboot'),
+    ))
+    test += r'''
+
+static void testDeadlines() {
+  using namespace HVP2PRS485;
+  constexpr uint32_t beforeWrap = UINT32_MAX - 100;
+  uint16_t flags = 0;
+  g_virtualAuxUntil[1] = deadlineAfter(100, 300);
+  __ms = 400;
+  pollButtonsAndUpdateLatches(flags);
+  assert(flags == 0 && g_virtualAuxUntil[1] == 0);  // expiration stays expired
+  g_virtualAuxUntil[0] = deadlineAfter(beforeWrap, 300);
+  g_virtualCalCancelUntil = deadlineAfter(beforeWrap, 300);
+  g_ctrlEstopActive = true;
+  __ms = beforeWrap;
+  pollButtonsAndUpdateLatches(flags);
+  assert(flags == (FLAG_AUX1 | FLAG_CAL_CANCEL | FLAG_ESTOP_PRESSED));
+  __ms = 0;
+  pollButtonsAndUpdateLatches(flags);
+  assert(flags == (FLAG_AUX1 | FLAG_CAL_CANCEL | FLAG_ESTOP_PRESSED));
+  __ms = 199;
+  pollButtonsAndUpdateLatches(flags);
+  assert(flags == FLAG_ESTOP_PRESSED);
+
+  g_hmiBusQuietUntilMs = deadlineAfter(beforeWrap, 101);  // arithmetic deadline exactly zero
+  __ms = beforeWrap;
+  assert(hmiBusRecoveryQuiet());
+  __ms = 0;
+  assert(hmiBusRecoveryQuiet());
+  __ms = 1;
+  assert(!hmiBusRecoveryQuiet() && g_hmiBusQuietUntilMs == 0);
+
+  g_fw_safe_reboot_due_ms = deadlineAfter(beforeWrap, 1800);
+  __ms = beforeWrap;
+  fw_service_reboot();
+  assert(restarts == 0 && lcdWrites == 0);
+  __ms = 1699;
+  fw_service_reboot();
+  assert(restarts == 1 && lcdWrites == 2);
+  g_fw_safe_reboot_due_ms = 0;  // fresh application boot
+  g_fw_reboot_due_ms = deadlineAfter(beforeWrap, 250);
+  __ms = beforeWrap;
+  fw_service_reboot();
+  assert(restarts == 1);
+  __ms = 149;
+  fw_service_reboot();
+  assert(restarts == 2 && lcdWrites == 2);
+  std::puts("CTRL_AND_CTRL_TS_ROLLOVER_TIMING_PASS");
+}
+
 class BufStream: public Stream {
 public: std::vector<uint8_t> b; bool flushed=false;
  size_t write(const uint8_t*p,size_t n) override { b.insert(b.end(),p,p+n); return n; }
@@ -58,6 +141,7 @@ int main(){
  // Oversized TX is rejected.
  std::vector<uint8_t> huge(MAX_PAYLOAD+1,0x55); BufStream bx;
  assert(!sendFrame(bx,TEXT,1,huge.data(),(uint16_t)huge.size()));
+ testDeadlines();
  std::puts("RS485_FRAME_HOST_PASS");
 }
 '''

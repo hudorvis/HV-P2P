@@ -3,7 +3,7 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.10.19.01'
+VER = '26.11.08.01'
 B = (ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 Q = (ROOT/f'SRVR_GitHub_v{VER}/qml/pages/SetupPage.qml').read_text()
 C = (ROOT/f'HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino').read_text()
@@ -95,7 +95,7 @@ status = parse[parse.index('if not line.startswith("STATUS")'):]
 assert 'required_status' in status and '_reject_w1p_status' in status
 # No unconditional invalidation is permitted on STATUS; valid freshness commits last.
 assert '_invalidate_w1p_status()' not in status
-assert status.index('self._w1p_status_last_seen = time.time()') > status.index('required_status')
+assert status.index('self._w1p_status_last_seen = time.monotonic()') > status.index('required_status')
 assert 'strict_bits' in status and 'invalid boolean field' in status
 assert 'invalid enum field RS_STAT' in status and 'invalid enum field LEAD_CFG' in status
 assert 'math.isfinite(numeric_value)' in status and 'invalid numeric field' in status

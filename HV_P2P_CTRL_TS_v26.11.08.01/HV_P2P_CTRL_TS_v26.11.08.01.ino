@@ -14,7 +14,7 @@
 #include <esp_system.h>
 #include <esp_attr.h>
 
-#define CTRL_TS_SEMVER "v26.10.19.01"
+#define CTRL_TS_SEMVER "v26.11.08.01"
 #define CTRL_TS_VERSION "HV P2P CTRL-TS " CTRL_TS_SEMVER
 #define CTRL_TS_HW_ID "WS-ESP32S3-7"
 #define HMI_BAUD 115200
@@ -529,7 +529,7 @@ static void fw_set_device_status(const String &device, const String &phase, int 
   } else if(wasActive && !fw_any_row_active() && !g_fw_update_active && !g_fw_finalized && !g_fw_reboot_due_ms && !g_fw_external_release_due_ms) {
     // Schedule this once on the active->complete transition. Repeated inactive
     // HMS1/HMI1 keepalives must never keep extending firmware-screen ownership.
-    g_fw_external_release_due_ms = millis() + 2000;
+    g_fw_external_release_due_ms = HVP2PRS485::deadlineAfter(millis(), 2000);
   }
 }
 
@@ -1211,7 +1211,7 @@ static void confirm_aux_idx(int idx, bool send_command){
     selected_aux = -1;
     g_selected_aux_ms = 0;
   }
-  if(confirmed_aux == idx && now_ms < clear_confirm_at) return;
+  if(confirmed_aux == idx && !HVP2PRS485::deadlineReached(now_ms, clear_confirm_at)) return;
   if(selected_aux != idx){
     clear_nonconfirmed_aux();
     selected_aux = idx;
@@ -1227,7 +1227,7 @@ static void confirm_aux_idx(int idx, bool send_command){
   selected_aux = -1;
   g_selected_aux_ms = 0;
   confirmed_aux = idx;
-  clear_confirm_at = now_ms + 2000;  // v26.10.19.01: confirmed AUX tile stays lit for 2 seconds
+  clear_confirm_at = now_ms + 2000;  // v26.11.08.01: confirmed AUX tile stays lit for 2 seconds
   style_aux(idx,false,true);
   snprintf(msg,sizeof(msg),"AUX %d Confirmed", idx+1);
   set_touch_debug(msg);
@@ -2198,7 +2198,7 @@ static void apply_layout_packet(const String &line){
   // on CTRL cannot overwrite the screen title/version or trigger header redraws.
   String hint = getField(line, "hint");
   if(lbl_title) set_label_text_if_changed(lbl_title, "HV P2P\nCTRL-TS");
-  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.10.19.01");
+  if(lbl_subtitle) set_label_text_if_changed(lbl_subtitle, "v26.11.08.01");
   if(hint.length() && hint.startsWith("ERROR")) set_touch_debug(hint.c_str());
   // UIL1 is presentation-only. AUX assignment/value ownership belongs solely to
   // live SRVR HMI state, so an old layout persisted in CTRL NVS cannot overwrite
@@ -2411,7 +2411,7 @@ static void fw_handle_begin(const HVP2PRS485::Frame &frame){
     fw_set_device_status("CTRL-TS", "Preparing safe updater - SRVR shows self-flash progress", 0, true);
     Serial.printf("[FW RX] safe-update reboot requested target=%s sha=%s\n", version.c_str(), sha.c_str());
     fw_send_text(HVP2PRS485::ERROR_MSG, frame.seq, "fw_safe_reboot_retry");
-    g_fw_safe_reboot_due_ms = millis() + 1800;
+    g_fw_safe_reboot_due_ms = HVP2PRS485::deadlineAfter(millis(), 1800);
     return;
   }
 
@@ -2535,7 +2535,7 @@ static void fw_handle_end(const HVP2PRS485::Frame &frame){
   // forever. Give CTRL a generous 2.5 s handshake window, then boot the already
   // SHA-verified/selected application autonomously. An explicit REBOOT shortens
   // this deadline to 250 ms in fw_handle_reboot().
-  if(g_fw_reboot_due_ms == 0) g_fw_reboot_due_ms = millis() + 2500;
+  if(g_fw_reboot_due_ms == 0) g_fw_reboot_due_ms = HVP2PRS485::deadlineAfter(millis(), 2500);
 }
 
 static void fw_handle_reboot(const HVP2PRS485::Frame &frame){
@@ -2546,12 +2546,12 @@ static void fw_handle_reboot(const HVP2PRS485::Frame &frame){
   fw_set_status_pct("Firmware verified - restarting CTRL-TS", 100);
   if(g_fw_headless_mode) fw_clear_headless_update_state();
   fw_send_text(HVP2PRS485::ACK, frame.seq, "rebooting");
-  g_fw_reboot_due_ms = millis() + 250;
+  g_fw_reboot_due_ms = HVP2PRS485::deadlineAfter(millis(), 250);
 }
 
 static void fw_service_reboot(){
   const uint32_t now = millis();
-  if(g_fw_safe_reboot_due_ms && now >= g_fw_safe_reboot_due_ms){
+  if(g_fw_safe_reboot_due_ms && HVP2PRS485::deadlineReached(now, g_fw_safe_reboot_due_ms)){
     // The CH422G survives an ESP32 software reset. Turn the backlight off and
     // hold LCD reset before reboot so the panel cannot flash random RGB data
     // while the ESP32 restarts into the headless updater.
@@ -2562,7 +2562,7 @@ static void fw_service_reboot(){
     delay(10);
     ESP.restart();
   }
-  if(g_fw_reboot_due_ms && now >= g_fw_reboot_due_ms) ESP.restart();
+  if(g_fw_reboot_due_ms && HVP2PRS485::deadlineReached(now, g_fw_reboot_due_ms)) ESP.restart();
 }
 
 static void fw_service_timeout(){
@@ -2733,7 +2733,7 @@ static void create_ui(){
   lv_obj_t *brand=make_panel(frame,SX,HEADER_Y,70,HEADER_H,C_BG,0x63d84e,7);
   lbl_title=make_label(brand,"HV P2P\nCTRL-TS",0,6,&lv_font_montserrat_12,lv_color_hex(C_FG),70);
   lv_obj_set_style_text_line_space(lbl_title,-2,0);
-  lbl_subtitle=make_label(frame,"v26.10.19.01",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
+  lbl_subtitle=make_label(frame,"v26.11.08.01",690,21,&lv_font_montserrat_10,lv_color_hex(C_MUTED),92);
 
   pill_ctrl=make_panel(frame,255,HEADER_Y,126,HEADER_H,C_PANEL,C_BORDER,5);
   dot_ctrl=lv_obj_create(pill_ctrl); lv_obj_set_pos(dot_ctrl,9,15); lv_obj_set_size(dot_ctrl,8,8); lv_obj_set_style_radius(dot_ctrl,LV_RADIUS_CIRCLE,0); lv_obj_set_style_border_width(dot_ctrl,0,0); lv_obj_set_style_bg_color(dot_ctrl,lv_color_hex(0xef5757),0); lv_obj_clear_flag(dot_ctrl,LV_OBJ_FLAG_SCROLLABLE);
@@ -2894,7 +2894,7 @@ static void service_runtime_connection_screen(){
 }
 
 static void service_fw_screen_release(){
-  if(!g_fw_external_release_due_ms || millis() < g_fw_external_release_due_ms) return;
+  if(!g_fw_external_release_due_ms || !HVP2PRS485::deadlineReached(millis(), g_fw_external_release_due_ms)) return;
   if(g_fw_update_active || g_fw_finalized || g_fw_reboot_due_ms || fw_any_row_active()) return;
   g_fw_external_release_due_ms = 0;
   g_fw_runtime_screen = false;
@@ -2933,7 +2933,7 @@ static void service_link_state(){
   if(selected_aux >= 0 && g_selected_aux_ms && (millis() - g_selected_aux_ms > AUX_PENDING_TIMEOUT_MS)){
     cancel_pending_aux();
   }
-  if(confirmed_aux>=0 && millis()>clear_confirm_at) {
+  if(confirmed_aux>=0 && HVP2PRS485::deadlineReached(millis(), clear_confirm_at)) {
     style_aux(confirmed_aux,false,false);
     confirmed_aux=-1;
     // Production UI deliberately has no debug label (lbl_touch_debug=nullptr).

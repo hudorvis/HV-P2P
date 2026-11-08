@@ -1,5 +1,5 @@
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_encoder_position_feedback_101901.py
+==> python3 <repo>/tools/test_encoder_position_feedback_101901.py
 SIMULATED_ENCODER_TRAVEL_PASS 125 RPM 1100.0953 m 22411 samples
 SIMULATED_ENCODER_TRAVEL_PASS 250 RPM 1100.1444 m 11206 samples
 SIMULATED_ENCODER_TRAVEL_PASS 500 RPM 1100.3407 m 5604 samples
@@ -8,34 +8,37 @@ SIMULATED_ENCODER_TRAVEL_PASS 3000 RPM 1101.5188 m 935 samples
 W1P_ACTUAL_CPP_ROLLOVER_PASS forward_and_reverse
 SRVR_POSITION_FEEDBACK_101901_ALL_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_audit_regressions.py
+==> python3 <repo>/tools/test_w1p_feedback_timing.py
+W1P_FEEDBACK_TIMING_AND_STARTUP_PASS
+
+==> python3 <repo>/tools/test_audit_regressions.py
 AUDIT_REGRESSIONS_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/validate_edgebox_integration.py
-HV P2P EdgeBox v26.10.19.01 source-level integration validation PASS
-Checks passed: 386
-  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.10.19.01/HV_P2P_CTRL_EDGEBOX_v26.10.19.01.ino
-  OK: exists: HV_P2P_W1P_EDGEBOX_v26.10.19.01/HV_P2P_W1P_EDGEBOX_v26.10.19.01.ino
-  OK: exists: HV_P2P_CTRL_TS_v26.10.19.01/HV_P2P_CTRL_TS_v26.10.19.01.ino
-  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.10.19.01/HV_P2P_RS485_Frame.h
-  OK: exists: HV_P2P_CTRL_TS_v26.10.19.01/HV_P2P_RS485_Frame.h
-  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.10.19.01/HV_P2P_CTRL_TS_Firmware_Image.h
-  OK: exists: SRVR_GitHub_v26.10.19.01/backend.py
-  OK: exists: SRVR_GitHub_v26.10.19.01/main.py
-  OK: exists: SRVR_GitHub_v26.10.19.01/qml/pages/SetupPage.qml
-  OK: exists: SRVR_GitHub_v26.10.19.01/qml/components/SpanDiagram.qml
-  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.10.19.01/partitions.csv
-  OK: exists: HV_P2P_CTRL_TS_v26.10.19.01/partitions.csv
-  OK: exists: HV_P2P_W1P_EDGEBOX_v26.10.19.01/partitions.csv
-  OK: Arduino same-name sketch folder: HV_P2P_CTRL_EDGEBOX_v26.10.19.01
-  OK: Arduino same-name sketch folder: HV_P2P_W1P_EDGEBOX_v26.10.19.01
-  OK: Arduino same-name sketch folder: HV_P2P_CTRL_TS_v26.10.19.01
+==> python3 <repo>/tools/validate_edgebox_integration.py
+HV P2P EdgeBox v26.11.08.01 source-level integration validation PASS
+Checks passed: 387
+  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.11.08.01/HV_P2P_CTRL_EDGEBOX_v26.11.08.01.ino
+  OK: exists: HV_P2P_W1P_EDGEBOX_v26.11.08.01/HV_P2P_W1P_EDGEBOX_v26.11.08.01.ino
+  OK: exists: HV_P2P_CTRL_TS_v26.11.08.01/HV_P2P_CTRL_TS_v26.11.08.01.ino
+  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.11.08.01/HV_P2P_RS485_Frame.h
+  OK: exists: HV_P2P_CTRL_TS_v26.11.08.01/HV_P2P_RS485_Frame.h
+  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.11.08.01/HV_P2P_CTRL_TS_Firmware_Image.h
+  OK: exists: SRVR_GitHub_v26.11.08.01/backend.py
+  OK: exists: SRVR_GitHub_v26.11.08.01/main.py
+  OK: exists: SRVR_GitHub_v26.11.08.01/qml/pages/SetupPage.qml
+  OK: exists: SRVR_GitHub_v26.11.08.01/qml/components/SpanDiagram.qml
+  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.11.08.01/partitions.csv
+  OK: exists: HV_P2P_CTRL_TS_v26.11.08.01/partitions.csv
+  OK: exists: HV_P2P_W1P_EDGEBOX_v26.11.08.01/partitions.csv
+  OK: Arduino same-name sketch folder: HV_P2P_CTRL_EDGEBOX_v26.11.08.01
+  OK: Arduino same-name sketch folder: HV_P2P_W1P_EDGEBOX_v26.11.08.01
+  OK: Arduino same-name sketch folder: HV_P2P_CTRL_TS_v26.11.08.01
   OK: CTRL: all (), [], {} balanced
-  OK: CTRL: release version v26.10.19.01
+  OK: CTRL: release version v26.11.08.01
   OK: W1P: all (), [], {} balanced
-  OK: W1P: release version v26.10.19.01
+  OK: W1P: release version v26.11.08.01
   OK: CTRL-TS: all (), [], {} balanced
-  OK: CTRL-TS: release version v26.10.19.01
+  OK: CTRL-TS: release version v26.11.08.01
   OK: CTRL and CTRL-TS use byte-identical RS485 framing header
   OK: W1P-TS remains excluded
   OK: CTRL EdgeBox Ethernet pin: EDGEBOX_ETH_CS   10
@@ -161,35 +164,36 @@ Checks passed: 386
   OK: CTRL-TS does not claim the staged image hash before reboot
   OK: exists: tools/embed_ctrl_ts_firmware.py
   OK: CTRL-TS embed helper enforces the conservative 0x380000 target OTA slot
-  OK: W1P reviewed v26.10.19.01 safety-critical logic preserved: modbusCRC16
-  OK: W1P reviewed v26.10.19.01 safety-critical logic preserved: modbusWaitForSilentGap
-  OK: W1P reviewed v26.10.19.01 safety-critical logic preserved: modbusWriteSingleRegister
-  OK: W1P reviewed v26.10.19.01 safety-critical logic preserved: modbusWriteMultipleRegisters
-  OK: W1P reviewed v26.10.19.01 safety-critical logic preserved: modbusReadHoldingRegisters
-  OK: W1P reviewed v26.10.19.01 safety-critical logic preserved: driveConfigureMotionProfile
-  OK: W1P reviewed v26.10.19.01 safety-critical logic preserved: driveWriteVelocityCommandMps
-  OK: W1P reviewed v26.10.19.01 safety-critical logic preserved: driveSendEmergencyStop
-  OK: W1P reviewed v26.10.19.01 safety-critical logic preserved: serviceMotionProfile
-  OK: W1P reviewed v26.10.19.01 safety-critical logic preserved: limitVelocityForSoftLimits
-  OK: W1P reviewed v26.10.19.01 safety-critical logic preserved: predictiveLimitSpeedCap
-  OK: W1P reviewed v26.10.19.01 safety-critical logic preserved: driveStopNow
-  OK: W1P reviewed v26.10.19.01 safety-critical logic preserved: servicePeerTimeout
-  OK: W1P reviewed v26.10.19.01 safety-critical logic preserved: preserveDisplayedPositionForMotorDirectionChange
-  OK: W1P v26.10.19.01 reviewed safety extension hash locked: driveAutoEnableReady
-  OK: W1P v26.10.19.01 reviewed safety extension hash locked: handleCommand
-  OK: W1P v26.10.19.01 reviewed safety extension hash locked: sendStatusLine
-  OK: W1P v26.10.19.01 reviewed safety extension hash locked: serviceVelocityCommandWatchdog
-  OK: W1P v26.10.19.01 reviewed safety extension hash locked: hvPrepareSafeServiceState
-  OK: W1P v26.10.19.01 reviewed EdgeBox brake logic hash locked: requestSoftwareSrvonInhibit
-  OK: W1P v26.10.19.01 reviewed EdgeBox brake logic hash locked: edgeboxBrakeReleaseStartAllowed
-  OK: W1P v26.10.19.01 reviewed EdgeBox brake logic hash locked: edgeboxBrakeReleaseHoldAllowed
-  OK: W1P v26.10.19.01 reviewed EdgeBox brake logic hash locked: serviceLeadshineBrakeTransitionStatus
-  OK: W1P v26.10.19.01 reviewed EdgeBox brake logic hash locked: serviceEdgeboxBrakeOutput
-  OK: W1P v26.10.19.01 local AI0 E-stop path hash locked: initW1pEstopAI0
-  OK: W1P v26.10.19.01 local AI0 E-stop path hash locked: w1pSgmWriteRegister
-  OK: W1P v26.10.19.01 local AI0 E-stop path hash locked: w1pSgmReadRegister
-  OK: W1P v26.10.19.01 local AI0 E-stop path hash locked: w1pSgmReadConversion
-  OK: W1P v26.10.19.01 local AI0 E-stop path hash locked: updateLocalInputs
+  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: modbusCRC16
+  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: modbusWaitForSilentGap
+  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: modbusWriteSingleRegister
+  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: modbusWriteMultipleRegisters
+  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: modbusReadHoldingRegisters
+  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: driveConfigureMotionProfile
+  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: driveWriteVelocityCommandMps
+  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: driveSendEmergencyStop
+  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: serviceMotionProfile
+  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: limitVelocityForSoftLimits
+  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: predictiveLimitSpeedCap
+  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: driveStopNow
+  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: servicePeerTimeout
+  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: preserveDisplayedPositionForMotorDirectionChange
+  OK: W1P v26.11.08.01 reviewed safety extension hash locked: driveAutoEnableReady
+  OK: W1P v26.11.08.01 reviewed safety extension hash locked: handleCommand
+  OK: W1P v26.11.08.01 reviewed safety extension hash locked: sendStatusLine
+  OK: W1P v26.11.08.01 reviewed safety extension hash locked: serviceVelocityCommandWatchdog
+  OK: W1P v26.11.08.01 reviewed safety extension hash locked: recordDrivePositionSample
+  OK: W1P v26.11.08.01 reviewed safety extension hash locked: hvPrepareSafeServiceState
+  OK: W1P v26.11.08.01 reviewed EdgeBox brake logic hash locked: requestSoftwareSrvonInhibit
+  OK: W1P v26.11.08.01 reviewed EdgeBox brake logic hash locked: edgeboxBrakeReleaseStartAllowed
+  OK: W1P v26.11.08.01 reviewed EdgeBox brake logic hash locked: edgeboxBrakeReleaseHoldAllowed
+  OK: W1P v26.11.08.01 reviewed EdgeBox brake logic hash locked: serviceLeadshineBrakeTransitionStatus
+  OK: W1P v26.11.08.01 reviewed EdgeBox brake logic hash locked: serviceEdgeboxBrakeOutput
+  OK: W1P v26.11.08.01 local AI0 E-stop path hash locked: initW1pEstopAI0
+  OK: W1P v26.11.08.01 local AI0 E-stop path hash locked: w1pSgmWriteRegister
+  OK: W1P v26.11.08.01 local AI0 E-stop path hash locked: w1pSgmReadRegister
+  OK: W1P v26.11.08.01 local AI0 E-stop path hash locked: w1pSgmReadConversion
+  OK: W1P v26.11.08.01 local AI0 E-stop path hash locked: updateLocalInputs
   OK: W1P Leadshine/safety contract: RS485_BAUD = 115200
   OK: W1P Leadshine/safety contract: DRIVE_MODBUS_ID = 1
   OK: W1P Leadshine/safety contract: SERIAL_8N1
@@ -305,7 +309,7 @@ Checks passed: 386
   OK: CTRL and W1P source identify the EdgeBox-ESP-100 hardware baseline
   OK: Setup preserves approved CTRL-TS panel with one Firmware value field
   OK: Free-D geometry markers are sampled from the exact rendered cable path
-  OK: exists: SRVR_GitHub_v26.10.19.01/qml/Main.qml
+  OK: exists: SRVR_GitHub_v26.11.08.01/qml/Main.qml
   OK: Run/Setup shared header uses locked two-line HV P2P / SRVR logo only
   OK: Run Save/Recall/Slip use one global five-second two-step confirmation state
   OK: Run confirmation action covered: preset:save:
@@ -401,177 +405,178 @@ Checks passed: 386
   OK: SRVR exposes CTRL-TS firmware diagnostic: def joystickInputConnected
   OK: A7 host sanity: 16-bit flags + big-endian float decode
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_rs485_frame_host.py
+==> python3 <repo>/tools/test_rs485_frame_host.py
 crc=7442b814
+CTRL_AND_CTRL_TS_ROLLOVER_TIMING_PASS
 RS485_FRAME_HOST_PASS
 PYTHON_CRC_CROSSCHECK_PASS 7442b814
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_hmi_fw_retry_contract.py
+==> python3 <repo>/tools/test_hmi_fw_retry_contract.py
 HMI_FW_RETRY_CONTRACT_PASS: lost block ACK, lost FW_RESULT, stale sequence, rollback guards
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_hmi_target_gate.py
+==> python3 <repo>/tools/test_hmi_target_gate.py
 HMI_TARGET_GATE_PASS
 wrong hardware/protocol can never enter automatic update
 safe_ota level 0/1 receiver can never enter automatic self-update
 safe_ota level-2 exact target with mismatched identity enters automatic update
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_hmi_transport_contract.py
+==> python3 <repo>/tools/test_hmi_transport_contract.py
 HMI_TRANSPORT_CONTRACT_PASS wire_budget_ms=94.4
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_hmi_bus_serialization_contract.py
+==> python3 <repo>/tools/test_hmi_bus_serialization_contract.py
 HMI_BUS_SERIALIZATION_CONTRACT_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_runtime_regression_contract.py
+==> python3 <repo>/tools/test_runtime_regression_contract.py
 RUNTIME_REGRESSION_CONTRACT_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_bench_regression_0304.py
+==> python3 <repo>/tools/test_bench_regression_0304.py
 BENCH_REGRESSION_0304_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_end_to_end_comm_contract_0305.py
+==> python3 <repo>/tools/test_end_to_end_comm_contract_0305.py
 END_TO_END_COMM_CONTRACT_0305_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_ctrl_ts_aux_confirm_crash_0401.py
+==> python3 <repo>/tools/test_ctrl_ts_aux_confirm_crash_0401.py
 CTRL_TS_AUX_CONFIRM_CRASH_0401_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_ctrl_ts_progress_and_ramp_0402.py
+==> python3 <repo>/tools/test_ctrl_ts_progress_and_ramp_0402.py
 CTRL_TS_PROGRESS_RAMP_0402_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_settings_virtual_firmware_0403.py
+==> python3 <repo>/tools/test_settings_virtual_firmware_0403.py
 SETTINGS_VIRTUAL_FIRMWARE_0403_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_limit_ramp_geometry_0404.py
+==> python3 <repo>/tools/test_limit_ramp_geometry_0404.py
 LIMIT_RAMP_GEOMETRY_0404_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_bench_regression_0405.py
+==> python3 <repo>/tools/test_bench_regression_0405.py
 BENCH_REGRESSION_0405_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_bench_regression_0406.py
+==> python3 <repo>/tools/test_bench_regression_0406.py
 BENCH_REGRESSION_0406_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_limit_calibration_runtime_contract_0407.py
+==> python3 <repo>/tools/test_limit_calibration_runtime_contract_0407.py
 LIMIT_CALIBRATION_RUNTIME_CONTRACT_0407_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_bench_regression_0501.py
+==> python3 <repo>/tools/test_bench_regression_0501.py
 BENCH_REGRESSION_0501_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_backend_status_runtime_contract_0502.py
+==> python3 <repo>/tools/test_backend_status_runtime_contract_0502.py
 BACKEND_STATUS_RUNTIME_CONTRACT_0502_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_firmware_coordinator_0503.py
+==> python3 <repo>/tools/test_firmware_coordinator_0503.py
 FIRMWARE_COORDINATOR_0503_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_firmware_update_convergence_0506.py
+==> python3 <repo>/tools/test_firmware_update_convergence_0506.py
 FIRMWARE_UPDATE_CONVERGENCE_0506_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_bench_regression_0509.py
+==> python3 <repo>/tools/test_bench_regression_0509.py
 BENCH_REGRESSION_0509_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_bench_regression_0510.py
+==> python3 <repo>/tools/test_bench_regression_0510.py
 BENCH_REGRESSION_0510_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_firmware_background_convergence_0511.py
+==> python3 <repo>/tools/test_firmware_background_convergence_0511.py
 FIRMWARE_BACKGROUND_CONVERGENCE_0511_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_backend_test_double_contract_0601.py
+==> python3 <repo>/tools/test_backend_test_double_contract_0601.py
 BACKEND_TEST_DOUBLE_CONTRACT_0601_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_bench_regression_0602.py
+==> python3 <repo>/tools/test_bench_regression_0602.py
 BENCH_REGRESSION_0602_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_firmware_autoupdate_recovery_0603.py
+==> python3 <repo>/tools/test_firmware_autoupdate_recovery_0603.py
 FIRMWARE_AUTOUPDATE_RECOVERY_0603_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_firmware_rs485_recovery_0604.py
+==> python3 <repo>/tools/test_firmware_rs485_recovery_0604.py
 FIRMWARE_RS485_RECOVERY_0604_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_bench_regression_0605.py
+==> python3 <repo>/tools/test_bench_regression_0605.py
 BENCH_REGRESSION_0605_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_backend_status_fixture_contract_0606.py
+==> python3 <repo>/tools/test_backend_status_fixture_contract_0606.py
 BACKEND_STATUS_FIXTURE_CONTRACT_0606_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_firmware_splash_recovery_0607.py
+==> python3 <repo>/tools/test_firmware_splash_recovery_0607.py
 FIRMWARE_SPLASH_RECOVERY_0607_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_bench_regression_0608.py
+==> python3 <repo>/tools/test_bench_regression_0608.py
 BENCH_REGRESSION_0608_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_estop_banner_fixture_contract_0609.py
+==> python3 <repo>/tools/test_estop_banner_fixture_contract_0609.py
 ESTOP_BANNER_FIXTURE_CONTRACT_0609_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_hmi_display_bound_transport_0610.py
+==> python3 <repo>/tools/test_hmi_display_bound_transport_0610.py
 HMI_DISPLAY_BOUND_TRANSPORT_0610_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_ctrl_ts_marker_smoothness_0611.py
+==> python3 <repo>/tools/test_ctrl_ts_marker_smoothness_0611.py
 CTRL_TS_MARKER_SMOOTHNESS_0611_PASS marker20hz_bus_upper=14.5%
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_w1p_edgebox_brake_do0_1008.py
+==> python3 <repo>/tools/test_w1p_edgebox_brake_do0_1008.py
 W1P_EDGEBOX_BRAKE_DO0_1008_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_w1p_estop_ai0_100803.py
+==> python3 <repo>/tools/test_w1p_estop_ai0_100803.py
 W1P_ESTOP_AI0_100803_PASS
 W1P_ESTOP_AI0_SEMANTICS_PASS raw5v=13333.3
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_full_system_update_status_1008.py
+==> python3 <repo>/tools/test_full_system_update_status_1008.py
 FULL_SYSTEM_UPDATE_STATUS_1008_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_bench_regression_0504.py
+==> python3 <repo>/tools/test_bench_regression_0504.py
 BENCH_REGRESSION_0504_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_ctrl_ts_parser_diagnostics_contract.py
+==> python3 <repo>/tools/test_ctrl_ts_parser_diagnostics_contract.py
 CTRL_TS_PARSER_DIAGNOSTICS_CONTRACT_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_ctrl_ts_safe_update_contract.py
+==> python3 <repo>/tools/test_ctrl_ts_safe_update_contract.py
 CTRL_TS_SAFE_UPDATE_CONTRACT_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_splash_render_contract.py
+==> python3 <repo>/tools/test_splash_render_contract.py
 SPLASH_RENDER_CONTRACT_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_leadshine_commissioning_contract.py
+==> python3 <repo>/tools/test_leadshine_commissioning_contract.py
 LEADSHINE_COMMISSIONING_CONTRACT_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_w1p_rs485_fault_logging_100804.py
+==> python3 <repo>/tools/test_w1p_rs485_fault_logging_100804.py
 W1P_RS485_FAULT_LOGGING_100804_PASS
 W1P_RS485_FAULT_LOGGING_RUNTIME_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_rs485_transport_only_1016.py
+==> python3 <repo>/tools/test_rs485_transport_only_1016.py
 RS485 TRANSPORT-ONLY DISPLAY CONTRACT PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_srvr_startup_connection_logging_101602.py
+==> python3 <repo>/tools/test_srvr_startup_connection_logging_101602.py
 SRVR STARTUP CONNECTION / TRANSITION LOGGING PASS 19 messages
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_macos_frozen_rs485_diag_crash_100805.py
+==> python3 <repo>/tools/test_macos_frozen_rs485_diag_crash_100805.py
 MACOS_FROZEN_RS485_DIAG_CRASH_100805_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_macos_frozen_runtime_hardening_101102.py
+==> python3 <repo>/tools/test_macos_frozen_runtime_hardening_101102.py
 MACOS_FROZEN_RUNTIME_HARDENING_101102_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_auto_ota_contract.py
+==> python3 <repo>/tools/test_auto_ota_contract.py
 AUTO_OTA_CONTRACT_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_srvr_authority_server.py
+==> python3 <repo>/tools/test_srvr_authority_server.py
 SRVR_AUTHORITY_SERVER_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_embed_tool.py
-Image:    /tmp/hvp2p_embed_test_8yay5xx7/fixture.ino.bin
+==> python3 <repo>/tools/test_embed_tool.py
+Image:    /tmp/hvp2p_embed_test_3rnr1u4h/fixture.ino.bin
 Hardware: WS-ESP32S3-7
 Protocol: 1
-Version:  v26.10.19.01
+Version:  v26.11.08.01
 Size:     4096 bytes (0.004 MiB)
 SHA256:   120ca14d2ef4662d8f89da7e5a26a6e54cb6f59915e121c71a8f9a6a906b51c7
-Wrote:    /tmp/hvp2p_embed_test_8yay5xx7/HV_P2P_CTRL_TS_Firmware_Image.h
+Wrote:    /tmp/hvp2p_embed_test_3rnr1u4h/HV_P2P_CTRL_TS_Firmware_Image.h
 STAGED_HMI_HEADER_PASS
 hardware=WS-ESP32S3-7
 protocol=1
-version=v26.10.19.01
+version=v26.11.08.01
 size=4096
 sha256=120ca14d2ef4662d8f89da7e5a26a6e54cb6f59915e121c71a8f9a6a906b51c7
 EMBED_TOOL_SELFTEST_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_native_build_orchestration.py
+==> python3 <repo>/tools/test_native_build_orchestration.py
 NATIVE_BUILD_ORCHESTRATION_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/validate_build_pipeline.py
+==> python3 <repo>/tools/validate_build_pipeline.py
 OK  workflow core 3.3.8
 OK  workflow Arduino CLI pinned
 OK  HMI LVGL pinned
@@ -632,30 +637,30 @@ OK  complete release internal SHA256 manifest
 OK  complete release external SHA256
 BUILD_PIPELINE_VALIDATION_PASS (58 checks)
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_modbus_contract_host.py
+==> python3 <repo>/tools/test_modbus_contract_host.py
 MODBUS_CRC_HOST_PASS q1=CDC5 q2=0B98
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_srvr_wire_contract.py
+==> python3 <repo>/tools/test_srvr_wire_contract.py
 SRVR_WIRE_CONTRACT_PASS: actual _parse_control_packet accepts EdgeBox A7 16-bit flags / network-order float
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_speed_mode_contract.py
+==> python3 <repo>/tools/test_speed_mode_contract.py
 SPEED_MODE_CONTRACT_PASS
 KP=0.140 KI=0.200 deadband=0.035 max_correction=0.850 m/s
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_motion_innovations_contract.py
+==> python3 <repo>/tools/test_motion_innovations_contract.py
 MOTION_INNOVATIONS_CONTRACT_PASS
 centre_trim_max=3.0% srvr_reaction=0.20s w1p_reaction=0.15s margin=0.05m
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_release_consistency.py
+==> python3 <repo>/tools/test_release_consistency.py
 RELEASE_CONSISTENCY_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_source_hygiene.py
+==> python3 <repo>/tools/test_source_hygiene.py
 SOURCE_HYGIENE_PASS
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/tools/test_python_syntax.py
-PYTHON_SYNTAX_PASS 75 files
+==> python3 <repo>/tools/test_python_syntax.py
+PYTHON_SYNTAX_PASS 76 files
 
-==> python3 /mnt/data/HV P2P v26.10.19.01/SRVR_GitHub_v26.10.19.01/tools/validate_project.py
+==> python3 <repo>/SRVR_GitHub_v26.11.08.01/tools/validate_project.py
 HV P2P SRVR preflight PASS
   Python syntax: OK
   Qt Quick only / no Tkinter: OK
@@ -668,8 +673,26 @@ HV P2P SRVR preflight PASS
   Proven W1P/CTRL critical command + secondary interface contract: OK
   Isolated deployment staging + smoke checks: OK
 
-BACKEND_RUNTIME_TEST_SKIPPED: PySide6 not installed in source-audit environment
+==> python3 <repo>/SRVR_GitHub_v26.11.08.01/tools/test_backend_logic.py
+BACKEND ENCODER STATUS AND STARTUP LOGGING PASS
+BACKEND REGRESSION PASS
 
 ALL_SOURCE_CHECKS_PASS
 NOTE: Native Arduino and frozen desktop compilation remain GitHub Actions gates; physical RS485/EL7/motion tests remain bench commissioning gates.
-SUITE_EXIT_CODE=0
+
+Supplementary source validation
+WORKFLOW_YAML_AND_BASH_SYNTAX_PASS 15 steps
+APPROVED_BASELINE_COMPARISON_PASS 26 byte-identical files; 36 function invariants
+QML lint PASS with the workflow flags; output byte-identical to the baseline
+SMOKE PHASE: QML exercise start
+SMOKE PHASE: RS485 diagnostic reducer
+SMOKE PHASE: DSP1 frozen stress begin
+SMOKE PHASE: DSP1 frozen stress 50/200
+SMOKE PHASE: DSP1 frozen stress 100/200
+SMOKE PHASE: DSP1 frozen stress 150/200
+SMOKE PHASE: DSP1 frozen stress 200/200
+SMOKE PHASE: DSP1 frozen stress complete
+SMOKE PHASE: startup connection diagnostic reducer
+SMOKE PHASE: QML exercise complete
+SMOKE PASS: locked pages, Settings/Free-D auto-save, structured Log, shortcuts and calibration overlay instantiated
+The offscreen Linux smoke also reports the baseline HelveticaNeue font fallback.

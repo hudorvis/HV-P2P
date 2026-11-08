@@ -14,8 +14,8 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-BACKEND_DIR = ROOT / 'SRVR_GitHub_v26.10.19.01'
-W1P = ROOT / 'HV_P2P_W1P_EDGEBOX_v26.10.19.01' / 'HV_P2P_W1P_EDGEBOX_v26.10.19.01.ino'
+BACKEND_DIR = ROOT / 'SRVR_GitHub_v26.11.08.01'
+W1P = ROOT / 'HV_P2P_W1P_EDGEBOX_v26.11.08.01' / 'HV_P2P_W1P_EDGEBOX_v26.11.08.01.ino'
 sys.path.insert(0, str(BACKEND_DIR))
 sys.dont_write_bytecode = True
 import position_feedback as pf
@@ -131,6 +131,34 @@ assert b.receive(.40,seq=0,timestamp_ms=0x0000003e)
 assert not b.receive(.30,seq=0xffffffff,timestamp_ms=0x0000000c)
 assert pf.is_newer_sequence(0,0xffffffff) and not pf.is_newer_sequence(0xffffffff,0)
 
+# A newer sequence cannot turn a backward, duplicate or ambiguous timestamp
+# into a huge elapsed interval or advance the accepted position/count reference.
+b = TestBackend()
+assert b.receive(0.0, seq=10, timestamp_ms=1000)
+clock.advance(.1)
+for bad_time in (999, 1000, 1000 + 0x80000000):
+    assert not b.receive(10000.0, seq=11, timestamp_ms=bad_time)
+    assert (b.state.pos_m, b._winch_last_pos_seq, b._winch_last_pos_sample_ms) == (0.0, 10, 1000)
+assert b.receive(1.0, seq=11, timestamp_ms=1100)
+assert not b.receive(1.01, seq=12, timestamp_ms=1100)
+b._winch_position_accept_jump_until = clock.monotonic() + 2.0
+assert not b.receive(30.0, seq=12, timestamp_ms=1090), "slip grace must still enforce sample order"
+assert b.receive(30.0, seq=12, timestamp_ms=1200)
+
+# Zero is a valid sample time after rollover, including the next delta.
+b = TestBackend()
+assert b.receive(0.0, seq=1, timestamp_ms=0xffffff9c)
+assert b.receive(1.0, seq=2, timestamp_ms=0)
+assert b.receive(2.0, seq=3, timestamp_ms=100)
+
+# Legacy telemetry without timing metadata still uses the monotonic host clock.
+b = TestBackend()
+legacy = {'POS_READ': '1', 'UPM': '21220.7'}
+assert position_method(b, 0.0, legacy)
+clock.advance(.1)
+assert position_method(b, 1.0, legacy)
+assert not position_method(b, 2.0, {**legacy, 'POS_SRC': 'NONE'})
+
 # Pure numerical sanity: NaN/infinite, units/zero time, physically impossible
 # 50ms jumps must fail; kilometer+ coordinates are accurate in Python double.
 for bad in (float('nan'), float('inf'), -float('inf')):
@@ -151,7 +179,7 @@ for token in ('REG_MOTOR_POSITION_H = 0x602C', 'REG_MOTOR_POSITION_L = 0x602D',
               'g.edgebox_brake_released', 'W1P_VEL_COMMAND_TIMEOUT_MS = 500'):
     assert token in w,token
 for token in ('position_step_allowed', 'uint32_elapsed_ms', 'POS_AGE_MS', 'POS_SEQ',
-              'RAW_POS_EXT', 'self._last_raw_pos = int(fields["RAW_POS_EXT"])'):
+              'RAW_POS_EXT', 'self._last_raw_pos = raw_pos'):
     assert token in backend_src,token
 
 # Compile and execute the actual W1P wrapped counter logic under host C++.

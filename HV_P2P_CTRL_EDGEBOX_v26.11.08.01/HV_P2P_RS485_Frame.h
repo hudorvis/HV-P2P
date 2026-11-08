@@ -12,6 +12,22 @@ static constexpr size_t HEADER_SIZE = 10; // magic4 + version + type + seq2 + le
 static constexpr size_t CRC_SIZE = 4;
 static constexpr uint32_t RX_INTERBYTE_TIMEOUT_MS = 250;
 
+// These deadlines are short compared with half the millis() counter range.
+// Reserve zero for an inactive timer; an exact zero deadline waits 1 ms more.
+static inline uint32_t deadlineAfter(uint32_t now, uint32_t intervalMs) {
+  const uint32_t deadline = now + intervalMs;
+  return deadline != 0 ? deadline : 1;
+}
+
+static inline bool deadlineReached(uint32_t now, uint32_t deadline) {
+  return uint32_t(now - deadline) < 0x80000000UL;
+}
+
+static inline bool deadlineActive(uint32_t now, uint32_t &deadline) {
+  if (deadline && deadlineReached(now, deadline)) deadline = 0;
+  return deadline != 0;
+}
+
 enum FrameType : uint8_t {
   HELLO_REQ  = 0x01,
   HELLO_RESP = 0x02,

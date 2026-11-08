@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.10.19.01'
+VER='26.11.08.01'
 B=(ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 Q=(ROOT/f'SRVR_GitHub_v{VER}/qml/Main.qml').read_text()
 C=(ROOT/f'HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino').read_text()
@@ -58,8 +58,8 @@ assert '< 3.0' in B
 # Safe self-flash remains headless. Give the operator a longer explicit handoff,
 # and keep CTRL quiet longer than that handoff so rediscovery cannot race reboot.
 assert 'Preparing safe updater - SRVR shows self-flash progress' in T
-assert 'g_fw_safe_reboot_due_ms = millis() + 1800;' in T
-assert 'g_hmiSafeRebootHoldUntilMs = millis() + 3000;' in C
+assert 'g_fw_safe_reboot_due_ms = HVP2PRS485::deadlineAfter(millis(), 1800);' in T
+assert 'g_hmiSafeRebootHoldUntilMs = HVP2PRS485::deadlineAfter(millis(), 3000);' in C
 begin=T[T.index('static void fw_handle_begin'):T.index('static void fw_handle_block')]
 assert begin.index('if(!g_fw_headless_mode)') < begin.index('Update.begin(imageSize, U_FLASH)')
 

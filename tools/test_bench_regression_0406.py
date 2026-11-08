@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.10.19.01'
+VER='26.11.08.01'
 B=(ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 Q=(ROOT/f'SRVR_GitHub_v{VER}/qml/Main.qml').read_text()
 C=(ROOT/f'HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino').read_text()
@@ -39,7 +39,7 @@ assert 'update_ramp_markers();' in release and 'update_preset_markers();' in rel
 fw=T[T.index('static void fw_set_device_status'):T.index('static void fw_process_status_line')]
 assert 'const bool wasActive = g_fw_row_active[idx];' in fw
 assert 'else if(wasActive && !fw_any_row_active()' in fw
-assert 'g_fw_external_release_due_ms = millis() + 2000;' in fw
+assert 'g_fw_external_release_due_ms = HVP2PRS485::deadlineAfter(millis(), 2000);' in fw
 assert 'millis() + 8000' not in fw
 
 # Limit Calibration mirrors the three-step Joystick wizard and closes on Ref.

@@ -1,5 +1,5 @@
 // ============================================================
-// HV P2P W1P EdgeBox v26.10.19.01
+// HV P2P W1P EdgeBox v26.11.08.01
 // Seeed EdgeBox-ESP-100 Leadshine EL7-RS2000P commissioning interface
 //
 // Purpose:
@@ -54,11 +54,11 @@
 
 // -------------------- Version / identity --------------------
 static const char* FW_NAME    = "HV P2P W1P";
-static const char* FW_VERSION = "v26.10.19.01";
+static const char* FW_VERSION = "v26.11.08.01";
 static const char* NODE_BANNER = "HV_P2P_W1P";
 static const char* HV_AUTH_ROLE = "W1P";
 static const char* HV_AUTH_TARGET = "EDGEBOX_ESP100";
-static const char* HV_AUTH_VERSION = "v26.10.19.01";
+static const char* HV_AUTH_VERSION = "v26.11.08.01";
 
 // -------------------- Network defaults --------------------
 static IPAddress LOCAL_IP(172, 20, 1, 102);
@@ -620,7 +620,7 @@ static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_W1P";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL,CTRL_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_W1P_v*.ino.bin firmware. CTRL/CTRL-TS files are rejected.";
 static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=W1P;";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=W1P;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.10.19.01;";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=W1P;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.11.08.01;";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
@@ -878,13 +878,11 @@ unsigned long lastStatusMs = 0;
 unsigned long lastMotionMs = 0;
 unsigned long lastBlinkMs = 0;
 unsigned long lastPeerPacketMs = 0;
-unsigned long lastModbusPollMs = 0;
-unsigned long lastDriveFeedbackMs = 0;
-unsigned long lastBrakeStatusMs = 0;
+uint32_t lastModbusPollMs = 0;
+uint32_t lastDriveFeedbackMs = 0;
+uint32_t lastBrakeStatusMs = 0;
 unsigned long lastBrakeTransitionPollMs = 0;
-unsigned long lastDriveConfigPollMs = 0;
-int32_t lastRawDrivePosition = 0;
-unsigned long lastRawDrivePositionMs = 0;
+uint32_t lastDriveConfigPollMs = 0;
 float filteredDriveVelocityMps = 0.0f;
 float lastDriveCommandMps = 999999.0f;
 unsigned long lastDriveCommandMs = 0;
@@ -988,6 +986,16 @@ static void serviceNetworkReaddressRollback(){
 }
 
 
+static void recordDrivePositionSample(int32_t rawPos, uint32_t sampledAt) {
+  // One successful P08.44..P08.47 reply owns the position, its sequence and
+  // the feedback times. An output-only brake poll does not advance position.
+  g.raw_pos_units = rawPos;
+  g.pos_m = rawUnitsToDisplayPositionM(unwrapDrivePosition(rawPos));
+  ++g_drive_position_sequence;
+  lastDriveFeedbackMs = sampledAt;
+  lastBrakeStatusMs = sampledAt;
+}
+
 static bool hvPrepareSafeServiceState(String& reason) {
   // Latch a W1P safety source before touching the drive. SRVR will respond with
   // STOP + SW_SRVON 0 and, after the operation ends, require joystick neutral
@@ -1039,15 +1047,12 @@ static bool hvPrepareSafeServiceState(String& reason) {
     const bool servoEnabled = (outputIo & OUTPUT_DO3_MASK) != 0;
     const bool brakeReleased = (outputIo & OUTPUT_DO4_MASK) != 0;
 
-    g.raw_pos_units = pos;
-    g.pos_m = rawUnitsToDisplayPositionM(unwrapDrivePosition(pos));
+    recordDrivePositionSample(pos, now);
     g.input_io_status = inputIo;
     g.output_io_status = outputIo;
     g.servo_enabled_output = servoEnabled;
     g.brake_output_released = brakeReleased;
     g.vel_actual_mps = isfinite(observedMps) ? observedMps : 0.0f;
-    lastDriveFeedbackMs = now;
-    lastBrakeStatusMs = now;
     // Preserve the EL7's native brake sequence: during an orderly Servo-OFF,
     // DO0 remains released only while fresh P08.47/BRK-OFF remains asserted,
     // then drops as soon as the EL7 requests brake application.
@@ -1138,7 +1143,7 @@ static void noteRsErr() {
   g.rs_last_err_ms = now;
   g.rs_consecutive_successes = 0;
   if (g.rs_consecutive_failures < 0xFF) ++g.rs_consecutive_failures;
-  const bool stale = (g.rs_last_ok_ms == 0) || ((now - g.rs_last_ok_ms) > RS485_LINK_TIMEOUT_MS);
+  const bool stale = (now - g.rs_last_ok_ms) > RS485_LINK_TIMEOUT_MS;
   if (g.rs_consecutive_failures >= RS485_FAIL_CONFIRM_COUNT || stale) {
     g.rs_link_ok = false;
   }
@@ -1341,7 +1346,7 @@ static const char* rsStatusText() {
   // parameter match and MODBUS reports valid motor-position feedback. SRVR then
   // keeps Connected strict while distinguishing wiring, configuration and encoder faults.
   if (g.rs_link_ok && (millis() - g.rs_last_ok_ms) <= RS485_LINK_TIMEOUT_MS) return "CONNECTED";
-  if (g.rs_last_err_ms > 0) return "FAULT";
+  if (g.rs_last_err_ms > 0 || g.rs_consecutive_failures > 0) return "FAULT";
   return "WAITING";
 }
 
@@ -1484,7 +1489,9 @@ static void startDriveSerialConfig(uint32_t baud, uint32_t serialConfig){
 
 static void serviceLeadshineFactoryCommsProbe(){
   const uint32_t now = millis();
-  if(g.rs_link_ok || !leadshineFactoryProbeSafe()) return;
+  // Link confirmation requires multiple valid replies. Let the operational
+  // poll finish discovery before claiming a failure and switching the UART.
+  if(g.rs_link_ok || g.rs_consecutive_failures < RS485_FAIL_CONFIRM_COUNT || !leadshineFactoryProbeSafe()) return;
   if(g_lastFactoryProbeMs && (now - g_lastFactoryProbeMs) < 10000) return;
   g_lastFactoryProbeMs = now;
 
@@ -1524,7 +1531,7 @@ static void serviceLeadshineFactoryCommsProbe(){
 }
 
 static void pollLeadshineFeedback() {
-  unsigned long now = millis();
+  const uint32_t now = millis();
   const uint32_t feedbackPollIntervalMs = g.drive_feedback_ok ? MODBUS_POLL_MS : MODBUS_FAULT_POLL_MS;
   if ((now - lastModbusPollMs) < feedbackPollIntervalMs) return;
   lastModbusPollMs = now;
@@ -1533,7 +1540,9 @@ static void pollLeadshineFeedback() {
   // position transaction happened immediately before P00.01, so P00.01 was
   // repeatedly the only read stored as 0xFFFF even though the other parameters
   // proved the link was alive.
-  if ((now - lastDriveConfigPollMs) >= 2000) {
+  const bool configPollDue = (now - lastDriveConfigPollMs) >= 2000;
+  uint8_t configModbusException = 0;
+  if (configPollDue) {
     lastDriveConfigPollMs = now;
     uint16_t ctrl=0xFFFF, di1Assign=0xFFFF, legacyDi5Assign=0xFFFF,
              do1Assign=0xFFFF, do2Assign=0xFFFF, do3Assign=0xFFFF, do4Assign=0xFFFF, do5Assign=0xFFFF,
@@ -1598,58 +1607,21 @@ static void pollLeadshineFeedback() {
       (fmt == EXPECTED_RS485_MODE) &&
       (baud == EXPECTED_RS485_BAUD_CODE) &&
       (addr == EXPECTED_RS485_ADDRESS);
-
-    static int lastDiagState = -1;
-    const bool physicalLink = g.rs_link_ok && (millis() - g.rs_last_ok_ms) <= RS485_LINK_TIMEOUT_MS;
-    const int diagState = !physicalLink ? 0 :
-      (!g.communication_config_read_ok ? 1 :
-      (!g.communication_config_ok ? 2 :
-      (!g.drive_feedback_ok ? 3 : 4)));
-
-    if (diagState != lastDiagState) {
-      lastDiagState = diagState;
-      if (diagState == 0) {
-        Serial.printf("[RS485] No valid Modbus reply at 115200 8N1, slave ID %u. Check tested T/R harness, A/B/GND and EL7 P05.29/P05.30/P05.31.\n", (unsigned)DRIVE_MODBUS_ID);
-      } else if (diagState == 1) {
-        Serial.printf("[RS485] Configuration read fault: P00.01=%s, P04.00=%s, P04.11=%s, P04.12=%s, P04.13=%s, P04.14=%s, P05.29=%s, P05.30=%s, P05.31=%s; last Modbus exception=0x%02X.\n",
-                      okCtrl ? "OK" : "NO REPLY",
-                      okDi1Assign ? "OK" : "NO REPLY",
-                      okDo2Assign ? "OK" : "NO REPLY",
-                      okDo3Assign ? "OK" : "NO REPLY",
-                      okDo4Assign ? "OK" : "NO REPLY",
-                      okDo5Assign ? "OK" : "NO REPLY",
-                      okFmt ? "OK" : "NO REPLY",
-                      okBaud ? "OK" : "NO REPLY",
-                      okAddr ? "OK" : "NO REPLY",
-                      (unsigned)g.last_modbus_exception);
-      } else if (diagState == 2) {
-        Serial.printf("[RS485] Link OK but configuration value mismatch: P00.01=%u (need 6), P04.00=%u (need 0x83/131=DI1 SRV-ON NC), legacy P04.04/DI5=%u (must not be SRV-ON), P04.11/DO2=%u (need 2=SRDY), P04.12/DO3=%u (need 0x12=SRV-ST), P04.13/DO4=%u (need 3=BRK-OFF), P04.14/DO5=%u (need 1=ALARM), P05.29=%u (need 4/8N1), P05.30=%u (need 6/115200), P05.31=%u (need 1).\n",
-                      (unsigned)g.control_mode, (unsigned)g.di1_assignment, (unsigned)g.legacy_di5_assignment,
-                      (unsigned)g.do2_assignment, (unsigned)g.do3_assignment, (unsigned)g.do4_assignment, (unsigned)g.do5_assignment,
-                      (unsigned)g.rs485_mode, (unsigned)g.rs485_baud_code, (unsigned)g.rs485_address);
-      } else if (diagState == 3) {
-        Serial.printf("[RS485] Link/config OK but drive feedback is not safe: POS_READ=%u IO_READ=%u P04.11/DO2=%u%s SRDY=%u OUT_IO=0x%04X. Active requires a valid position read and asserted DO2/SRDY.\n",
-                      g.position_feedback_read_ok ? 1u : 0u,
-                      g.output_io_read_ok ? 1u : 0u,
-                      (unsigned)g.do2_assignment,
-                      g.do2_ready_assignment_ok ? "" : " (need 2=SRDY)",
-                      g.servo_ready ? 1u : 0u,
-                      (unsigned)g.output_io_status);
-      } else {
-        Serial.println("[RS485] Leadshine Modbus link, DO2/SRDY, DO3/SRV-ST, DO4/BRK-OFF, DO5/ALARM assignments and position feedback are verified.");
-      }
-    }
+    configModbusException = g.last_modbus_exception;
   }
 
   int32_t rawPos = 0;
   uint16_t inio = 0;
   uint16_t outio = 0;
   bool okFeedbackBlock = modbusReadFeedbackBlock(DRIVE_MODBUS_ID, rawPos, inio, outio);
+  // Configuration reads and the feedback transaction can block. Timestamp
+  // the validated reply, and use the post-transaction time on timeout too.
+  const uint32_t sampledAt = millis();
   if (okFeedbackBlock) {
-    if (lastRawDrivePositionMs > 0) {
-      unsigned long dt_ms = now - lastRawDrivePositionMs;
+    if (g_drive_unwrapped_valid) {
+      const uint32_t dt_ms = sampledAt - lastDriveFeedbackMs;
       if (dt_ms > 0 && dt_ms < 1000) {
-        int64_t delta = wrappedPositionDelta(rawPos, lastRawDrivePosition);
+        int64_t delta = wrappedPositionDelta(rawPos, g_drive_last_wrapped_units);
         float raw_mps = rawUnitsDeltaToDisplayMps(delta, float(dt_ms) / 1000.0f);
         if (isfinite(raw_mps) && fabsf(raw_mps) <= 30.0f) {
           // v16: display/control feedback follows the real drive velocity much
@@ -1668,12 +1640,8 @@ static void pollLeadshineFeedback() {
         }
       }
     }
-    lastRawDrivePosition = rawPos;
-    lastRawDrivePositionMs = now;
-    g.raw_pos_units = rawPos;
+    recordDrivePositionSample(rawPos, sampledAt);
     g.raw_vel_units_s = int32_t(filteredDriveVelocityMps * g_command_units_per_m);
-    g.pos_m = rawUnitsToDisplayPositionM(unwrapDrivePosition(rawPos));
-    ++g_drive_position_sequence;
     g.vel_actual_mps = filteredDriveVelocityMps;
     g.input_io_status = inio;
     g.output_io_status = outio;
@@ -1689,9 +1657,7 @@ static void pollLeadshineFeedback() {
     g.brake_output_released = ((outio & OUTPUT_DO4_MASK) != 0);
     g.fault_output_active = g.do5_fault_assignment_ok && ((outio & OUTPUT_DO5_MASK) != 0);
     g.feedback_from_drive = true;
-    lastDriveFeedbackMs = now;
-    lastBrakeStatusMs = now;
-  } else if ((now - lastDriveFeedbackMs) > 500) {
+  } else if ((sampledAt - lastDriveFeedbackMs) > 500) {
     g.position_feedback_read_ok = false;
     g.output_io_read_ok = false;
     g.servo_ready = false;
@@ -1714,6 +1680,51 @@ static void pollLeadshineFeedback() {
                         !g.fault_output_active;
   g.drive_ready = g.drive_feedback_ok && g.communication_config_ok;
   g.drive_fault = !g.drive_ready;
+
+  // Report the current poll, including the feedback read with the latest
+  // configuration, so normal startup does not log the previous unready state.
+  if (configPollDue) {
+    static int lastDiagState = -1;
+    const bool physicalLink = g.rs_link_ok && (millis() - g.rs_last_ok_ms) <= RS485_LINK_TIMEOUT_MS;
+    const int diagState = !physicalLink ? 0 :
+      (!g.communication_config_read_ok ? 1 :
+      (!g.communication_config_ok ? 2 :
+      (!g.drive_feedback_ok ? 3 : 4)));
+
+    if (diagState != lastDiagState) {
+      lastDiagState = diagState;
+      if (diagState == 0) {
+        Serial.printf("[RS485] No valid Modbus reply at 115200 8N1, slave ID %u. Check tested T/R harness, A/B/GND and EL7 P05.29/P05.30/P05.31.\n", (unsigned)DRIVE_MODBUS_ID);
+      } else if (diagState == 1) {
+        Serial.printf("[RS485] Configuration read fault: P00.01=%s, P04.00=%s, P04.11=%s, P04.12=%s, P04.13=%s, P04.14=%s, P05.29=%s, P05.30=%s, P05.31=%s; last Modbus exception=0x%02X.\n",
+                      g.control_mode_read_ok ? "OK" : "NO REPLY",
+                      g.di1_assignment_read_ok ? "OK" : "NO REPLY",
+                      g.do2_assignment_read_ok ? "OK" : "NO REPLY",
+                      g.do3_assignment_read_ok ? "OK" : "NO REPLY",
+                      g.do4_assignment_read_ok ? "OK" : "NO REPLY",
+                      g.do5_assignment_read_ok ? "OK" : "NO REPLY",
+                      g.rs485_mode_read_ok ? "OK" : "NO REPLY",
+                      g.rs485_baud_read_ok ? "OK" : "NO REPLY",
+                      g.rs485_address_read_ok ? "OK" : "NO REPLY",
+                      (unsigned)configModbusException);
+      } else if (diagState == 2) {
+        Serial.printf("[RS485] Link OK but configuration value mismatch: P00.01=%u (need 6), P04.00=%u (need 0x83/131=DI1 SRV-ON NC), legacy P04.04/DI5=%u (must not be SRV-ON), P04.11/DO2=%u (need 2=SRDY), P04.12/DO3=%u (need 0x12=SRV-ST), P04.13/DO4=%u (need 3=BRK-OFF), P04.14/DO5=%u (need 1=ALARM), P05.29=%u (need 4/8N1), P05.30=%u (need 6/115200), P05.31=%u (need 1).\n",
+                      (unsigned)g.control_mode, (unsigned)g.di1_assignment, (unsigned)g.legacy_di5_assignment,
+                      (unsigned)g.do2_assignment, (unsigned)g.do3_assignment, (unsigned)g.do4_assignment, (unsigned)g.do5_assignment,
+                      (unsigned)g.rs485_mode, (unsigned)g.rs485_baud_code, (unsigned)g.rs485_address);
+      } else if (diagState == 3) {
+        Serial.printf("[RS485] Link/config OK but drive feedback is not safe: POS_READ=%u IO_READ=%u P04.11/DO2=%u%s SRDY=%u OUT_IO=0x%04X. Active requires a valid position read and asserted DO2/SRDY.\n",
+                      g.position_feedback_read_ok ? 1u : 0u,
+                      g.output_io_read_ok ? 1u : 0u,
+                      (unsigned)g.do2_assignment,
+                      g.do2_ready_assignment_ok ? "" : " (need 2=SRDY)",
+                      g.servo_ready ? 1u : 0u,
+                      (unsigned)g.output_io_status);
+      } else {
+        Serial.println("[RS485] Leadshine Modbus link, DO2/SRDY, DO3/SRV-ST, DO4/BRK-OFF, DO5/ALARM assignments and position feedback are verified.");
+      }
+    }
+  }
 }
 
 static void saveConfig() {
@@ -1846,8 +1857,8 @@ static bool edgeboxBrakeReleaseHoldAllowed() {
   if (!g.edgebox_brake_released) return false;
   if (!g.rs_link_ok || !g.output_io_read_ok) return false;
 
-  const unsigned long now = millis();
-  const unsigned long brakeStatusAge = lastBrakeStatusMs > 0 ? (now - lastBrakeStatusMs) : 0xFFFFFFFFUL;
+  const uint32_t now = millis();
+  const uint32_t brakeStatusAge = now - lastBrakeStatusMs;
   const unsigned long maxAge = edgeboxBrakeShutdownSequencingRequested()
     ? EDGEBOX_BRAKE_STATUS_STALE_MS
     : EDGEBOX_BRAKE_FEEDBACK_STALE_MS;
@@ -2737,7 +2748,7 @@ static void serviceHmiDisplay(){
 }
 
 static void sendStatusLine(bool force) {
-  unsigned long now = millis();
+  const uint32_t now = millis();
   if (!force && (now - lastStatusMs) < W1P_STATUS_INTERVAL_MS) return;
   lastStatusMs = now;
 
@@ -2834,8 +2845,8 @@ static void sendStatusLine(bool force) {
   snprintf(rawExt, sizeof(rawExt), "%lld", (long long)g_drive_unwrapped_units);
   line += " RAW_POS_EXT=" + String(rawExt);
   line += " POS_SEQ=" + String(g_drive_position_sequence);
-  line += " POS_T_MS=" + String(lastRawDrivePositionMs);
-  line += " POS_AGE_MS=" + String(lastDriveFeedbackMs ? now - lastDriveFeedbackMs : 0xFFFFFFFFUL);
+  line += " POS_T_MS=" + String(lastDriveFeedbackMs);
+  line += " POS_AGE_MS=" + String(g_drive_unwrapped_valid ? now - lastDriveFeedbackMs : UINT32_MAX);
   line += " RAW_VEL=" + String(g.raw_vel_units_s);
   line += " MODBUS=" + String(g.drive_feedback_ok ? 1 : 0);
   line += " UPM=" + String(g_command_units_per_m, 1);
@@ -3402,7 +3413,7 @@ void setup() {
   Serial.printf("%s %s\n", FW_NAME, FW_VERSION);
   Serial.printf("[OTA] Build identity: %s\n", HV_UPDATE_BUILD_TOKEN);
   Serial.println("Leadshine EL7-RS2000P command interface (auto-enable under SRVR safety gate)");
-  Serial.println("v26.10.19.01: W1P E-stop on AI0 5V NC loop; EL7 RS485 115200 8N1; EdgeBox DO0 drives fail-applied 24V brake");
+  Serial.println("v26.11.08.01: W1P E-stop on AI0 5V NC loop; EL7 RS485 115200 8N1; EdgeBox DO0 drives fail-applied 24V brake");
   Serial.println("============================================================");
 
   // Fail closed until the isolated analogue input proves a healthy NC loop.
@@ -3444,7 +3455,7 @@ void setup() {
   }
 
   Serial.printf("[CFG] IP=%s UDP=%u ETH=%s\n", ETH.localIP().toString().c_str(), (unsigned)TCP_PORT, eth_ok ? "OK" : "FAILED");
-  Serial.printf("[CFG] ESTOP_AI0=pin14/AGND12 healthy=%.1f..%.1fV BRAKE_DO0=%d RS485=%lu/8N2 RX=%d TX=%d RTS=%d ID=%u\n", W1P_ESTOP_HEALTHY_MIN_V, W1P_ESTOP_HEALTHY_MAX_V, PIN_EDGEBOX_BRAKE_DO0, (unsigned long)RS485_BAUD, RS485_RX_PIN, RS485_TX_PIN, RS485_RTS_PIN, (unsigned)DRIVE_MODBUS_ID);
+  Serial.printf("[CFG] ESTOP_AI0=pin14/AGND12 healthy=%.1f..%.1fV BRAKE_DO0=%d RS485=%lu/8N1 RX=%d TX=%d RTS=%d ID=%u\n", W1P_ESTOP_HEALTHY_MIN_V, W1P_ESTOP_HEALTHY_MAX_V, PIN_EDGEBOX_BRAKE_DO0, (unsigned long)RS485_BAUD, RS485_RX_PIN, RS485_TX_PIN, RS485_RTS_PIN, (unsigned)DRIVE_MODBUS_ID);
   Serial.printf("[CFG] POS=%.3f SPAN=%.3f NL=%.3f FL=%.3f SIM=%s UPM=%.1f WRITES=LOCKED\n",
                 g.pos_m, g.span_m, g.limit_near_m, g.limit_far_m,
                 g.simulation_enabled ? "ON" : "OFF", g_command_units_per_m);

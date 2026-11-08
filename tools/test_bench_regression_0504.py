@@ -2,7 +2,7 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.10.19.01'
+VER = '26.11.08.01'
 B = (ROOT / f'SRVR_GitHub_v{VER}' / 'backend.py').read_text()
 M = (ROOT / f'SRVR_GitHub_v{VER}' / 'qml' / 'Main.qml').read_text()
 S = (ROOT / f'SRVR_GitHub_v{VER}' / 'qml' / 'pages' / 'SetupPage.qml').read_text()
@@ -30,8 +30,8 @@ assert 'g_cal_value_box[3]' in T and 'g_cal_value_text[3]' in T
 
 # A verified headless self-update cannot remain black forever if the final CTRL
 # REBOOT/ACK exchange is lost. Explicit REBOOT still shortens the deadline.
-assert 'g_fw_reboot_due_ms = millis() + 2500' in T
-assert 'g_fw_reboot_due_ms = millis() + 250;' in T
+assert 'g_fw_reboot_due_ms = HVP2PRS485::deadlineAfter(millis(), 2500)' in T
+assert 'g_fw_reboot_due_ms = HVP2PRS485::deadlineAfter(millis(), 250);' in T
 
 # CTRL-TS travel scale uses the full usable 780px panel width, independent of labels.
 assert 'BAR_LIMIT_LEFT = 8' in T

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-B=(ROOT/'SRVR_GitHub_v26.10.19.01/backend.py').read_text()
-C=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.10.19.01/HV_P2P_CTRL_EDGEBOX_v26.10.19.01.ino').read_text()
-T=(ROOT/'HV_P2P_CTRL_TS_v26.10.19.01/HV_P2P_CTRL_TS_v26.10.19.01.ino').read_text()
+B=(ROOT/'SRVR_GitHub_v26.11.08.01/backend.py').read_text()
+C=(ROOT/'HV_P2P_CTRL_EDGEBOX_v26.11.08.01/HV_P2P_CTRL_EDGEBOX_v26.11.08.01.ino').read_text()
+T=(ROOT/'HV_P2P_CTRL_TS_v26.11.08.01/HV_P2P_CTRL_TS_v26.11.08.01.ino').read_text()
 
 # Cumulative HMI fault counters must retain their baseline; .03.02 accidentally
 # zeroed them after every packet and generated a 4 Hz log/UI storm forever.
@@ -17,7 +17,7 @@ for bad in (
 ):
     assert bad not in status_body
 assert '_ctrl_ts_diag_last_log_at' in B
-assert '(now - self._ctrl_ts_diag_last_log_at) >= 2.0' in B
+assert '(seen_at - self._ctrl_ts_diag_last_log_at) >= 2.0' in B
 assert '[CTRL-TS RS485] ' in B
 assert 'def _esp_reset_reason_name' in B and 'BROWNOUT' in B and 'TASK_WDT' in B
 
@@ -64,7 +64,7 @@ assert 'if(!hmiPriorityPacketSent && !bulk_suppressed && (changed || keepalive_d
 # Touch-originated AUX latches use the same 300 ms compatibility window as UDP
 # AUX commands; the persistent SRVR listener queue is the authoritative edge hold.
 for aux_i in range(5):
-    assert f'g_virtualAuxUntil[{aux_i}] = millis() + 300' in C
-assert 'g_virtualAuxUntil[0] = millis() + 120' not in C
+    assert C.count(f'g_virtualAuxUntil[{aux_i}] = HVP2PRS485::deadlineAfter(millis(), 300)') == 2
+    assert f'HVP2PRS485::deadlineActive(now, g_virtualAuxUntil[{aux_i}])' in C
 
 print('RUNTIME_REGRESSION_CONTRACT_PASS')
