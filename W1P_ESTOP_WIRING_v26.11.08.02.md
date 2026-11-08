@@ -1,4 +1,4 @@
-# W1P AI0 5 V E-stop wiring — v26.11.08.01
+# W1P AI0 5 V E-stop wiring — v26.11.08.02
 
 ## Firmware contract
 

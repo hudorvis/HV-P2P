@@ -1,11 +1,11 @@
-# HV P2P v26.11.08.01 — native-build and physical commissioning checklist
+# HV P2P v26.11.08.02 — native-build and physical commissioning checklist
 
 **Not proof of completed field commissioning.** Record actual results when running GitHub Actions and the motor bench.
 
 ## GitHub Actions
 
 - [ ] Commit the *contents* of the source ZIP to repository root including `.github/workflows/complete-build.yml`.
-- [ ] Trigger `HV P2P Complete Build v26.11.08.01`; record the run URL, SHA, commit and artifacts.
+- [ ] Trigger `HV P2P Complete Build v26.11.08.02`; record the run URL, SHA, commit and artifacts.
 - [ ] Confirm native ESP32 core 3.3.8 / Arduino CLI 1.5.1, compiled CTRL-TS image staged into CTRL, CTRL and W1P native binaries, firmware authority hash and version match.
 - [ ] Confirm macOS Intel/Apple Silicon and Windows x64 dependency pin, source and frozen smoke, QML lint, Nuitka and packaged autorun.
 - [ ] Confirm `position_feedback.py` was included in frozen SRVR binaries; no module import errors on any platform.

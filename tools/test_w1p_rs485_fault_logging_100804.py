@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-B=(ROOT/'SRVR_GitHub_v26.11.08.01'/'backend.py').read_text()
-W=(ROOT/'HV_P2P_W1P_EDGEBOX_v26.11.08.01'/'HV_P2P_W1P_EDGEBOX_v26.11.08.01.ino').read_text()
+B=(ROOT/'SRVR_GitHub_v26.11.08.02'/'backend.py').read_text()
+W=(ROOT/'HV_P2P_W1P_EDGEBOX_v26.11.08.02'/'HV_P2P_W1P_EDGEBOX_v26.11.08.02.ino').read_text()
 
 # Established project framing is restored, while the factory framing remains a
 # read-only stopped diagnostic probe only.

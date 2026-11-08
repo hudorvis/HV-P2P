@@ -1,6 +1,6 @@
-# HV P2P SRVR v26.11.08.01
+# HV P2P SRVR v26.11.08.02
 
-Based on the approved v26.10.19.01 source package. SRVR rejects encoder timestamp rollback, keeps accepted raw counts paired with their position, and waits for verified W1P evidence before logging startup RS485 faults. See the parent directory's `DEEP_CODE_AUDIT_v26.11.08.01.md` for the full audit.
+Based on the approved v26.10.19.01 source package. SRVR rejects encoder timestamp rollback, keeps accepted raw counts paired with their position, and waits for verified W1P evidence before logging startup RS485 faults. See the parent directory's `DEEP_CODE_AUDIT_v26.11.08.02.md` for the full audit.
 
 ---
 
@@ -97,7 +97,7 @@ The core on-wire/control behavior remains compatible:
 
 ## Validation
 
-The full source suite passed with PySide6 6.11.1, including the backend runtime test. The Qt resource build, QML lint and offscreen application smoke also passed. See `TEST_RESULTS_v26.11.08.01.txt` for results and the separate native and hardware verification stages.
+The full source suite passed with PySide6 6.11.1, including the backend runtime test. The Qt resource build, QML lint and offscreen application smoke also passed. See `TEST_RESULTS_v26.11.08.02.txt` for results and the separate native and hardware verification stages.
 
 ## Build output
 
@@ -105,9 +105,9 @@ Use the repository-root workflow:
 
 `.github/workflows/complete-build.yml`
 
-It builds the matched v26.11.08.01 CTRL-TS, CTRL and W1P firmware, freezes and smoke-tests the desktop targets below, and assembles the complete matched release.
+It builds the matched v26.11.08.02 CTRL-TS, CTRL and W1P firmware, freezes and smoke-tests the desktop targets below, and assembles the complete matched release.
 
-Complete the repository's `NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.11.08.01.md` for hardware sign-off.
+Complete the repository's `NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.11.08.02.md` for hardware sign-off.
 
 
 ## Native desktop targets

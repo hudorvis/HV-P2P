@@ -1,0 +1,29 @@
+HV P2P v26.11.08.02 verification
+======================================
+Source baseline — HV-P2P-v26.11.08.01-GitHub.zip
+Baseline SHA-256 — 9ecb93399e78d7e1b58c4567e2b516676a28c748e0740791cf6bb3050b823393
+
+Reported GitHub job
+  The runner refreshed the indexes, then core install timed out awaiting
+  headers on the HEAD request for the esp-x32@2601 Xtensa archive. The
+  firmware compile step was skipped. The workflow matched the baseline ZIP.
+
+Linux source and toolchain checks
+  PASS — All 65 source checks, including the Qt backend regression, 77 Python
+  syntax checks and the workflow's retry, permanent failure and board checks.
+  PASS — GitHub workflow YAML and Bash syntax for 16 run steps.
+  PASS — Local Arduino CLI 1.5.1 refreshed the official package index and
+  installed esp32:esp32@3.3.8. Both required board IDs resolved.
+  PASS — The native builder compiled CTRL-TS, embedded and verified its
+  image in CTRL, compiled CTRL and W1P, and verified all application roles,
+  version identities, slot limits and output checksums.
+  PASS — The Qt offscreen SRVR smoke test used the resulting firmware bundle.
+  QML lint output matched v26.11.08.01. Compiler and Qt warnings were nonfatal.
+
+The first local compilation encountered concurrent edits to release notes
+at the source integrity check. The isolated rerun passed the complete
+native build and integrity check.
+
+Separate checks
+  GitHub runner, frozen macOS/Windows builds and physical hardware checks
+  are separate. No result for a new GitHub run is recorded here.

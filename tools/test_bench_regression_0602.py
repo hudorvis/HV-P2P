@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""v26.11.08.01 locked-scope bench regressions for the five requested fixes."""
+"""v26.11.08.02 locked-scope bench regressions for the five requested fixes."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.11.08.01'
+VER = '26.11.08.02'
 B = (ROOT / f'SRVR_GitHub_v{VER}' / 'backend.py').read_text(encoding='utf-8')
 M = (ROOT / f'SRVR_GitHub_v{VER}' / 'qml' / 'Main.qml').read_text(encoding='utf-8')
 S = (ROOT / f'SRVR_GitHub_v{VER}' / 'qml' / 'pages' / 'SetupPage.qml').read_text(encoding='utf-8')

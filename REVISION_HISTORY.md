@@ -1,3 +1,9 @@
+# v26.11.08.02 — 2026-11-08
+
+- Build workflow follow-up to v26.11.08.01 after the Xtensa toolchain download timed out in GitHub's ESP32 core setup.
+- Arduino CLI retries index and package downloads, logs the failing command, and verifies both required board IDs independently.
+- Added simulated install failure, retry and board-target regression. macOS build metadata advances to 2611.8.2.
+
 # v26.11.08.01 — 2026-11-08
 
 - Audited SRVR, W1P, CTRL and CTRL-TS against the approved v26.10.19.01 ChatGPT source ZIP.

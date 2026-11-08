@@ -1,4 +1,10 @@
-# HV P2P source audit v26.11.08.01
+# HV P2P build audit v26.11.08.02
+
+Run 42474040932 failed in core setup before the compiler ran. The checked-in workflow at commit e62a97e974a35024690c5a1b691d60d5cec5c9b2 matched the v26.11.08.01 source archive. The supplied runner output shows a HEAD request to the GitHub Releases URL for the esp-x32@2601 archive timed out while awaiting headers. The package index refresh had succeeded. [Reported GitHub job](https://github.com/hudorvis/HV-P2P/actions/runs/42474040932/job/128711246655)
+
+The new workflow retries the index refresh and pinned core installation independently and preserves their original error output. It now validates both required board IDs through the Arduino CLI. The regression exercises transient recovery, permanent failure and absence of each board. Production source carries forward the v26.11.08.01 audit with the coordinated release identity updated.
+
+## Source audit carried forward from v26.11.08.01
 
 | Component | Reviewed paths | Defect and correction |
 | --- | --- | --- |
@@ -17,4 +23,4 @@
 - Qt resource compilation, QML lint under the existing workflow flags and the full offscreen SRVR smoke test ran locally. The smoke used a temporary matching firmware manifest with test bytes. QML lint diagnostics match the approved baseline, and both smoke runs report a HelveticaNeue fallback on Linux.
 - Native Arduino and frozen desktop builds are GitHub Actions gates. Fitted drive timing, encoder scaling, loaded motion and hardware safety are the separate bench commissioning gates.
 
-See TEST_RESULTS_v26.11.08.01.txt and SOURCE_REGRESSION_LOG_v26.11.08.01.txt for executed checks.
+See TEST_RESULTS_v26.11.08.02.txt and SOURCE_REGRESSION_LOG_v26.11.08.02.txt for executed checks.

@@ -447,7 +447,7 @@ class HVP2PBackend(QObject):
     calibrationChanged = Signal()
     joystickCalibrationChanged = Signal()
 
-    def __init__(self, version="26.11.08.01", smoke_test: bool = False, firmware_bundle=None):
+    def __init__(self, version="26.11.08.02", smoke_test: bool = False, firmware_bundle=None):
         super().__init__()
         self.version = version
         self.smoke_test = bool(smoke_test)

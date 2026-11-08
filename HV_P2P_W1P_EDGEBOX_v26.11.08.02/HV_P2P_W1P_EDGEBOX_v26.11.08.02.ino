@@ -1,5 +1,5 @@
 // ============================================================
-// HV P2P W1P EdgeBox v26.11.08.01
+// HV P2P W1P EdgeBox v26.11.08.02
 // Seeed EdgeBox-ESP-100 Leadshine EL7-RS2000P commissioning interface
 //
 // Purpose:
@@ -54,11 +54,11 @@
 
 // -------------------- Version / identity --------------------
 static const char* FW_NAME    = "HV P2P W1P";
-static const char* FW_VERSION = "v26.11.08.01";
+static const char* FW_VERSION = "v26.11.08.02";
 static const char* NODE_BANNER = "HV_P2P_W1P";
 static const char* HV_AUTH_ROLE = "W1P";
 static const char* HV_AUTH_TARGET = "EDGEBOX_ESP100";
-static const char* HV_AUTH_VERSION = "v26.11.08.01";
+static const char* HV_AUTH_VERSION = "v26.11.08.02";
 
 // -------------------- Network defaults --------------------
 static IPAddress LOCAL_IP(172, 20, 1, 102);
@@ -620,7 +620,7 @@ static const char* HV_UPDATE_FS_TOKEN = "HV_P2P_W1P";
 static const char* HV_UPDATE_REJECT_TOKENS = "CTRL,CTRL_TS";
 static const char* HV_UPDATE_WARNING = "Upload only HV_P2P_W1P_v*.ino.bin firmware. CTRL/CTRL-TS files are rejected.";
 static const char* HV_UPDATE_ROLE_SIGNATURE = "HV_P2P_FW_ROLE=W1P;";
-static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=W1P;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.11.08.01;";
+static const char* HV_UPDATE_BUILD_TOKEN = "HV_P2P_FW_ROLE=W1P;HV_P2P_FW_TARGET=EDGEBOX_ESP100;HV_P2P_FW_VERSION=v26.11.08.02;";
 
 static bool hvUploadAllowed = false;
 static bool hvUploadIsFs = false;
@@ -3413,7 +3413,7 @@ void setup() {
   Serial.printf("%s %s\n", FW_NAME, FW_VERSION);
   Serial.printf("[OTA] Build identity: %s\n", HV_UPDATE_BUILD_TOKEN);
   Serial.println("Leadshine EL7-RS2000P command interface (auto-enable under SRVR safety gate)");
-  Serial.println("v26.11.08.01: W1P E-stop on AI0 5V NC loop; EL7 RS485 115200 8N1; EdgeBox DO0 drives fail-applied 24V brake");
+  Serial.println("v26.11.08.02: W1P E-stop on AI0 5V NC loop; EL7 RS485 115200 8N1; EdgeBox DO0 drives fail-applied 24V brake");
   Serial.println("============================================================");
 
   // Fail closed until the isolated analogue input proves a healthy NC loop.

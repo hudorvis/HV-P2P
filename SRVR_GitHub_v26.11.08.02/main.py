@@ -39,7 +39,7 @@ import PySide6.QtQuickControls2  # noqa: F401
 from backend import HVP2PBackend
 from firmware_authority import FirmwareAuthorityError, start_firmware_authority
 
-APP_VERSION = "26.11.08.01"
+APP_VERSION = "26.11.08.02"
 
 
 def _smoke_mark(label: str) -> None:

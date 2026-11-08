@@ -15,30 +15,30 @@ W1P_FEEDBACK_TIMING_AND_STARTUP_PASS
 AUDIT_REGRESSIONS_PASS
 
 ==> python3 <repo>/tools/validate_edgebox_integration.py
-HV P2P EdgeBox v26.11.08.01 source-level integration validation PASS
+HV P2P EdgeBox v26.11.08.02 source-level integration validation PASS
 Checks passed: 387
-  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.11.08.01/HV_P2P_CTRL_EDGEBOX_v26.11.08.01.ino
-  OK: exists: HV_P2P_W1P_EDGEBOX_v26.11.08.01/HV_P2P_W1P_EDGEBOX_v26.11.08.01.ino
-  OK: exists: HV_P2P_CTRL_TS_v26.11.08.01/HV_P2P_CTRL_TS_v26.11.08.01.ino
-  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.11.08.01/HV_P2P_RS485_Frame.h
-  OK: exists: HV_P2P_CTRL_TS_v26.11.08.01/HV_P2P_RS485_Frame.h
-  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.11.08.01/HV_P2P_CTRL_TS_Firmware_Image.h
-  OK: exists: SRVR_GitHub_v26.11.08.01/backend.py
-  OK: exists: SRVR_GitHub_v26.11.08.01/main.py
-  OK: exists: SRVR_GitHub_v26.11.08.01/qml/pages/SetupPage.qml
-  OK: exists: SRVR_GitHub_v26.11.08.01/qml/components/SpanDiagram.qml
-  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.11.08.01/partitions.csv
-  OK: exists: HV_P2P_CTRL_TS_v26.11.08.01/partitions.csv
-  OK: exists: HV_P2P_W1P_EDGEBOX_v26.11.08.01/partitions.csv
-  OK: Arduino same-name sketch folder: HV_P2P_CTRL_EDGEBOX_v26.11.08.01
-  OK: Arduino same-name sketch folder: HV_P2P_W1P_EDGEBOX_v26.11.08.01
-  OK: Arduino same-name sketch folder: HV_P2P_CTRL_TS_v26.11.08.01
+  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.11.08.02/HV_P2P_CTRL_EDGEBOX_v26.11.08.02.ino
+  OK: exists: HV_P2P_W1P_EDGEBOX_v26.11.08.02/HV_P2P_W1P_EDGEBOX_v26.11.08.02.ino
+  OK: exists: HV_P2P_CTRL_TS_v26.11.08.02/HV_P2P_CTRL_TS_v26.11.08.02.ino
+  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.11.08.02/HV_P2P_RS485_Frame.h
+  OK: exists: HV_P2P_CTRL_TS_v26.11.08.02/HV_P2P_RS485_Frame.h
+  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.11.08.02/HV_P2P_CTRL_TS_Firmware_Image.h
+  OK: exists: SRVR_GitHub_v26.11.08.02/backend.py
+  OK: exists: SRVR_GitHub_v26.11.08.02/main.py
+  OK: exists: SRVR_GitHub_v26.11.08.02/qml/pages/SetupPage.qml
+  OK: exists: SRVR_GitHub_v26.11.08.02/qml/components/SpanDiagram.qml
+  OK: exists: HV_P2P_CTRL_EDGEBOX_v26.11.08.02/partitions.csv
+  OK: exists: HV_P2P_CTRL_TS_v26.11.08.02/partitions.csv
+  OK: exists: HV_P2P_W1P_EDGEBOX_v26.11.08.02/partitions.csv
+  OK: Arduino same-name sketch folder: HV_P2P_CTRL_EDGEBOX_v26.11.08.02
+  OK: Arduino same-name sketch folder: HV_P2P_W1P_EDGEBOX_v26.11.08.02
+  OK: Arduino same-name sketch folder: HV_P2P_CTRL_TS_v26.11.08.02
   OK: CTRL: all (), [], {} balanced
-  OK: CTRL: release version v26.11.08.01
+  OK: CTRL: release version v26.11.08.02
   OK: W1P: all (), [], {} balanced
-  OK: W1P: release version v26.11.08.01
+  OK: W1P: release version v26.11.08.02
   OK: CTRL-TS: all (), [], {} balanced
-  OK: CTRL-TS: release version v26.11.08.01
+  OK: CTRL-TS: release version v26.11.08.02
   OK: CTRL and CTRL-TS use byte-identical RS485 framing header
   OK: W1P-TS remains excluded
   OK: CTRL EdgeBox Ethernet pin: EDGEBOX_ETH_CS   10
@@ -164,36 +164,36 @@ Checks passed: 387
   OK: CTRL-TS does not claim the staged image hash before reboot
   OK: exists: tools/embed_ctrl_ts_firmware.py
   OK: CTRL-TS embed helper enforces the conservative 0x380000 target OTA slot
-  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: modbusCRC16
-  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: modbusWaitForSilentGap
-  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: modbusWriteSingleRegister
-  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: modbusWriteMultipleRegisters
-  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: modbusReadHoldingRegisters
-  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: driveConfigureMotionProfile
-  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: driveWriteVelocityCommandMps
-  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: driveSendEmergencyStop
-  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: serviceMotionProfile
-  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: limitVelocityForSoftLimits
-  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: predictiveLimitSpeedCap
-  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: driveStopNow
-  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: servicePeerTimeout
-  OK: W1P reviewed v26.11.08.01 safety-critical logic preserved: preserveDisplayedPositionForMotorDirectionChange
-  OK: W1P v26.11.08.01 reviewed safety extension hash locked: driveAutoEnableReady
-  OK: W1P v26.11.08.01 reviewed safety extension hash locked: handleCommand
-  OK: W1P v26.11.08.01 reviewed safety extension hash locked: sendStatusLine
-  OK: W1P v26.11.08.01 reviewed safety extension hash locked: serviceVelocityCommandWatchdog
-  OK: W1P v26.11.08.01 reviewed safety extension hash locked: recordDrivePositionSample
-  OK: W1P v26.11.08.01 reviewed safety extension hash locked: hvPrepareSafeServiceState
-  OK: W1P v26.11.08.01 reviewed EdgeBox brake logic hash locked: requestSoftwareSrvonInhibit
-  OK: W1P v26.11.08.01 reviewed EdgeBox brake logic hash locked: edgeboxBrakeReleaseStartAllowed
-  OK: W1P v26.11.08.01 reviewed EdgeBox brake logic hash locked: edgeboxBrakeReleaseHoldAllowed
-  OK: W1P v26.11.08.01 reviewed EdgeBox brake logic hash locked: serviceLeadshineBrakeTransitionStatus
-  OK: W1P v26.11.08.01 reviewed EdgeBox brake logic hash locked: serviceEdgeboxBrakeOutput
-  OK: W1P v26.11.08.01 local AI0 E-stop path hash locked: initW1pEstopAI0
-  OK: W1P v26.11.08.01 local AI0 E-stop path hash locked: w1pSgmWriteRegister
-  OK: W1P v26.11.08.01 local AI0 E-stop path hash locked: w1pSgmReadRegister
-  OK: W1P v26.11.08.01 local AI0 E-stop path hash locked: w1pSgmReadConversion
-  OK: W1P v26.11.08.01 local AI0 E-stop path hash locked: updateLocalInputs
+  OK: W1P reviewed v26.11.08.02 safety-critical logic preserved: modbusCRC16
+  OK: W1P reviewed v26.11.08.02 safety-critical logic preserved: modbusWaitForSilentGap
+  OK: W1P reviewed v26.11.08.02 safety-critical logic preserved: modbusWriteSingleRegister
+  OK: W1P reviewed v26.11.08.02 safety-critical logic preserved: modbusWriteMultipleRegisters
+  OK: W1P reviewed v26.11.08.02 safety-critical logic preserved: modbusReadHoldingRegisters
+  OK: W1P reviewed v26.11.08.02 safety-critical logic preserved: driveConfigureMotionProfile
+  OK: W1P reviewed v26.11.08.02 safety-critical logic preserved: driveWriteVelocityCommandMps
+  OK: W1P reviewed v26.11.08.02 safety-critical logic preserved: driveSendEmergencyStop
+  OK: W1P reviewed v26.11.08.02 safety-critical logic preserved: serviceMotionProfile
+  OK: W1P reviewed v26.11.08.02 safety-critical logic preserved: limitVelocityForSoftLimits
+  OK: W1P reviewed v26.11.08.02 safety-critical logic preserved: predictiveLimitSpeedCap
+  OK: W1P reviewed v26.11.08.02 safety-critical logic preserved: driveStopNow
+  OK: W1P reviewed v26.11.08.02 safety-critical logic preserved: servicePeerTimeout
+  OK: W1P reviewed v26.11.08.02 safety-critical logic preserved: preserveDisplayedPositionForMotorDirectionChange
+  OK: W1P v26.11.08.02 reviewed safety extension hash locked: driveAutoEnableReady
+  OK: W1P v26.11.08.02 reviewed safety extension hash locked: handleCommand
+  OK: W1P v26.11.08.02 reviewed safety extension hash locked: sendStatusLine
+  OK: W1P v26.11.08.02 reviewed safety extension hash locked: serviceVelocityCommandWatchdog
+  OK: W1P v26.11.08.02 reviewed safety extension hash locked: recordDrivePositionSample
+  OK: W1P v26.11.08.02 reviewed safety extension hash locked: hvPrepareSafeServiceState
+  OK: W1P v26.11.08.02 reviewed EdgeBox brake logic hash locked: requestSoftwareSrvonInhibit
+  OK: W1P v26.11.08.02 reviewed EdgeBox brake logic hash locked: edgeboxBrakeReleaseStartAllowed
+  OK: W1P v26.11.08.02 reviewed EdgeBox brake logic hash locked: edgeboxBrakeReleaseHoldAllowed
+  OK: W1P v26.11.08.02 reviewed EdgeBox brake logic hash locked: serviceLeadshineBrakeTransitionStatus
+  OK: W1P v26.11.08.02 reviewed EdgeBox brake logic hash locked: serviceEdgeboxBrakeOutput
+  OK: W1P v26.11.08.02 local AI0 E-stop path hash locked: initW1pEstopAI0
+  OK: W1P v26.11.08.02 local AI0 E-stop path hash locked: w1pSgmWriteRegister
+  OK: W1P v26.11.08.02 local AI0 E-stop path hash locked: w1pSgmReadRegister
+  OK: W1P v26.11.08.02 local AI0 E-stop path hash locked: w1pSgmReadConversion
+  OK: W1P v26.11.08.02 local AI0 E-stop path hash locked: updateLocalInputs
   OK: W1P Leadshine/safety contract: RS485_BAUD = 115200
   OK: W1P Leadshine/safety contract: DRIVE_MODBUS_ID = 1
   OK: W1P Leadshine/safety contract: SERIAL_8N1
@@ -309,7 +309,7 @@ Checks passed: 387
   OK: CTRL and W1P source identify the EdgeBox-ESP-100 hardware baseline
   OK: Setup preserves approved CTRL-TS panel with one Firmware value field
   OK: Free-D geometry markers are sampled from the exact rendered cable path
-  OK: exists: SRVR_GitHub_v26.11.08.01/qml/Main.qml
+  OK: exists: SRVR_GitHub_v26.11.08.02/qml/Main.qml
   OK: Run/Setup shared header uses locked two-line HV P2P / SRVR logo only
   OK: Run Save/Recall/Slip use one global five-second two-step confirmation state
   OK: Run confirmation action covered: preset:save:
@@ -558,23 +558,26 @@ AUTO_OTA_CONTRACT_PASS
 SRVR_AUTHORITY_SERVER_PASS
 
 ==> python3 <repo>/tools/test_embed_tool.py
-Image:    /tmp/hvp2p_embed_test_3rnr1u4h/fixture.ino.bin
+Image:    /tmp/hvp2p_embed_test_keqjsc3t/fixture.ino.bin
 Hardware: WS-ESP32S3-7
 Protocol: 1
-Version:  v26.11.08.01
+Version:  v26.11.08.02
 Size:     4096 bytes (0.004 MiB)
 SHA256:   120ca14d2ef4662d8f89da7e5a26a6e54cb6f59915e121c71a8f9a6a906b51c7
-Wrote:    /tmp/hvp2p_embed_test_3rnr1u4h/HV_P2P_CTRL_TS_Firmware_Image.h
+Wrote:    /tmp/hvp2p_embed_test_keqjsc3t/HV_P2P_CTRL_TS_Firmware_Image.h
 STAGED_HMI_HEADER_PASS
 hardware=WS-ESP32S3-7
 protocol=1
-version=v26.11.08.01
+version=v26.11.08.02
 size=4096
 sha256=120ca14d2ef4662d8f89da7e5a26a6e54cb6f59915e121c71a8f9a6a906b51c7
 EMBED_TOOL_SELFTEST_PASS
 
 ==> python3 <repo>/tools/test_native_build_orchestration.py
 NATIVE_BUILD_ORCHESTRATION_PASS
+
+==> python3 <repo>/tools/test_arduino_ci_install.py
+ARDUINO_CI_INSTALL_RETRY_AND_BOARD_GATES_PASS
 
 ==> python3 <repo>/tools/validate_build_pipeline.py
 OK  workflow core 3.3.8
@@ -658,9 +661,9 @@ RELEASE_CONSISTENCY_PASS
 SOURCE_HYGIENE_PASS
 
 ==> python3 <repo>/tools/test_python_syntax.py
-PYTHON_SYNTAX_PASS 76 files
+PYTHON_SYNTAX_PASS 77 files
 
-==> python3 <repo>/SRVR_GitHub_v26.11.08.01/tools/validate_project.py
+==> python3 <repo>/SRVR_GitHub_v26.11.08.02/tools/validate_project.py
 HV P2P SRVR preflight PASS
   Python syntax: OK
   Qt Quick only / no Tkinter: OK
@@ -673,26 +676,21 @@ HV P2P SRVR preflight PASS
   Proven W1P/CTRL critical command + secondary interface contract: OK
   Isolated deployment staging + smoke checks: OK
 
-==> python3 <repo>/SRVR_GitHub_v26.11.08.01/tools/test_backend_logic.py
+==> python3 <repo>/SRVR_GitHub_v26.11.08.02/tools/test_backend_logic.py
 BACKEND ENCODER STATUS AND STARTUP LOGGING PASS
 BACKEND REGRESSION PASS
 
 ALL_SOURCE_CHECKS_PASS
 NOTE: Native Arduino and frozen desktop compilation remain GitHub Actions gates; physical RS485/EL7/motion tests remain bench commissioning gates.
 
-Supplementary source validation
-WORKFLOW_YAML_AND_BASH_SYNTAX_PASS 15 steps
-APPROVED_BASELINE_COMPARISON_PASS 26 byte-identical files; 36 function invariants
-QML lint PASS with the workflow flags; output byte-identical to the baseline
-SMOKE PHASE: QML exercise start
-SMOKE PHASE: RS485 diagnostic reducer
-SMOKE PHASE: DSP1 frozen stress begin
-SMOKE PHASE: DSP1 frozen stress 50/200
-SMOKE PHASE: DSP1 frozen stress 100/200
-SMOKE PHASE: DSP1 frozen stress 150/200
-SMOKE PHASE: DSP1 frozen stress 200/200
-SMOKE PHASE: DSP1 frozen stress complete
-SMOKE PHASE: startup connection diagnostic reducer
-SMOKE PHASE: QML exercise complete
+Local pinned native build
+Arduino CLI 1.5.1 | ESP32 core 3.3.8
+Edgebox-ESP-100 and ESP32S3 Dev Module resolved by Arduino CLI
+STAGED_HMI_HEADER_PASS
+NATIVE_FIRMWARE_BUILD_PASS
+CTRL_TS 789552 bytes SHA256 95b7a1efd52dc906a71bf2de7e40eb57cd69583c77d0ad57716781d30b6e0fe3
+CTRL 1510336 bytes SHA256 b9c1faf80039ded88e015181fa750a17c79c8cc7fadb03ab30a8c4859cbea41f
+W1P 730960 bytes SHA256 aa9540f504cb3b61b2b1a8c43d4c9f14aa28d57d70abf1e27e4da497c2036291
+Native SHA-256 manifest passed
 SMOKE PASS: locked pages, Settings/Free-D auto-save, structured Log, shortcuts and calibration overlay instantiated
-The offscreen Linux smoke also reports the baseline HelveticaNeue font fallback.
+QML lint output matched the baseline
