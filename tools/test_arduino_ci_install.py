@@ -19,10 +19,15 @@ def step_script(name):
     return dedent(step.split('        run: |\n', 1)[1])
 
 
+configure = step_script('Configure Arduino directories')
 install = step_script('Install ESP32 Arduino core 3.3.8')
 verify = step_script('Verify ESP32 firmware board targets')
+firmware_job_header = workflow.split('  build-firmware:\n', 1)[1].split('    steps:\n', 1)[0]
+assert '${{ runner.' not in firmware_job_header
+assert 'ARDUINO_DIRECTORIES_' not in firmware_job_header
 assert 'ARDUINO_BOARD_MANAGER_ADDITIONAL_URLS: https://espressif.github.io/arduino-esp32/package_esp32_index.json' in workflow
 assert 'ARDUINO_NETWORK_CONNECTION_TIMEOUT: 120s' in workflow
+assert workflow.index('name: Configure Arduino directories') < workflow.index('name: Set up Arduino CLI')
 assert workflow.index('actions/cache/restore@v4') < workflow.index('name: Install ESP32 Arduino core 3.3.8')
 assert workflow.index('name: Verify ESP32 firmware board targets') < workflow.index('actions/cache/save@v4')
 assert workflow.count('path: ${{ env.ARDUINO_DIRECTORIES_DOWNLOADS }}/packages') == 2
@@ -64,6 +69,16 @@ test "$ARDUINO_TEST_STAGE_FAILURE" = 0
 
 with tempfile.TemporaryDirectory(prefix='hvp2p-arduino-ci-') as directory:
     scratch = Path(directory)
+    bash = ['bash', '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c']
+    runner_temp = scratch / 'runner temp'
+    env_file = scratch / 'env file'
+    env_file.write_text('EXISTING_VALUE=preserved\n')
+    subprocess.run([*bash, configure], check=True,
+                   env=dict(os.environ, RUNNER_TEMP=str(runner_temp), GITHUB_ENV=str(env_file)))
+    runner_env = dict(line.split('=', 1) for line in env_file.read_text().splitlines())
+    assert runner_env == dict(EXISTING_VALUE='preserved',
+                              ARDUINO_DIRECTORIES_DATA=str(runner_temp / 'hvp2p-arduino-data'),
+                              ARDUINO_DIRECTORIES_DOWNLOADS=str(runner_temp / 'hvp2p-arduino-downloads')), runner_env
     for name, body in [('arduino-cli', fake_cli), ('python3', fake_stage), ('sleep', '#!/bin/sh\nexit 0\n')]:
         executable = scratch / name
         executable.write_text(body)
@@ -72,13 +87,12 @@ with tempfile.TemporaryDirectory(prefix='hvp2p-arduino-ci-') as directory:
 
     def run(script, *, index_failures=0, install_failures=0, stage_failure=0, missing_board=''):
         call_log.write_text('')
-        env = dict(os.environ, PATH=f'{scratch}{os.pathsep}{os.environ["PATH"]}',
+        env = dict(os.environ, **runner_env, PATH=f'{scratch}{os.pathsep}{os.environ["PATH"]}',
                    ARDUINO_TEST_LOG=str(call_log), ARDUINO_TEST_INDEX_FAILURES=str(index_failures),
                    ARDUINO_TEST_INSTALL_FAILURES=str(install_failures), ARDUINO_TEST_MISSING_BOARD=missing_board,
-                   ARDUINO_TEST_PYTHON=sys.executable, ARDUINO_TEST_STAGE_FAILURE=str(stage_failure),
-                   ARDUINO_DIRECTORIES_DATA=str(scratch / 'data'), ARDUINO_DIRECTORIES_DOWNLOADS=str(scratch / 'downloads'))
+                   ARDUINO_TEST_PYTHON=sys.executable, ARDUINO_TEST_STAGE_FAILURE=str(stage_failure))
         result = subprocess.run(
-            ['bash', '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', script],
+            [*bash, script],
             env=env, capture_output=True, text=True, check=False,
         )
         return result, call_log.read_text().splitlines()
@@ -113,4 +127,4 @@ with tempfile.TemporaryDirectory(prefix='hvp2p-arduino-ci-') as directory:
         assert result.returncode != 0 and calls == expected_calls, calls
         assert missing in result.stderr
 
-print('ARDUINO_CI_INSTALL_RETRY_AND_BOARD_GATES_PASS')
+print('ARDUINO_CI_RUNNER_PATHS_INSTALL_RETRY_AND_BOARD_GATES_PASS')

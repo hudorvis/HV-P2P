@@ -1,3 +1,9 @@
+# v26.11.09.04 — 2026-11-09
+
+- Initialise both Arduino directories within the firmware runner and export them to the following steps.
+- Exercise the runner path setup, the existing per-archive retries and the board checks. Validated the whole workflow with actionlint 1.7.12.
+- Advance the matched release identity and macOS build number 2611.9.4.
+
 # v26.11.09.03 — 2026-11-09
 
 - Stage and verify each pinned ESP32 archive independently before Arduino CLI installs the core.
