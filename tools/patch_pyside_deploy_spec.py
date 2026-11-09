@@ -15,6 +15,7 @@ import sys
 FILES = (
     "firmware_bundle/ctrl.bin",
     "firmware_bundle/w1p.bin",
+    "firmware_bundle/pdm.bin",
     "firmware_bundle/manifest.json",
     "firmware_bundle/SHA256SUMS.txt",
 )

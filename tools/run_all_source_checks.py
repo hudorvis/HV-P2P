@@ -55,6 +55,8 @@ checks=[
     ['python3',str(ROOT/'tools'/'test_macos_frozen_runtime_hardening_101102.py')],
     ['python3',str(ROOT/'tools'/'test_auto_ota_contract.py')],
     ['python3',str(ROOT/'tools'/'test_srvr_authority_server.py')],
+    ['python3',str(ROOT/'tools'/'test_pdm_integration.py')],
+    ['python3',str(ROOT/'tools'/'test_pdm_ota_host.py')],
     ['python3',str(ROOT/'tools'/'test_embed_tool.py')],
     ['python3',str(ROOT/'tools'/'test_native_build_orchestration.py')],
     ['python3',str(ROOT/'tools'/'test_arduino_ci_install.py')],
@@ -66,7 +68,7 @@ checks=[
     ['python3',str(ROOT/'tools'/'test_release_consistency.py')],
     ['python3',str(ROOT/'tools'/'test_source_hygiene.py')],
     ['python3',str(ROOT/'tools'/'test_python_syntax.py')],
-    ['python3',str(ROOT/'SRVR_GitHub_v26.11.08.02'/'tools'/'validate_project.py')],
+    ['python3',str(ROOT/'SRVR_GitHub_v26.11.09.02'/'tools'/'validate_project.py')],
 ]
 env=os.environ.copy(); env['PYTHONDONTWRITEBYTECODE']='1'
 for cmd in checks:
@@ -79,8 +81,9 @@ try:
 except Exception:
     print('\nBACKEND_RUNTIME_TEST_SKIPPED: PySide6 not installed in source-audit environment')
 else:
-    cmd=['python3',str(ROOT/'SRVR_GitHub_v26.11.08.02'/'tools'/'test_backend_logic.py')]
-    print('\n==>', ' '.join(cmd), flush=True)
-    subprocess.run(cmd,check=True,cwd=ROOT,env=env)
+    for test in (ROOT/'SRVR_GitHub_v26.11.09.02'/'tools'/'test_backend_logic.py', ROOT/'tools'/'test_pdm_qt_runtime.py'):
+        cmd=['python3',str(test)]
+        print('\n==>', ' '.join(cmd), flush=True)
+        subprocess.run(cmd,check=True,cwd=ROOT,env=env)
 print('\nALL_SOURCE_CHECKS_PASS')
 print('NOTE: Native Arduino and frozen desktop compilation remain GitHub Actions gates; physical RS485/EL7/motion tests remain bench commissioning gates.')

@@ -6,9 +6,10 @@ GitHub Actions is the authoritative native compiler. Order:
   2. Embed that exact CTRL-TS app/hash into an isolated CTRL source copy.
   3. Compile CTRL.
   4. Compile W1P.
-  5. Verify retained role/target/version identity tokens.
-  6. Build immutable SRVR_FIRMWARE_BUNDLE for CTRL and W1P.
-  7. Preserve only clean staged Arduino source and native outputs outside checkout.
+  5. Compile PDM and verify its USB bootstrap partition table.
+  6. Verify retained role/target/version identity tokens.
+  7. Build immutable SRVR_FIRMWARE_BUNDLE for CTRL, W1P and PDM.
+  8. Preserve only clean staged Arduino source and native outputs outside checkout.
 """
 from __future__ import annotations
 
@@ -18,17 +19,20 @@ import hashlib
 import json
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
 
-VER = "26.11.08.02"
+VER = "26.11.09.02"
 SEMVER = f"v{VER}"
 CTRL_SLOT = 0x600000
 HMI_SLOT = 0x380000
+PDM_SLOT = 0x1E0000
 BUNDLE_SCHEMA = "hv-p2p-firmware-manifest-v1"
 BUNDLE_AUTHORITY = "HV_P2P_SRVR"
 EDGEBOX_TARGET = "EDGEBOX_ESP100"
+PDM_TARGET = "OLIMEX_ESP32_POE_ISO"
 WAVESHARE_ST7262_LVGL_COMMIT = os.environ.get(
     "WAVESHARE_ST7262_LVGL_COMMIT", "593775b89ebfd2d411df3eadba7bc382767ed4a4"
 )
@@ -44,6 +48,7 @@ HMI_FQBN = (
     "CDCOnBoot=cdc,USBMode=hwcdc,UploadMode=default,UploadSpeed=921600,"
     "PartitionScheme=custom"
 )
+PDM_FQBN = "esp32:esp32:esp32-poe-iso:PartitionScheme=min_spiffs"
 
 
 def _clean_env() -> dict[str, str]:
@@ -80,6 +85,22 @@ def source_snapshot(root: Path) -> dict[str, str]:
 def require_binary_token(path: Path, token: str, role: str) -> None:
     if token.encode("ascii") not in path.read_bytes():
         raise SystemExit(f"ERROR: {role} application missing retained identity token: {token}")
+
+
+def verify_pdm_partitions(path: Path) -> None:
+    entries = {}
+    for magic, kind, subtype, offset, size, label, _ in struct.iter_unpack("<HBBII16sI", path.read_bytes()):
+        if magic != 0x50AA:
+            break
+        entries[label.rstrip(b"\0")] = (kind, subtype, offset, size)
+    expected = {
+        b"nvs": (1, 2, 0x9000, 0x5000),
+        b"otadata": (1, 0, 0xE000, 0x2000),
+        b"app0": (0, 0x10, 0x10000, PDM_SLOT),
+        b"app1": (0, 0x11, 0x1F0000, PDM_SLOT),
+    }
+    if any(entries.get(label) != entry for label, entry in expected.items()):
+        raise SystemExit("ERROR: PDM bootstrap partition table must preserve NVS and contain two OTA slots")
 
 
 def find_app_bin(build_dir: Path, sketch_stem: str) -> Path:
@@ -123,13 +144,15 @@ def bundle_id_for(release: str, ctrl_sha: str, w1p_sha: str) -> str:
     return hashlib.sha256(f"{release}\nCTRL={ctrl_sha}\nW1P={w1p_sha}\n".encode("ascii")).hexdigest()
 
 
-def make_firmware_bundle(ctrl_app: Path, w1p_app: Path, out_dir: Path) -> dict:
+def make_firmware_bundle(ctrl_app: Path, w1p_app: Path, pdm_app: Path, out_dir: Path) -> dict:
     """Create the immutable SRVR authority payload from verified native apps."""
     out_dir.mkdir(parents=True, exist_ok=True)
     ctrl_dst = out_dir / "ctrl.bin"
     w1p_dst = out_dir / "w1p.bin"
+    pdm_dst = out_dir / "pdm.bin"
     shutil.copy2(ctrl_app, ctrl_dst)
     shutil.copy2(w1p_app, w1p_dst)
+    shutil.copy2(pdm_app, pdm_dst)
     ctrl_sha, w1p_sha = sha256(ctrl_dst), sha256(w1p_dst)
     bundle_id = bundle_id_for(SEMVER, ctrl_sha, w1p_sha)
     manifest = {
@@ -142,6 +165,8 @@ def make_firmware_bundle(ctrl_app: Path, w1p_app: Path, out_dir: Path) -> dict:
                      "version": SEMVER, "size": ctrl_dst.stat().st_size, "sha256": ctrl_sha},
             "w1p": {"file": "w1p.bin", "role": "W1P", "target": EDGEBOX_TARGET,
                     "version": SEMVER, "size": w1p_dst.stat().st_size, "sha256": w1p_sha},
+            "pdm": {"file": "pdm.bin", "role": "PDM", "target": PDM_TARGET,
+                    "version": SEMVER, "size": pdm_dst.stat().st_size, "sha256": sha256(pdm_dst)},
         },
     }
     manifest_path = out_dir / "manifest.json"
@@ -149,6 +174,7 @@ def make_firmware_bundle(ctrl_app: Path, w1p_app: Path, out_dir: Path) -> dict:
     sums = [
         f"{sha256(ctrl_dst)}  ctrl.bin",
         f"{sha256(w1p_dst)}  w1p.bin",
+        f"{sha256(pdm_dst)}  pdm.bin",
         f"{sha256(manifest_path)}  manifest.json",
     ]
     (out_dir / "SHA256SUMS.txt").write_text("\n".join(sums) + "\n", encoding="utf-8")
@@ -185,7 +211,9 @@ def main() -> int:
     ctrl_name = f"HV_P2P_CTRL_EDGEBOX_v{VER}"
     hmi_name = f"HV_P2P_CTRL_TS_v{VER}"
     w1p_name = f"HV_P2P_W1P_EDGEBOX_v{VER}"
-    for d in (ctrl_name, hmi_name, w1p_name):
+    pdm_name = f"HV_P2P_PDM_v{VER}"
+    sketches = (ctrl_name, hmi_name, w1p_name, pdm_name)
+    for d in sketches:
         if not (root / d / f"{d}.ino").is_file():
             raise SystemExit(f"ERROR: source sketch missing: {d}")
     guard = (root / ctrl_name / "HV_P2P_CTRL_TS_Firmware_Image.h").read_text(errors="replace")
@@ -200,7 +228,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="hvp2p_native_") as td:
         td = Path(td)
         stage, build = td / "source", td / "build"
-        for d in (ctrl_name, hmi_name, w1p_name):
+        for d in sketches:
             shutil.copytree(root / d, stage / d)
 
         hmi_app = compile_sketch(args.arduino_cli, stage / hmi_name, HMI_FQBN, build / "ctrl_ts")
@@ -213,16 +241,22 @@ def main() -> int:
 
         ctrl_app = compile_sketch(args.arduino_cli, stage / ctrl_name, EDGEBOX_FQBN, build / "ctrl", CTRL_SLOT)
         w1p_app = compile_sketch(args.arduino_cli, stage / w1p_name, EDGEBOX_FQBN, build / "w1p", CTRL_SLOT)
-        for role, app in (("CTRL", ctrl_app), ("W1P", w1p_app)):
-            if not 0 < app.stat().st_size <= CTRL_SLOT or app.read_bytes()[:1] != b"\xE9":
+        pdm_app = compile_sketch(args.arduino_cli, stage / pdm_name, PDM_FQBN, build / "pdm")
+        verify_pdm_partitions(pdm_app.with_name(f"{pdm_name}.ino.partitions.bin"))
+        for role, app, target, slot in (
+            ("CTRL", ctrl_app, EDGEBOX_TARGET, CTRL_SLOT),
+            ("W1P", w1p_app, EDGEBOX_TARGET, CTRL_SLOT),
+            ("PDM", pdm_app, PDM_TARGET, PDM_SLOT),
+        ):
+            if not 32768 <= app.stat().st_size <= slot or app.read_bytes()[:1] != b"\xE9":
                 raise SystemExit(f"ERROR: invalid/oversize {role} application")
             require_binary_token(app, f"HV_P2P_FW_ROLE={role};", role)
-            require_binary_token(app, f"HV_P2P_FW_TARGET={EDGEBOX_TARGET};", role)
+            require_binary_token(app, f"HV_P2P_FW_TARGET={target};", role)
             require_binary_token(app, f"HV_P2P_FW_VERSION={SEMVER};", role)
 
         staged_src = output / "STAGED_SOURCE"
         staged_src.mkdir(parents=True)
-        for d in (ctrl_name, hmi_name, w1p_name):
+        for d in sketches:
             shutil.copytree(stage / d, staged_src / d)
         _strip_generated_tree(staged_src)
 
@@ -231,17 +265,22 @@ def main() -> int:
         products += copy_build_products(build / "ctrl_ts", bins_dir / "CTRL_TS", hmi_name)
         products += copy_build_products(build / "ctrl", bins_dir / "CTRL", ctrl_name)
         products += copy_build_products(build / "w1p", bins_dir / "W1P", w1p_name)
+        products += copy_build_products(build / "pdm", bins_dir / "PDM", pdm_name)
         canonical = {
             "CTRL_TS": bins_dir / f"{hmi_name}.ino.bin",
             "CTRL": bins_dir / f"{ctrl_name}.ino.bin",
             "W1P": bins_dir / f"{w1p_name}.ino.bin",
+            "PDM": bins_dir / f"{pdm_name}.ino.bin",
         }
-        for src, dst in ((hmi_app, canonical["CTRL_TS"]), (ctrl_app, canonical["CTRL"]), (w1p_app, canonical["W1P"])):
+        for role, src in (("CTRL_TS", hmi_app), ("CTRL", ctrl_app), ("W1P", w1p_app), ("PDM", pdm_app)):
+            dst = canonical[role]
             shutil.copy2(src, dst)
             products.append(dst)
 
         fw_bundle = output / "SRVR_FIRMWARE_BUNDLE"
-        bundle_manifest = make_firmware_bundle(ctrl_app, w1p_app, fw_bundle)
+        bundle_manifest = make_firmware_bundle(ctrl_app, w1p_app, pdm_app, fw_bundle)
+        guide = f"PDM_BOOTSTRAP_v{VER}.md"
+        shutil.copy2(root / guide, output / guide)
 
         native_manifest = {
             "release": SEMVER,
@@ -249,9 +288,10 @@ def main() -> int:
             "dependencies": {
                 "Waveshare_ST7262_LVGL": {"repository": "https://github.com/iamfaraz/Waveshare_ST7262_LVGL.git", "commit": WAVESHARE_ST7262_LVGL_COMMIT},
                 "lvgl": "8.3.11", "ESP32_Display_Panel": "0.1.6", "ESP32_IO_Expander": "0.0.3", "JPEGDEC": "1.8.4",
+                "ArduinoJson": "7.4.2",
             },
-            "fqbn": {"CTRL_TS": HMI_FQBN, "CTRL": EDGEBOX_FQBN, "W1P": EDGEBOX_FQBN},
-            "slot_limits": {"CTRL_TS": HMI_SLOT, "CTRL": CTRL_SLOT, "W1P": CTRL_SLOT},
+            "fqbn": {"CTRL_TS": HMI_FQBN, "CTRL": EDGEBOX_FQBN, "W1P": EDGEBOX_FQBN, "PDM": PDM_FQBN},
+            "slot_limits": {"CTRL_TS": HMI_SLOT, "CTRL": CTRL_SLOT, "W1P": CTRL_SLOT, "PDM": PDM_SLOT},
             "applications": {role: {"file": str(path.relative_to(output)), "size": path.stat().st_size, "sha256": sha256(path)} for role, path in canonical.items()},
             "firmware_bundle": {"directory": "SRVR_FIRMWARE_BUNDLE", "bundle_id": bundle_manifest["bundle_id"]},
         }

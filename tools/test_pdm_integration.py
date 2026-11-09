@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+"""Exercise optional authority and the SRVR client against PDM API fixtures."""
+from contextlib import closing
+from hashlib import sha256
+from http.client import HTTPConnection
+import gzip
+import json
+from pathlib import Path
+import re
+import sys
+from tempfile import TemporaryDirectory
+import unittest
+from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
+
+from embed_pdm_web import ASSETS
+from native_build_firmware import PDM_TARGET, SEMVER, VER, make_firmware_bundle
+
+ROOT = Path(__file__).resolve().parents[1]
+PDM = ROOT / f"HV_P2P_PDM_v{VER}"
+sys.path.insert(0, str(ROOT / f"SRVR_GitHub_v{VER}"))
+from firmware_authority import FirmwareAuthorityServer, FirmwareBundle
+from pdm_client import PdmSession, Timeline, parse_history_page
+
+EPOCH = 1_794_233_000_000
+HEADER = "t_ms,utc_ms,v48_1,v48_2,v24,v12\n"
+IDENTITY = f"HV_P2P_FW_ROLE=PDM;HV_P2P_FW_TARGET={PDM_TARGET};HV_P2P_FW_VERSION={SEMVER};".encode()
+
+
+def get(server, path, *, source="127.0.0.1"):
+    with closing(HTTPConnection("127.0.0.1", server.port, timeout=2, source_address=(source, 0))) as client:
+        client.request("GET", path)
+        response = client.getresponse()
+        return response.status, response.read()
+
+
+class Device:
+    def __init__(self):
+        self.samples = {}
+        self.now = 10_500
+        self.durable = 10_000
+        self.generation = 1
+        self.boot = "oldboot"
+        self.online = True
+        self.sd = True
+        self.synced = True
+        self.partial = False
+        self.offset = 0.75
+        self.names = ("Radio supply", "Brake supply", "24 V", "12 V")
+        self.cursors = []
+        self.clock_writes = []
+        for stamp in (8500, 9000, 9500, 10000, 10500):
+            self.add(stamp, None if stamp == 9500 else 47.5)
+
+    def add(self, sample_id, voltage=47.5):
+        self.now = sample_id
+        self.samples[sample_id] = (sample_id, EPOCH + sample_id if self.synced else 0, voltage, 49.5, 24.0, 12.0)
+
+    def fetch(self, address, path, **kwargs):
+        assert address == "172.20.1.110"
+        if not self.online:
+            raise TimeoutError("PDM absent")
+        url = urlsplit(path)
+        query = parse_qs(url.query)
+        if url.path == "/api/voltages":
+            after = int(query["after"][0])
+            self.cursors.append(after)
+            latest = self.samples[max(self.samples)]
+            rows = [row for row in self.samples.values() if row[0] > after]
+            data = dict(boot=self.boot, generation=self.generation, now_t=self.now,
+                        now_utc_ms=EPOCH + self.now if self.synced else 0,
+                        stored_through=self.durable, t=latest[0], utc_ms=latest[1],
+                        v48_1=latest[2], v48_2=latest[3], v24=latest[4], v12=latest[5],
+                        sd_ok=self.sd, log_healthy=self.sd, sample_period_ms=500,
+                        log_hours=12, offset0=self.offset, recent=rows[:32],
+                        gap=False, more=len(rows) > 32, fw_version=SEMVER,
+                        fw_update="Current", fw_progress=0, alarms=["OK"] * 4)
+        elif url.path == "/api/history":
+            assert query["format"] == ["csv"] and query["generation"] == [str(self.generation)]
+            end = int(query["end"][0])
+            before = int(query["before"][0])
+            ids = sorted((stamp for stamp in self.samples if stamp < before and stamp <= min(end, self.durable)),
+                         reverse=True)
+            rows = "".join(",".join("" if value is None else str(value) for value in self.samples[stamp]) + "\n"
+                           for stamp in ids[:2])
+            tail = "" if self.partial else f"#end,{ids[1] if len(ids) > 2 else 0},0\n"
+            return (HEADER + rows + tail).encode()
+        elif url.path == "/api/names":
+            data = {f"ch{index}": name for index, name in enumerate(self.names, 1)}
+        elif url.path == "/api/time":
+            self.clock_writes.append(kwargs["body"]["utc_ms"])
+            data = {"ok": True}
+        else:
+            raise AssertionError(path)
+        return json.dumps(data).encode()
+
+
+class PdmIntegration(unittest.TestCase):
+    def setUp(self):
+        self.tmp = TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.bundle = root / "bundle"
+        self.apps = (b"\xe9CTRL", b"\xe9W1P", b"\xe9" + IDENTITY + b"\0" * 32768)
+        files = []
+        for index, image in enumerate(self.apps):
+            path = root / f"{index}.bin"
+            path.write_bytes(image)
+            files.append(path)
+        self.manifest = make_firmware_bundle(*files, self.bundle)
+
+    def server(self):
+        server = FirmwareAuthorityServer(SEMVER, host="127.0.0.1", port=0, bundle_dir=self.bundle)
+        server.start()
+        self.addCleanup(server.close)
+        return server
+
+    def test_pdm_optional_and_wrong_target(self):
+        for problem in ("absent", "wrong manifest target", "wrong binary target", "damaged"):
+            with self.subTest(problem=problem):
+                self.manifest["images"]["pdm"] = dict(self.manifest["images"].get("pdm", {}),
+                    file="pdm.bin", role="PDM", target=PDM_TARGET, version=SEMVER,
+                    sha256=sha256(self.apps[2]).hexdigest(), size=len(self.apps[2]))
+                payload = self.apps[2]
+                if problem == "absent":
+                    del self.manifest["images"]["pdm"]
+                elif problem == "wrong manifest target":
+                    self.manifest["images"]["pdm"]["target"] = "EDGEBOX_ESP100"
+                elif problem == "wrong binary target":
+                    payload = payload.replace(PDM_TARGET.encode(), b"X" * len(PDM_TARGET))
+                    self.manifest["images"]["pdm"]["sha256"] = sha256(payload).hexdigest()
+                else:
+                    payload = payload[:-1] + b"X"
+                (self.bundle / "pdm.bin").write_bytes(payload)
+                (self.bundle / "manifest.json").write_text(json.dumps(self.manifest))
+                bundle = FirmwareBundle(self.bundle, SEMVER)
+                self.assertEqual(set(bundle.images), {"ctrl", "w1p"})
+                self.assertEqual(bool(bundle.pdm_error), problem != "absent")
+                server = self.server()
+                self.assertEqual(get(server, "/firmware/pdm/manifest")[0], 404)
+                self.assertEqual(get(server, "/firmware/ctrl/image"), (200, self.apps[0]))
+                self.assertEqual(get(server, "/firmware/w1p/image"), (200, self.apps[1]))
+                server.close()
+
+    def test_live_idle_lease_and_independent_edgebox_routes(self):
+        server = self.server()
+        now = 0.0
+        window = server.pdm_window
+        window._clock = lambda: now
+        path = "/firmware/pdm"
+        status, body = get(server, path + "/manifest")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["target"], PDM_TARGET)
+        self.assertEqual(get(server, path + "/image")[0], 409)
+        for tick in range(12):
+            now = tick * 0.25
+            window.observe("127.0.0.1", True)
+        self.assertEqual(get(server, path + "/permit")[0], 409)
+        now = 3.0
+        window.observe("127.0.0.1", True)
+        self.assertEqual(get(server, path + "/permit"), (200, f"{SEMVER} {sha256(self.apps[2]).hexdigest()}\n".encode()))
+        self.assertEqual(get(server, path + "/image"), (200, self.apps[2]))
+        self.assertEqual(get(server, path + "/image", source="127.0.0.2")[0], 409)
+        now += 0.5
+        self.assertEqual(get(server, path + "/permit")[0], 409)
+        for tick in range(13):
+            now = 4.0 + tick * 0.25
+            window.observe("127.0.0.1", True)
+        self.assertEqual(get(server, path + "/permit")[0], 200)
+        window.observe("127.0.0.1", False)
+        self.assertEqual(get(server, path + "/permit")[0], 409)
+        self.assertEqual(get(server, "/firmware/w1p/image"), (200, self.apps[1]))
+
+    def test_history_load_during_logging_and_reboot(self):
+        device = Device()
+        session = PdmSession("172.20.1.110", device.fetch)
+        self.assertEqual(session.poll(), 0.05)
+        session.service_labels_and_clock()
+        self.assertEqual(session.summary()["labels"], list(device.names))
+        self.assertEqual(session.summary()["voltages"][0], 48.25)
+        self.assertEqual(session.summary()["version"], SEMVER)
+        session.history_page()
+        self.assertTrue(session.history_needed)
+        device.add(11000, 48.0)
+        device.durable = 11000
+        session.poll()
+        self.assertEqual(device.cursors[-1], 10000)
+        session.history_page()
+        self.assertFalse(session.history_needed)
+        self.assertEqual([row.id for row in session.timeline.after(0)], sorted(device.samples))
+        self.assertIn([EPOCH + 9500, None], session.timeline.graph(session.offsets, session.period)[0])
+        device.offset = -0.5
+        session.poll()
+        self.assertEqual(session.timeline.count, 6)
+        self.assertEqual(session.summary()["voltages"][0], 47.5)
+        self.assertEqual(session.timeline.graph(session.offsets, session.period)[0][0], [EPOCH + 8500, 47.0])
+        device.online = False
+        with self.assertRaises(TimeoutError):
+            session.poll()
+        session.online = False
+        self.assertFalse(session.summary()["online"])
+        device.online = True
+        device.boot = "newboot"
+        device.generation += 1
+        device.synced = False
+        device.add(11500)
+        with patch("pdm_client.time.time_ns", return_value=(EPOCH + device.now) * 1_000_000):
+            session.poll()
+            session.service_labels_and_clock()
+            self.assertEqual(len(device.clock_writes), 1)
+            self.assertTrue(session.summary()["estimated"])
+            self.assertTrue(session.history_needed)
+            session.poll()
+            for _ in range(3):
+                session.history_page()
+        self.assertFalse(session.history_needed)
+        self.assertEqual([row.id for row in session.timeline.after(0)], sorted(device.samples))
+        self.assertEqual(session.summary()["labels"], list(device.names))
+        self.assertEqual(session.summary()["voltages"][0], 47.0)
+        self.assertTrue(session.summary()["logging"])
+
+    def test_partial_pages_and_missing_data(self):
+        device = Device()
+        session = PdmSession("172.20.1.110", device.fetch)
+        session.poll()
+        device.partial = True
+        session.history_page()
+        self.assertTrue(session.history_needed)
+        self.assertIsNone(session.loading)
+        device.partial = False
+        device.sd = False
+        session.history_retry = 0.0
+        session.poll()
+        session.history_page()
+        self.assertEqual(session.summary()["history"], "SD history unavailable")
+        device.now += 4000
+        session.poll()
+        self.assertFalse(session.summary()["fresh"])
+        for invalid in ("", "#end,2,0\n", "2,0,1,2,3,4\n#end,3,0\n",
+                        "2,0,1,2,3,4\n2,0,1,2,3,4\n#end,0,0\n"):
+            with self.assertRaises(ValueError):
+                parse_history_page((HEADER + invalid).encode(), 10)
+        history = Timeline()
+        for stamp, utc in ((10, 0), (20, EPOCH - 1000), (8000, 0)):
+            history.add((stamp, utc, (48.0,) * 4), (0, EPOCH))
+        self.assertEqual(history.graph((0, 0, 0, 0), 500)[0],
+                         [[EPOCH + 10, 48.0], [EPOCH + 20, 48.0], [EPOCH + 21, None], [EPOCH + 8000, 48.0]])
+
+    def test_firmware_embeds_the_exact_web_assets(self):
+        header = (PDM / "pdm_web_assets.h").read_text()
+        for filename, symbol in ASSETS.items():
+            match = re.search(rf"\b{symbol}\[\] PROGMEM = \{{([^}}]+)\}};", header)
+            self.assertIsNotNone(match, symbol)
+            data = bytes(int(value, 16) for value in re.findall(r"0x([0-9a-f]{2})", match[1]))
+            self.assertEqual(gzip.decompress(data), (PDM / "web" / filename).read_bytes())
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

@@ -1,0 +1,49 @@
+HV P2P SYS v26.11.09.02 verification
+====================================
+
+Source inputs
+  SYS v26.11.08.02 GitHub source
+  SHA-256 73a0af7c4a594036b2c2a700f7b51bae6e288acda42dbfc8432324b89d11c0e5
+  PDM v26.11.09.01 standalone source and web assets
+  SHA-256 e0b3f19212a8ab7e28799e5b61631cd4c98efe0c706cb90aecc07067f3208def
+
+Local source verification
+  PASS  68 checks including both PySide6 runtime regressions and 83 Python
+        syntax checks. Includes the existing SYS motion, W1P, encoder,
+        Modbus, RS485, HMI, firmware convergence and E-stop tests.
+  PASS  Role and target mismatch, corrupt or absent PDM image, idle lease
+        expiration and wrong-peer rejection, with CTRL/W1P routes available.
+  PASS  Compiled the actual PDM OTA transfer code with host network and flash
+        fixtures. Checked interrupted or stalled streams, wrong interface,
+        wrong target, digest mismatch, revoked idle and successful activation.
+  PASS  PDM history fixture advanced the log during paged retrieval, changed
+        calibration and simulated reconnect. Checked deduplication, lost
+        reads, malformed pages, retained labels and clock recovery.
+  PASS  Rendered Power in Qt at the minimum SRVR window size with real HTTP
+        fixture traffic and chunked history, including valid readings around a
+        gap, address persistence, stale and offline status.
+  PASS  Simulated a 12-hour, 172,800-sample timeline at 250 ms and checked
+        retention capacity, deduplication and bounded graph rendering.
+  PASS  Compared the existing firmware with SYS v26.11.08.02 after release
+        normalization and compared the SRVR motion and update functions.
+  PASS  Verified that the embedded dashboard assets decode to the bundled web
+        source, and that the PDM's measurement and settings formats carry over.
+  PASS  GitHub workflow YAML and syntax of all 16 Bash steps.
+  PASS  PySide6 6.11.1 QRC and QML lint under the CI flags, and a full offscreen
+        SRVR smoke with the real firmware bundle and required PDM validation.
+        Existing Linux HelveticaNeue fallback warnings were nonfatal.
+
+Local native firmware verification
+  PASS  Arduino CLI 1.5.1, ESP32 core 3.3.8, pinned board library versions.
+        CTRL-TS compiled first and its exact image was verified in staged CTRL.
+        CTRL, W1P and Olimex PDM built. Application and bundle SHA-256 checks passed.
+  PASS  The compiled Olimex partition table preserves NVS at 0x9000/0x5000
+        and provides two 0x1E0000-byte OTA app slots plus OTA metadata.
+        The local PDM application file is 1,286,784 bytes.
+        PDM app SHA-256 aeac373bdf475ec32c52c0af3021125495c0aed49a88cf81d1876acf156b396b
+
+Remaining verification
+  GitHub Actions macOS Intel, macOS Apple Silicon and Windows x64 deployment.
+  Physical Olimex bootstrap, Ethernet/AP dashboard, real update interruption,
+  reflash/reconnect with retained settings and card data, and concurrent
+  live/history/SD operation. See the native build and bench checklist.

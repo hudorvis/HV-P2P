@@ -81,9 +81,10 @@ with tempfile.TemporaryDirectory(prefix='hvp2p-arduino-ci-') as directory:
 
     edgebox = 'board details --fqbn esp32:esp32:Edgebox-ESP-100'
     hmi = 'board details --fqbn esp32:esp32:esp32s3'
+    pdm = 'board details --fqbn esp32:esp32:esp32-poe-iso:PartitionScheme=min_spiffs'
     result, calls = run(verify)
-    assert result.returncode == 0 and calls == [edgebox, hmi], calls
-    for missing, expected_calls in [(edgebox, [edgebox]), (hmi, [edgebox, hmi])]:
+    assert result.returncode == 0 and calls == [edgebox, hmi, pdm], calls
+    for missing, expected_calls in [(edgebox, [edgebox]), (hmi, [edgebox, hmi]), (pdm, [edgebox, hmi, pdm])]:
         result, calls = run(verify, missing_board=missing)
         assert result.returncode != 0 and calls == expected_calls, calls
         assert missing in result.stderr

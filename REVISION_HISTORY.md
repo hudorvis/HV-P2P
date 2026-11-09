@@ -1,3 +1,10 @@
+# v26.11.09.02 — 2026-11-09
+
+- Integrated the v26.11.09.01 Olimex PDM with optional, idle-gated Ethernet firmware updates from the running SRVR release.
+- Embedded the existing PDM web dashboard and added the native SRVR Power tab for live rails, retained history and independent update status.
+- Added the Olimex USB bootstrap and recovery guide, plus firmware authority, history and interrupted-update host checks.
+- macOS metadata uses short version 26.11.9 and build 2611.9.2.
+
 # v26.11.08.02 — 2026-11-08
 
 - Build workflow follow-up to v26.11.08.01 after the Xtensa toolchain download timed out in GitHub's ESP32 core setup.
