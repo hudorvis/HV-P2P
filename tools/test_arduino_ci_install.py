@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 from textwrap import dedent
 
@@ -22,6 +23,9 @@ install = step_script('Install ESP32 Arduino core 3.3.8')
 verify = step_script('Verify ESP32 firmware board targets')
 assert 'ARDUINO_BOARD_MANAGER_ADDITIONAL_URLS: https://espressif.github.io/arduino-esp32/package_esp32_index.json' in workflow
 assert 'ARDUINO_NETWORK_CONNECTION_TIMEOUT: 120s' in workflow
+assert workflow.index('actions/cache/restore@v4') < workflow.index('name: Install ESP32 Arduino core 3.3.8')
+assert workflow.index('name: Verify ESP32 firmware board targets') < workflow.index('actions/cache/save@v4')
+assert workflow.count('path: ${{ env.ARDUINO_DIRECTORIES_DOWNLOADS }}/packages') == 2
 
 fake_cli = """#!/usr/bin/env python3
 import os
@@ -43,20 +47,36 @@ if previous.count(command) < int(threshold) or command == os.environ["ARDUINO_TE
     sys.exit(1)
 """
 
+fake_stage = """#!/bin/sh
+if [ "$1" != tools/stage_esp32_archives.py ]; then
+    exec "$ARDUINO_TEST_PYTHON" "$@"
+fi
+set -e
+test "$2" = 3.3.8
+test "$3" = --data-dir
+test "$4" = "$ARDUINO_DIRECTORIES_DATA"
+test "$5" = --downloads-dir
+test "$6" = "$ARDUINO_DIRECTORIES_DOWNLOADS"
+printf 'stage %s\\n' "$2" >> "$ARDUINO_TEST_LOG"
+test "$ARDUINO_TEST_STAGE_FAILURE" = 0
+"""
+
 
 with tempfile.TemporaryDirectory(prefix='hvp2p-arduino-ci-') as directory:
     scratch = Path(directory)
-    for name, body in [('arduino-cli', fake_cli), ('sleep', '#!/bin/sh\nexit 0\n')]:
+    for name, body in [('arduino-cli', fake_cli), ('python3', fake_stage), ('sleep', '#!/bin/sh\nexit 0\n')]:
         executable = scratch / name
         executable.write_text(body)
         executable.chmod(0o755)
     call_log = scratch / 'calls.log'
 
-    def run(script, *, index_failures=0, install_failures=0, missing_board=''):
+    def run(script, *, index_failures=0, install_failures=0, stage_failure=0, missing_board=''):
         call_log.write_text('')
         env = dict(os.environ, PATH=f'{scratch}{os.pathsep}{os.environ["PATH"]}',
                    ARDUINO_TEST_LOG=str(call_log), ARDUINO_TEST_INDEX_FAILURES=str(index_failures),
-                   ARDUINO_TEST_INSTALL_FAILURES=str(install_failures), ARDUINO_TEST_MISSING_BOARD=missing_board)
+                   ARDUINO_TEST_INSTALL_FAILURES=str(install_failures), ARDUINO_TEST_MISSING_BOARD=missing_board,
+                   ARDUINO_TEST_PYTHON=sys.executable, ARDUINO_TEST_STAGE_FAILURE=str(stage_failure),
+                   ARDUINO_DIRECTORIES_DATA=str(scratch / 'data'), ARDUINO_DIRECTORIES_DOWNLOADS=str(scratch / 'downloads'))
         result = subprocess.run(
             ['bash', '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', script],
             env=env, capture_output=True, text=True, check=False,
@@ -64,10 +84,11 @@ with tempfile.TemporaryDirectory(prefix='hvp2p-arduino-ci-') as directory:
         return result, call_log.read_text().splitlines()
 
     index = 'core update-index'
+    stage = 'stage 3.3.8'
     package = 'core install esp32:esp32@3.3.8'
     result, calls = run(install, index_failures=2, install_failures=1)
     assert result.returncode == 0, result.stderr
-    assert calls == ['version', index, index, index, package, package, 'core list'], calls
+    assert calls == ['version', index, index, index, stage, package, package, 'core list'], calls
     assert result.stdout.count('::warning::') == 3
 
     result, calls = run(install, index_failures=3)
@@ -75,8 +96,11 @@ with tempfile.TemporaryDirectory(prefix='hvp2p-arduino-ci-') as directory:
     assert 'CLI detail for core update-index' in result.stderr
     assert '::error::arduino-cli core update-index failed after 3 attempts' in result.stderr
 
+    result, calls = run(install, stage_failure=1)
+    assert result.returncode != 0 and calls == ['version', index, stage], calls
+
     result, calls = run(install, install_failures=3)
-    assert result.returncode != 0 and calls == ['version', index, package, package, package], calls
+    assert result.returncode != 0 and calls == ['version', index, stage, package, package, package], calls
     assert f'::error::arduino-cli {package} failed after 3 attempts' in result.stderr
 
     edgebox = 'board details --fqbn esp32:esp32:Edgebox-ESP-100'

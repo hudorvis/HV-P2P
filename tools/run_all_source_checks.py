@@ -60,6 +60,7 @@ checks=[
     ['python3',str(ROOT/'tools'/'test_embed_tool.py')],
     ['python3',str(ROOT/'tools'/'test_native_build_orchestration.py')],
     ['python3',str(ROOT/'tools'/'test_arduino_ci_install.py')],
+    ['python3',str(ROOT/'tools'/'test_stage_esp32_archives.py')],
     ['python3',str(ROOT/'tools'/'validate_build_pipeline.py')],
     ['python3',str(ROOT/'tools'/'test_modbus_contract_host.py')],
     ['python3',str(ROOT/'tools'/'test_srvr_wire_contract.py')],
@@ -68,7 +69,7 @@ checks=[
     ['python3',str(ROOT/'tools'/'test_release_consistency.py')],
     ['python3',str(ROOT/'tools'/'test_source_hygiene.py')],
     ['python3',str(ROOT/'tools'/'test_python_syntax.py')],
-    ['python3',str(ROOT/'SRVR_GitHub_v26.11.09.02'/'tools'/'validate_project.py')],
+    ['python3',str(ROOT/'SRVR_GitHub_v26.11.09.03'/'tools'/'validate_project.py')],
 ]
 env=os.environ.copy(); env['PYTHONDONTWRITEBYTECODE']='1'
 for cmd in checks:
@@ -81,7 +82,7 @@ try:
 except Exception:
     print('\nBACKEND_RUNTIME_TEST_SKIPPED: PySide6 not installed in source-audit environment')
 else:
-    for test in (ROOT/'SRVR_GitHub_v26.11.09.02'/'tools'/'test_backend_logic.py', ROOT/'tools'/'test_pdm_qt_runtime.py'):
+    for test in (ROOT/'SRVR_GitHub_v26.11.09.03'/'tools'/'test_backend_logic.py', ROOT/'tools'/'test_pdm_qt_runtime.py'):
         cmd=['python3',str(test)]
         print('\n==>', ' '.join(cmd), flush=True)
         subprocess.run(cmd,check=True,cwd=ROOT,env=env)

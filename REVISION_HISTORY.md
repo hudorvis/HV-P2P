@@ -1,3 +1,9 @@
+# v26.11.09.03 — 2026-11-09
+
+- Stage and verify each pinned ESP32 archive independently before Arduino CLI installs the core.
+- Retry a failed GitHub release URL through the GitHub release-assets API and retain verified archives in the Actions cache.
+- Carry forward the integrated PDM and SRVR Power tab. macOS build metadata advances to 2611.9.3.
+
 # v26.11.09.02 — 2026-11-09
 
 - Integrated the v26.11.09.01 Olimex PDM with optional, idle-gated Ethernet firmware updates from the running SRVR release.

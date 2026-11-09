@@ -1,0 +1,38 @@
+HV P2P SYS v26.11.09.03 verification
+====================================
+
+Source baseline
+  HV-P2P-v26.11.09.02-GitHub.zip
+  SHA-256 c0217e39fb2e76327c880e16a0b4b06e2935bb1ff04fa598155850e4fd46f555
+
+ESP32 setup
+  PASS  Independently resolved and checked the 19 archives required by
+        Arduino ESP32 3.3.8 on Linux x64. A clean Arduino CLI 1.5.1 data
+        directory installed the core with network access blocked and
+        resolved EdgeBox, ESP32-S3 and Olimex board definitions.
+  PASS  The three archives in the reported log were downloaded from the
+        published endpoints and matched the Arduino/Espressif indexes.
+        The Xtensa debugger returned HTTP 504 on a separate direct test.
+        The GitHub API delivered the same archive and expected SHA-256.
+  PASS  Forced a first-attempt download failure through the new staging
+        helper and completed the real API lookup, binary download and
+        validation on its second attempt.
+  PASS  Fixtures cover retries independently across multiple archives,
+        corrupt restored data, digest mismatch, persistent failure and
+        the Arduino install and board verification steps.
+  PASS  GitHub workflow YAML and all 16 Bash step syntax checks.
+
+SYS and PDM
+  PASS  All 69 source regression commands, including both Qt runtime
+        checks and 85 Python syntax checks.
+  PASS  Compiled CTRL-TS, CTRL, W1P and PDM locally with ESP32 core 3.3.8.
+        Verified staged CTRL-TS carrier and the bundled firmware hashes.
+  PASS  Qt resource generation, QML lint and Linux offscreen SRVR smoke
+        with the matching, compiled firmware authority bundle.
+  PASS  Compared application source against v26.11.09.02 after normalising
+        the coordinated release version.
+
+Remaining verification
+  Run GitHub Actions to verify the hosted cache and frozen macOS Intel,
+  macOS Apple Silicon and Windows x64 packages. For physical testing,
+  follow NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.11.09.03.md.
