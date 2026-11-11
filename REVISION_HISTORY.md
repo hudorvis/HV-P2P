@@ -1,3 +1,9 @@
+# v26.11.12.01 — 2026-11-12
+
+- SRVR Monitoring tab with separate PDM and WSI addresses, log settings and web dashboard shortcuts.
+- Added a timestamped hover marker to the displayed samples on voltage and wind speed graphs.
+- Matched the PDM desktop and iOS web palettes and controls to SRVR and CTRL-TS.
+
 # v26.11.09.04 — 2026-11-09
 
 - Initialise both Arduino directories within the firmware runner and export them to the following steps.

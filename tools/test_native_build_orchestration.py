@@ -11,7 +11,7 @@ with tempfile.TemporaryDirectory() as td:
     d=Path(td); c=d/'c.bin'; w=d/'w.bin'; p=d/'p.bin'; out=d/'bundle'
     c.write_bytes(b'\xe9CTRL'); w.write_bytes(b'\xe9W1P'); p.write_bytes(b'\xe9PDM')
     doc=m.make_firmware_bundle(c,w,p,out)
-    assert set(doc['images'])=={'ctrl','w1p','pdm'} and doc['release']=='v26.11.09.04'
+    assert set(doc['images'])=={'ctrl','w1p','pdm'} and doc['release']=='v26.11.12.01'
     assert (out/'ctrl.bin').read_bytes()==b'\xe9CTRL' and (out/'w1p.bin').read_bytes()==b'\xe9W1P'
     assert (out/'pdm.bin').read_bytes()==b'\xe9PDM'
     assert doc['images']['pdm']['target']=='OLIMEX_ESP32_POE_ISO'

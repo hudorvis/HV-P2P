@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PDM = ROOT / f"HV_P2P_PDM_v{VER}"
 sys.path.insert(0, str(ROOT / f"SRVR_GitHub_v{VER}"))
 from firmware_authority import FirmwareAuthorityServer, FirmwareBundle
-from pdm_client import PdmSession, Timeline, parse_history_page
+from pdm_client import PdmSession, Timeline, WsiSession, parse_history_page
 
 EPOCH = 1_794_233_000_000
 HEADER = "t_ms,utc_ms,v48_1,v48_2,v24,v12\n"
@@ -35,6 +35,10 @@ def get(server, path, *, source="127.0.0.1"):
 
 
 class Device:
+    address = "172.20.1.110"
+    live_path = "/api/voltages"
+    keys = ("v48_1", "v48_2", "v24", "v12")
+    role = "pdm"
     def __init__(self):
         self.samples = {}
         self.now = 10_500
@@ -45,6 +49,8 @@ class Device:
         self.sd = True
         self.synced = True
         self.partial = False
+        self.hours = 12
+        self.period = 500
         self.offset = 0.75
         self.names = ("Radio supply", "Brake supply", "24 V", "12 V")
         self.cursors = []
@@ -57,12 +63,12 @@ class Device:
         self.samples[sample_id] = (sample_id, EPOCH + sample_id if self.synced else 0, voltage, 49.5, 24.0, 12.0)
 
     def fetch(self, address, path, **kwargs):
-        assert address == "172.20.1.110"
+        assert address == self.address
         if not self.online:
             raise TimeoutError("PDM absent")
         url = urlsplit(path)
         query = parse_qs(url.query)
-        if url.path == "/api/voltages":
+        if url.path == self.live_path:
             after = int(query["after"][0])
             self.cursors.append(after)
             latest = self.samples[max(self.samples)]
@@ -70,11 +76,11 @@ class Device:
             data = dict(boot=self.boot, generation=self.generation, now_t=self.now,
                         now_utc_ms=EPOCH + self.now if self.synced else 0,
                         stored_through=self.durable, t=latest[0], utc_ms=latest[1],
-                        v48_1=latest[2], v48_2=latest[3], v24=latest[4], v12=latest[5],
-                        sd_ok=self.sd, log_healthy=self.sd, sample_period_ms=500,
-                        log_hours=12, offset0=self.offset, recent=rows[:32],
+                        sd_ok=self.sd, log_healthy=self.sd, sample_period_ms=self.period,
+                        log_hours=self.hours, offset0=self.offset, recent=rows[:32],
                         gap=False, more=len(rows) > 32, fw_version=SEMVER,
-                        fw_update="Current", fw_progress=0, alarms=["OK"] * 4)
+                        fw_update="Current", fw_progress=0, alarms=["OK"] * len(self.keys))
+            data.update(zip(self.keys, latest[2:]))
         elif url.path == "/api/history":
             assert query["format"] == ["csv"] and query["generation"] == [str(self.generation)]
             end = int(query["end"][0])
@@ -84,7 +90,15 @@ class Device:
             rows = "".join(",".join("" if value is None else str(value) for value in self.samples[stamp]) + "\n"
                            for stamp in ids[:2])
             tail = "" if self.partial else f"#end,{ids[1] if len(ids) > 2 else 0},0\n"
-            return (HEADER + rows + tail).encode()
+            return (",".join(("t_ms", "utc_ms", *self.keys)) + "\n" + rows + tail).encode()
+        elif url.path == "/api/logcfg":
+            settings = kwargs.get("body")
+            if settings is not None:
+                self.hours = settings["log_hours"]
+                self.period = settings["sample_period_ms"]
+            data = dict(log_hours=self.hours, sample_period_ms=self.period)
+            if settings is not None:
+                data["ok"] = True
         elif url.path == "/api/names":
             data = {f"ch{index}": name for index, name in enumerate(self.names, 1)}
         elif url.path == "/api/time":
@@ -92,7 +106,27 @@ class Device:
             data = {"ok": True}
         else:
             raise AssertionError(path)
+        if self.role != "pdm":
+            data["role"] = self.role
         return json.dumps(data).encode()
+
+
+class WindDevice(Device):
+    address = "172.20.1.111"
+    live_path = "/api/wind"
+    keys = ("wind_mps",)
+    role = "wsi"
+
+    def __init__(self):
+        super().__init__()
+        self.names = ("Wind Speed",)
+        self.offset = 0
+        self.add(11_000, 7.5)
+        self.durable = 10_500
+
+    def add(self, sample_id, voltage=7.5):
+        self.now = sample_id
+        self.samples[sample_id] = (sample_id, EPOCH + sample_id, voltage if voltage is None else min(voltage, 7.5))
 
 
 class PdmIntegration(unittest.TestCase):
@@ -108,6 +142,24 @@ class PdmIntegration(unittest.TestCase):
             path.write_bytes(image)
             files.append(path)
         self.manifest = make_firmware_bundle(*files, self.bundle)
+
+    def test_wind_history_and_independent_log_settings(self):
+        power, wind = Device(), WindDevice()
+        pdm = PdmSession(power.address, power.fetch)
+        wsi = WsiSession(wind.address, wind.fetch)
+        self.assertEqual(pdm.log_settings((6, 1000)), (6, 1000))
+        self.assertEqual(wsi.log_settings((3, 2000)), (3, 2000))
+        self.assertEqual(pdm.log_settings(), (6, 1000))
+        self.assertEqual(wsi.log_settings(), (3, 2000))
+        wsi.poll()
+        for _ in range(4):
+            wsi.history_page()
+        self.assertEqual(wsi.summary()["voltages"], [7.5])
+        self.assertGreater(wsi.timeline.count, 0)
+        self.assertEqual(len(wsi.timeline.graph(wsi.offsets, wsi.period)), 1)
+        with self.assertRaisesRegex(ValueError, "Expected a WSI"):
+            WsiSession(power.address, power.fetch).log_settings((1, 250))
+        self.assertEqual(pdm.log_settings(), (6, 1000))
 
     def server(self):
         server = FirmwareAuthorityServer(SEMVER, host="127.0.0.1", port=0, bundle_dir=self.bundle)

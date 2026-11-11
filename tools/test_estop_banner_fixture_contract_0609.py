@@ -2,7 +2,7 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TEST = ROOT / 'SRVR_GitHub_v26.11.09.04' / 'tools' / 'test_backend_logic.py'
+TEST = ROOT / 'SRVR_GitHub_v26.11.12.01' / 'tools' / 'test_backend_logic.py'
 text = TEST.read_text()
 
 ctrl_assert = 'assert b.bannerText == "E-Stop | CTRL", b.bannerText'
