@@ -1,3 +1,8 @@
+# v26.11.12.02 — 2026-11-12
+
+- Pin the GitHub firmware and complete-release packaging jobs to Ubuntu 24.04. GitHub provides the pinned Python 3.12.10 x64 build for this runner.
+- Add a source regression for the runner and Python pins. Advance the matched release identity and macOS build number 2611.12.2.
+
 # v26.11.12.01 — 2026-11-12
 
 - SRVR Monitoring tab with separate PDM and WSI addresses, log settings and web dashboard shortcuts.

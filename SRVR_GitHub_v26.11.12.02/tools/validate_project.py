@@ -1,0 +1,721 @@
+#!/usr/bin/env python3
+"""Static preflight for the HV P2P SRVR Qt Quick source tree.
+
+This deliberately avoids importing PySide6 so it can run before dependencies are
+installed and can also be run locally on any Python 3.12 machine.
+"""
+from __future__ import annotations
+
+import ast
+import json
+import re
+import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+VERSION = "26.11.12.02"
+ERRORS: list[str] = []
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        ERRORS.append(message)
+
+
+def read(rel: str) -> str:
+    p = ROOT / rel
+    require(p.is_file(), f"missing required file: {rel}")
+    return p.read_text(encoding="utf-8") if p.is_file() else ""
+
+
+main = read("main.py")
+backend = read("backend.py")
+qml_main = read("qml/Main.qml")
+qml_setup = read("qml/pages/SetupPage.qml")
+qml_log = read("qml/pages/LogPage.qml")
+workflow_path = ROOT.parent / ".github" / "workflows" / "complete-build.yml"
+require(workflow_path.is_file(), "missing root complete-build workflow")
+workflow = workflow_path.read_text(encoding="utf-8") if workflow_path.is_file() else ""
+project_text = read("HV_P2P_SRVR.pyproject")
+qrc_text = read("resources.qrc")
+requirements = read("requirements.txt")
+
+# Python syntax.
+for rel in ("main.py", "backend.py"):
+    try:
+        ast.parse(read(rel), filename=rel)
+    except SyntaxError as exc:
+        ERRORS.append(f"{rel} syntax error: {exc}")
+
+# Frozen-runtime compiler guard: backend hot paths must not create nested
+# functions/lambdas. The v26.10.08.04/.05 Intel crashes occurred in Nuitka-
+# generated compiled-call helpers; keeping callables module/class-scoped removes
+# an unnecessary closure/frame class from every Qt/network/property path.
+_backend_tree = ast.parse(backend, filename="backend.py")
+_parents = {}
+for _node in ast.walk(_backend_tree):
+    for _child in ast.iter_child_nodes(_node):
+        _parents[_child] = _node
+_nested_backend_callables = []
+for _node in ast.walk(_backend_tree):
+    if not isinstance(_node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        continue
+    _parent = _parents.get(_node)
+    while _parent is not None:
+        if isinstance(_parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            _nested_backend_callables.append((getattr(_node, "lineno", -1), getattr(_node, "name", "<lambda>")))
+            break
+        _parent = _parents.get(_parent)
+require(not _nested_backend_callables,
+        f"nested backend callables are not permitted in frozen runtime: {_nested_backend_callables}")
+require('tempfile.mkdtemp(prefix="hvp2p-srvr-smoke-")' in backend and
+        'atexit.register(shutil.rmtree, _SMOKE_DATA_DIR, ignore_errors=True)' in backend and
+        'shutil.rmtree(self._smoke_config_dir, ignore_errors=True)' not in backend,
+        "smoke-test persistence is not process-isolated from the operator config path")
+
+# Architecture guard: the new visible app must never regress to Tkinter/ttk.
+for rel, text in (("main.py", main), ("backend.py", backend)):
+    require(not re.search(r"(?m)^\s*(?:import\s+tkinter\b|from\s+tkinter\b|import\s+ttk\b|from\s+ttk\b)", text, re.I),
+            f"{rel} imports Tkinter/ttk")
+
+# Version consistency.
+require(f'APP_VERSION = "{VERSION}"' in main, "main.py version mismatch")
+require(f"APP_VERSION: '{VERSION}'" in workflow, "workflow version mismatch")
+require(f"v{VERSION}" in workflow, "artifact version mismatch")
+
+# Pin the Qt/PySide toolchain so a later PyPI release cannot silently change deployment behaviour.
+require(requirements.splitlines() == ["PySide6==6.11.1", "Nuitka==4.2.2"],
+        "PySide6/Nuitka desktop compiler line must be pinned for reproducible CI")
+
+# The Qt resource compiler output and import name must match exactly.
+require("import rc_resources" in main, "main.py must import rc_resources")
+require("pyside6-rcc resources.qrc -o rc_resources.py" in workflow,
+        "workflow must generate rc_resources.py")
+require("resources_rc.py" not in main + workflow, "stale resources_rc.py name found")
+
+# Validate .pyproject. It must never list repository/build metadata.
+files = []
+try:
+    project = json.loads(project_text)
+    files = project.get("files", [])
+    require(isinstance(files, list) and files, "HV_P2P_SRVR.pyproject has no files")
+    forbidden_prefixes = (".git", ".github", "assets", "build", "release", "tools")
+    for f in files:
+        require((ROOT / f).is_file(), f"project manifest missing file: {f}")
+        require(not str(f).startswith(forbidden_prefixes), f"forbidden manifest entry: {f}")
+except Exception as exc:
+    ERRORS.append(f"invalid HV_P2P_SRVR.pyproject: {exc}")
+
+# Validate qrc XML and every resource target.
+try:
+    qroot = ET.fromstring(qrc_text)
+    qfiles = [n.text.strip() for n in qroot.findall(".//file") if n.text]
+    require("qml/Main.qml" in qfiles, "resources.qrc does not contain qml/Main.qml")
+    require("qml/pages/SetupPage.qml" in qfiles, "resources.qrc does not contain final SetupPage.qml")
+    require("qml/pages/LogPage.qml" in qfiles, "resources.qrc does not contain final LogPage.qml")
+    require("qml/pages/PowerPage.qml" in qfiles and "qml/components/PowerTrace.qml" in qfiles,
+            "resources.qrc does not contain the Power tab and charts")
+    for f in qfiles:
+        require((ROOT / f).is_file(), f"resources.qrc missing file: {f}")
+except Exception as exc:
+    ERRORS.append(f"invalid resources.qrc: {exc}")
+
+# Basic QML structural check, ignoring comments/quoted strings. qmllint in CI is
+# authoritative; this catches accidental unmatched braces before that step.
+def strip_qml_strings_comments(s: str) -> str:
+    s = re.sub(r"/\*.*?\*/", "", s, flags=re.S)
+    s = re.sub(r"//[^\n]*", "", s)
+    s = re.sub(r'"(?:\\.|[^"\\])*"', '""', s)
+    s = re.sub(r"'(?:\\.|[^'\\])*'", "''", s)
+    return s
+
+for p in sorted((ROOT / "qml").rglob("*.qml")):
+    raw = p.read_text(encoding="utf-8")
+    text = strip_qml_strings_comments(raw)
+
+    # Balanced QML/JavaScript delimiters. This is intentionally a small static
+    # guard rather than a replacement for Qt's authoritative qmllint in CI.
+    stack: list[tuple[str, int]] = []
+    pairs = {"}": "{", ")": "(", "]": "["}
+    for pos, ch in enumerate(text):
+        if ch in "{([":
+            stack.append((ch, pos))
+        elif ch in "})]":
+            if not stack or stack[-1][0] != pairs[ch]:
+                require(False, f"mismatched delimiter {ch!r} in {p.relative_to(ROOT)} at character {pos}")
+                break
+            stack.pop()
+    require(not stack, f"unclosed delimiter(s) in {p.relative_to(ROOT)}: {stack[-3:] if stack else []}")
+
+    # QML object attributes are not JavaScript statements. A semicolon after a
+    # signal-handler block (for example `onTextEdited: {...}; onCommit: ...`) is
+    # rejected by qmllint as an Unexpected token. v26.08.17.09 failed CI for
+    # exactly this pattern, so make it impossible to reintroduce silently.
+    require(re.search(r"}\s*;\s*on[A-Z][A-Za-z0-9_]*\s*:", text) is None,
+            f"illegal semicolon between QML signal handlers in {p.relative_to(ROOT)}")
+
+# Every backend.<name> reference in QML must be present on HVP2PBackend.
+try:
+    tree = ast.parse(backend)
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "HVP2PBackend")
+    exposed = {n.name for n in cls.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    refs: set[str] = set()
+    for p in (ROOT / "qml").rglob("*.qml"):
+        refs.update(re.findall(r"\bbackend\.([A-Za-z_][A-Za-z0-9_]*)", p.read_text(encoding="utf-8")))
+    missing = sorted(refs - exposed)
+    require(not missing, "QML references missing backend members: " + ", ".join(missing))
+except Exception as exc:
+    ERRORS.append(f"backend/QML interface scan failed: {exc}")
+
+# Locked Run geometry and Shortcuts tabs.
+for ratio in ("0.20", "0.25", "0.30"):
+    require(ratio in qml_main, f"Run fixed geometry ratio missing: {ratio}")
+require(qml_main.count("parent.parent.avail*0.25") >= 2, "Speed/Position 25% widths not both fixed")
+require("parent.parent.avail*0.20" in qml_main, "Drive 20% width not fixed")
+require("parent.parent.avail*0.30" in qml_main, "Shortcuts 30% width not fixed")
+require('["Preset 1-5","Preset 6-10","Limits","System"]' in qml_main,
+        "Shortcuts tab order changed")
+require("height:parent.height*0.66" in qml_main,
+        "Free-D upper/lower split regression detected")
+
+# Requested v08 interaction/design contract.
+require("Wide FOV" not in qml_main and "Narrow FOV" not in qml_main and "Tele FOV" not in qml_main,
+        "lens FOV fields/labels must be removed from the Qt Quick UI")
+require('height:f(27)' in qml_main and qml_main.find('text:"▱  SHORTCUTS"') < qml_main.find('model:["Preset 1-5","Preset 6-10","Limits","System"]'),
+        "Shortcuts heading/tab two-row layout missing")
+require('backend.toggleSrvrEStop()' in qml_main and 'def toggleSrvrEStop' in backend,
+        "SRVR status banner E-stop action is not wired")
+require('(backend.nearRampMode==="Percentage"?" %":" m")' in qml_main and
+        '(backend.farRampMode==="Percentage"?" %":" m")' in qml_main,
+        "ramp value field unit feedback missing")
+require("changeRampingMode" in backend and "backend.changeRampingMode" in qml_main,
+        "Distance/Percentage ramp conversion is not wired end-to-end")
+require("bindModel:true" in qml_main and "signal commit(string value)" in read("qml/components/HVField.qml"),
+        "focus-safe editable field binding is missing")
+for token in (
+    'backend.setPresetName', 'backend.setPresetPosition', 'backend.renameDriveMode',
+    'backend.setFreeDNetwork', 'backend.setFreeDOffset', 'backend.setFreeDInvert',
+    'backend.setGeometryPoint', 'backend.setWeightValue', 'backend.setWeightUnit',
+    'backend.setLensCalibration', 'backend.captureLens',
+):
+    require(token in qml_main, f"editable UI action not wired: {token}")
+for token in ("Parameter", "Raw", "Decoded", "Offset", "Invert", "Input Rate", "Output Rate"):
+    require(token in qml_main, f"Free-D Input/Output table content missing: {token}")
+require('model:["Cam ID","Pan","Tilt","Roll","Zoom","Focus","FPS"]' in qml_main,
+        "Free-D Input seven-row table is incomplete")
+require('model:["X","Y","Z","FPS"]' in qml_main,
+        "Free-D Output four-row table is incomplete")
+require("HVReadout.qml" in qrc_text and "HVCheck.qml" in qrc_text and "SpanDiagram.qml" in qrc_text,
+        "required deterministic Qt Quick components are missing from resources.qrc")
+require("FreeDGeometryDiagram" not in qml_main and "FreeDGeometryDiagram.qml" not in qrc_text,
+        "Run and Free-D must use the same SpanDiagram component")
+require("@Property('QVariantList', notify=configChanged)" in backend,
+        "editable list models still use the fast telemetry signal")
+require("def _commit_freed_draft" in backend and "def _refresh_freed_mirror" in backend,
+        "Free-D auto-save commit/mirror support missing")
+require("_kg_to_lb" in backend and "_lb_to_kg" in backend,
+        "kg/lbs automatic conversion support missing")
+require("skate_per_line" in backend and "point_drop" in backend and "highline_mode" in backend,
+        "Skate Weight / Dual Highline sag model is not active in Free-D calculation")
+require('def _cable_span_bounds' in backend and
+        'x0, x1 = self._cable_span_bounds()' in backend and
+        'load_x = x if moving_skate_path else live_skate_x' in backend and
+        'skate_weight, highline, load_x, x0, x1' in backend,
+        "Free-D loaded path is still using P1/P5 or the live skate position as the whole-span support model")
+require('P1 and P5 are reference points, not endpoints' in backend and
+        't = (float(x) - x0) / dx' in backend,
+        "Top-view P1/P5 reference line is still clamped to P1..P5 instead of extending to Near/Far")
+require('P1 (Near)' not in backend and 'P5 (Far)' not in backend and
+        'P1 (Near)' not in qml_main and 'P5 (Far)' not in qml_main,
+        "P1/P5 are still semantically locked to Near/Far endpoints")
+require('def _send_freed' in backend and 'applied = self._freed_snapshot()' in backend,
+        "live Free-D output is not using the current auto-saved settings snapshot")
+
+# Requested v09 fixes: preset tab commit isolation, one shared calculated cable
+# profile, simplified safety source naming, and fully visible cable-weight unit.
+span_qml = read("qml/components/SpanDiagram.qml")
+require('property int pi:index+(window.shortcutTab' not in qml_main,
+        "preset delegate index still changes when switching Shortcuts tabs")
+require('property int pi:index' in qml_main and 'property int pi:index+5' in qml_main,
+        "Preset 1-5 and Preset 6-10 do not have fixed delegate indices")
+require(qml_main.count('cableProfile:window.page===0?backend.cableProfile:[]') >= 2 and
+        qml_main.count('cableProfile:window.page===2?backend.freeDPreviewCableProfile:[]') >= 2,
+        "Run live and Free-D staged-preview diagrams gate the canonical cable profile path to visible pages")
+require(qml_main.count('showGeometryPoints:true') >= 2 and qml_main.count('showPresets:true') >= 2,
+        "Run/Free-D marker overlays are not separated correctly")
+require('property var cableProfile' in span_qml and 'Canonical calculated cable line' in span_qml,
+        "shared SpanDiagram calculated profile rendering is missing")
+require('Free-D is an engineering preview' in span_qml and
+        'Anchor the scale to the operator geometry/reference points' in span_qml and
+        'Run page retains the locked automatic scaling behaviour' in span_qml,
+        "Free-D diagram can still auto-zoom away visible sag changes, or Run scaling was altered")
+require('c.moveTo(sx,sy+8)' not in span_qml and 'fov' not in span_qml.lower(),
+        "Run diagram still contains camera/FOV guide drawing")
+require('def _cable_profile' in backend and 'def _cable_y_at' in backend and 'def _smooth_geometry_y' in backend,
+        "canonical smooth cable sag model is missing from backend")
+require('def cableProfile' in backend, "QML cableProfile property missing")
+require('or (self.winch_rs_status != "Connected")' in backend and 'parts.append("W1P")' in backend,
+        "RS485/W1P failures are not rolled up to W1P in the operator banner")
+require('parts.append("RS485")' not in backend and 'parts.append("ADS1115")' not in backend,
+        "low-level RS485/ADS1115 names leaked back into top E-stop banner")
+require(re.search(r'model\s*:\s*\[\s*"kg/100m"\s*,\s*"lbs/100m"\s*\]', qml_main) is not None and
+        re.search(r'width\s*:\s*f\(108\)', qml_main) is not None,
+        "Cable Weight kg/100m unit control is missing or too narrow")
+require(re.search(r'onCommit\s*:\s*function\(v\)\s*\{[\s\S]{0,300}?setWeightValue\(\s*"Tension"\s*,\s*n\s*\)', qml_main) is not None,
+        "Cable Tension is not auto-saved when its editor is committed")
+require('editCommitSink.forceActiveFocus()' in qml_main and 'function changeShortcutTab' in qml_main,
+        "page/tab changes do not explicitly commit the active editor first")
+
+# v10 QML-lint regression guard. v09 reached Qt's authoritative qmllint but
+# failed on six `}; onCommit:` separators. Keep the corrected handler syntax
+# and the two reusable components that produced the remaining lint warnings.
+hvcombo_qml = read("qml/components/HVCombo.qml")
+require('pragma ComponentBehavior: Bound' in hvcombo_qml,
+        "HVCombo must use bound component behavior for its popup delegate")
+require('required property int index' in hvcombo_qml and 'required property var modelData' in hvcombo_qml,
+        "HVCombo delegate roles are not explicitly declared")
+require('delegateItem.highlighted' in hvcombo_qml and 'delegateItem.modelData' in hvcombo_qml,
+        "HVCombo delegate still contains unqualified role/property access")
+require('target: backend' not in span_qml and 'backend.' not in span_qml,
+        "SpanDiagram reusable component must repaint from bound properties, not an unqualified backend context reference")
+require('onCableProfileChanged: canvas.requestPaint()' in span_qml and
+        'onCurrentPositionChanged: canvas.requestPaint()' in span_qml,
+        "SpanDiagram property-driven repaint hooks are missing")
+
+# Final Setup / Log integration contract. Run and Free-D remain in Main.qml;
+# all four pages are guarded below for the v13 colour/clipping deltas while the
+# locked panel geometry and functional structure stay unchanged.
+require('import "pages"' in qml_main and 'SetupPage {' in qml_main and 'LogPage {' in qml_main,
+        "final Setup/Log page components are not integrated into the shared shell")
+require("functional interim visual" not in qml_main and "final Setup visual design has not yet been locked" not in qml_main,
+        "interim Setup implementation remains in Main.qml")
+for token in (
+    "Link", "CTRL IP", "W1P IP", "JOYSTICK CALIBRATION",
+    "MOTION PROFILES", "DRIVE BEHAVIOUR", "CTRL-TS AUX ASSIGN",
+    "LIMIT CALIBRATION", "WINCH CALIBRATION", "SAVE CONFIG", "LOAD CONFIG",
+    "Position Source", "Virtual",
+):
+    require(token in qml_setup, f"final Setup content missing: {token}")
+for token in ("LOG VIEW", "SEVERITY", "SEARCH", "ACTIONS", "LIVE LOG", "SYSTEM SUMMARY", "Backend State", "System Uptime"):
+    require(token in qml_log, f"final Log content missing: {token}")
+require('width:(parent.width-root.f(10))*0.245' in qml_log and 'width:(parent.width-root.f(30))*0.245' in qml_log,
+        "Log System Summary is not aligned to the Actions panel width ratio")
+require('text:"Apply"' not in qml_main and 'text:"Reset"' not in qml_main and
+        'backend.applySetupSettings' not in qml_main and 'backend.resetSetupSettings' not in qml_main and
+        'backend.applyFreeDSettings' not in qml_main and 'backend.resetFreeDSettings' not in qml_main,
+        "Setup/Free-D footer Apply/Reset controls must remain removed")
+require('SRVR Time:' in qml_main and 'Uptime:' in qml_main,
+        "shared footer time/uptime placement missing")
+for token in (
+    "def driveModes", "def setDriveModeValue", "def beginSetupEdit", "def applySetupSettings", "def resetSetupSettings",
+    "def ctrlAuxAssignments", "def w1pAuxAssignments", "def calibrationSummary",
+    "def filteredLogEntries", "def logRevision", "def logCount",
+):
+    require(token in backend, f"final Setup/Log backend surface missing: {token}")
+require('pyside6-qmllint --max-warnings -1 qml/Main.qml qml/components/*.qml qml/pages/*.qml' in workflow,
+        "CI qmllint does not include final Setup/Log pages")
+
+# v13 requested style-unification and clipping contract. The blue accent is the
+# single Main Heading / Sub Heading colour across Run, Setup, Free-D and Log.
+# Green remains reserved for positive/selected operational state and live values.
+require('property color blue: "#26d5ff"' in qml_main,
+        "shared heading blue is missing or changed")
+require('cyan:window.blue' in qml_main and qml_main.count('cyan:window.blue') >= 2,
+        "Setup and Log are not both using the shared shell heading blue")
+require('#58d5f5' not in ''.join(p.read_text(encoding="utf-8") for p in (ROOT / "qml").rglob("*.qml")),
+        "stale alternate cyan remains in QML")
+for token in ('⚙  DRIVE', '◴  SPEED', '⌖  POSITION', '▱  SHORTCUTS'):
+    require(re.search(r'text\s*:\s*"' + re.escape(token) + r'"\s*;\s*color\s*:\s*blue', qml_main) is not None,
+            f"Run heading is not shared blue: {token}")
+require('accent:blue; onClicked:window.changeShortcutTab(index)' in qml_main,
+        "Run Shortcuts active-tab accent is not shared blue")
+require('text:"Limit Calibration"; color:blue' in qml_main and
+        'text:"Winch Calibration";color:blue' in qml_main and
+        'text:backend.calibrationTitle;color:blue' in qml_main,
+        "Limit/Winch calibration popup headings are not shared blue")
+require('model:["Set Near","Set Far","Set Ref"]' in qml_main and
+        'text:backend.calibrationStep===0?"Set Near & Continue":backend.calibrationStep===1?"Set Far & Continue":"Set Ref & Done"' in qml_main and
+        'SpanDiagram {' in qml_main and 'title:"Cable Position"; subtitle:"Side View"' in qml_main,
+        "Limit Calibration does not mirror the three-step Joystick wizard layout")
+for token in ('FREE-D INPUT', 'FREE-D OUTPUT', 'GEOMETRY', 'LENS CALIBRATION',
+              'Cable Geometry Points', 'Weights & Tension', 'LIVE LENS VALUES',
+              'ZOOM (Wide ↔ Tele)', 'FOCUS (Near ↔ Far)'):
+    require(re.search(r'text\s*:\s*"' + re.escape(token) + r'"[^}]{0,180}?color\s*:\s*blue', qml_main) is not None,
+            f"Free-D heading/subheading is not shared blue: {token}")
+for token in ('JOYSTICK CALIBRATION', '〽  MOTION PROFILES',
+              'MODE 1', 'MODE 2', 'DRIVE BEHAVIOUR', 'ϟ  ACTIONS',
+              '♧  CTRL-TS AUX ASSIGN', '▣  CTRL-TS', '⌾  CALIBRATION'):
+    require(re.search(r'text\s*:\s*"' + re.escape(token) + r'"[^}]{0,180}?color\s*:\s*root\.cyan', qml_setup) is not None,
+            f"Setup heading/subheading is not shared blue: {token}")
+for token in ('⌘  CTRL', '♨  W1P'):
+    require(re.search(r'text\s*:\s*"' + re.escape(token) + r'"[^}]{0,180}?color\s*:\s*root\.cyan', qml_setup) is not None,
+            f"Setup node heading is not shared blue: {token}")
+require('text:"Link"' in qml_setup and 'text:"RS485"' in qml_setup and 'text:"E-Stop"' in qml_setup and
+        'text:"Firmware"' in qml_setup and '▣  CTRL-TS' in qml_setup and
+        'backend.ctrlTsFirmwareDisplay' in qml_setup,
+        "Setup does not reflect the locked EdgeBox/CTRL-TS firmware diagnostics")
+# Shared SRVR/CTRL-TS palette uses exact common shell tokens rather than near-duplicate greens/borders.
+all_qml = "\n".join(pp.read_text(errors="replace") for pp in (ROOT/"qml").rglob("*.qml"))
+require('#62d64d' not in all_qml and '#55cf52' not in all_qml and '#4a5054' not in all_qml,
+        "near-duplicate legacy palette tokens remain in QML")
+require('#63d84e' in all_qml and '#72ed21' in all_qml and '#26d5ff' in all_qml and '#4a4f52' in all_qml,
+        "shared HV P2P palette tokens missing from QML")
+require('W1P-TS Link' not in qml_setup and 'W1P-TS AUX ASSIGN' not in qml_setup,
+        "obsolete W1P-TS controls remain visible in Setup")
+for token in ('▤  LOG VIEW', '♢  SEVERITY', '⌕  SEARCH', 'ϟ  ACTIONS',
+              '〽  LIVE LOG', '▣  SYSTEM SUMMARY'):
+    require(re.search(r'text\s*:\s*"' + re.escape(token) + r'"[^}]{0,180}?color\s*:\s*root\.cyan', qml_log) is not None,
+            f"Log heading is not shared blue: {token}")
+require('property color headingColor: "#26d5ff"' in span_qml and
+        'property color subheadingColor: headingColor' in span_qml and
+        re.search(r'text\s*:\s*root\.title\s*\n\s*color\s*:\s*root\.headingColor', span_qml) is not None and
+        re.search(r'text\s*:\s*root\.subtitle\s*\n\s*color\s*:\s*root\.subheadingColor', span_qml) is not None,
+        "shared Run/Free-D diagram heading palette is not blue")
+
+# Screenshot-derived clipping fixes must remain mathematically contained without
+# changing any locked panel allocation.  System now uses the same 31 px row
+# grid/normal component fonts as the other Shortcut tabs, with compact calibration
+# button captions requested for the Run page only.
+require('// Keep System controls on the same locked visual grid' in qml_main and
+        'width:f(70); height:parent.height; text:"Mode 1"' in qml_main and
+        'width:f(70); height:parent.height; text:"Mode 2"' in qml_main and
+        'text:"Joystick";onClicked:{window.cancelShortcutConfirm();backend.openJoystickCalibration()}' in qml_main and
+        'text:"Limit";onClicked:{window.cancelShortcutConfirm();backend.openLimitCalibration()}' in qml_main and
+        'text:"Winch";onClicked:{window.cancelShortcutConfirm();backend.openWinchCalibration()}' in qml_main and
+        (qml_main.count('Text { width:f(150)') + qml_main.count('Text{width:f(150)')) >= 4 and
+        (qml_main.count('Item {\n                                                width:parent.width-f(150)') + qml_main.count('Item{width:parent.width-f(150)')) >= 4,
+        "Run System shortcut grid/aligned action-column fix is missing")
+require('width:parent.width*.22' in qml_main and
+        qml_main.count('width:parent.width*.22') >= 3,
+        "Free-D Parameter column clipping fix is missing")
+require(qml_main.count('width:f(72)') >= 2 and 'parent.width-f(48+72+66)' in qml_main,
+        "Free-D lens decoded percentage width fix is missing")
+
+# v26.11.12.02 locked Run/Setup revision. Keep the approved panel geometry and
+# setting semantics while guarding only the requested presentation/interaction deltas.
+require('text:"HV P2P\\nSRVR"' in qml_main and 'HV P2P  |  SRVR' not in qml_main and 'P2P°\\nSRVR' not in qml_main,
+        "locked two-line HV P2P/SRVR logo/header revision is missing")
+require('property string pendingShortcutAction' in qml_main and
+        'shortcutConfirmRemaining = 5' in qml_main and
+        'text:window.shortcutActionText' in qml_main and
+        'cancelShortcutConfirm()' in qml_main and
+        'shortcutConfirmTimer' in qml_main,
+        "Run Save/Recall/Slip five-second two-step confirmation is missing")
+for token in ('preset:save:', 'preset:recall:', 'limit:save:Near', 'limit:recall:Near', 'limit:slip:Near',
+              'limit:save:Far', 'limit:recall:Far', 'limit:slip:Far',
+              'limit:save:Ref', 'limit:recall:Ref', 'limit:slip:Ref'):
+    require(token in qml_main, f"Run confirmed shortcut action missing: {token}")
+require(qml_main.count('Row { anchors.centerIn:parent; spacing:f(7)') >= 2,
+        "Run To Near/To Far units are not kept beside their values")
+require('model:["Encoder","Virtual"]' in qml_setup and
+        'backend.setSetupPositionSource(currentText)' in qml_setup,
+        "Setup Virtual position-source selection is missing")
+for token in ('def _virtual_output_inhibit', 'def _virtual_motion_step', 'self.position_source == "Virtual"'):
+    require(token in backend, f"Virtual demo-mode safety/runtime implementation missing: {token}")
+require('or (not self.w1p.connected)' in backend and
+        'or (not self._w1p_status_fresh())' in backend and
+        'or (self.winch_rs_status != "Connected")' in backend,
+        "Virtual position source must not bypass physical W1P safety/readiness")
+require('self.w1p.send("SW_SRVON 0")' in backend and 'self.w1p.send("STOP")' in backend,
+        "Virtual demo mode does not positively inhibit physical W1P output")
+require('if "POS_M" in fields and self.position_source != "Virtual"' in backend and
+        'if "VEL_MPS" in fields and self.position_source != "Virtual"' in backend,
+        "physical W1P feedback can overwrite Virtual demo position/speed")
+require('def ctrlFirmwareVersion' in backend and 'def w1pFirmwareVersion' in backend and
+        'def ctrlEStopActive' in backend and 'def w1pEStopActive' in backend,
+        "locked CTRL/W1P Setup diagnostic properties are missing")
+require(qml_setup.count('text:"Link"') >= 2 and qml_setup.count('text:"RS485"') >= 2 and
+        qml_setup.count('text:"E-Stop"') >= 2 and qml_setup.count('text:"Firmware"') >= 2,
+        "CTRL/W1P generic six-row status labels are missing")
+require('text:"Link"' in qml_setup and
+        'text:backend.ctrlTsRs485Active?"Active":"Disconnected"' in qml_setup,
+        "CTRL-TS Link is not using physical RS485 Active/Disconnected semantics")
+
+# Joystick calibration is a real three-step wizard, not a no-op button. It must
+# capture raw Left/Centre/Right values, persist them, and fail-safe motion to zero
+# for the entire capture process.
+for token in ('Set Joystick Left', 'Set Joystick Centre', 'Set Joystick Right'):
+    require(token in backend, f"joystick wizard step missing from backend: {token}")
+require('text:backend.joystickCalibrationTitle' in qml_main and
+        'model: ["Set Left", "Set Centre", "Set Right"]' in qml_main,
+        "joystick wizard does not display the Left/Centre/Right sequence")
+for token in ('backend.joystickCalibrationOpen', 'backend.joystickCalibrationStep',
+              'backend.joystickCalibrationTitle', 'backend.joystickCalibrationError',
+              'backend.joystickCalibrationCaptures', 'backend.joystickRawValue',
+              'backend.cancelJoystickCalibration()', 'backend.joystickCalibrationBack()',
+              'backend.joystickCalibrationNext()'):
+    require(token in qml_main, f"joystick wizard QML binding missing: {token}")
+for token in ('def _calibrated_joystick', 'def openJoystickCalibration',
+              'def cancelJoystickCalibration', 'def joystickCalibrationBack',
+              'def joystickCalibrationNext', '"joystick_calibration"'):
+    require(token in backend, f"joystick wizard backend implementation missing: {token}")
+require('if self.joystick_calibration_open:' in backend and
+        '_send_velocity(0.0' in backend[backend.find('if self.joystick_calibration_open:'):backend.find('axis = self._calibrated_joystick')],
+        "joystick calibration does not fail-safe winch output to zero")
+require('self._joystick_neutral_required = True' in backend and
+        'if self._joystick_neutral_required:' in backend and
+        'neutral_band = max(1.0, deadband)' in backend and
+        'self._joystick_neutral_required = False' in backend,
+        "post-calibration joystick neutral-return motion interlock is missing")
+require('remains inhibited until the joystick is returned to centre' in qml_main,
+        "joystick wizard does not explain the neutral-return safety interlock")
+require('width: f(720)\n            height: f(540)' in qml_main and
+        'height: f(225)\n                    spacing: f(12)' in qml_main,
+        "joystick wizard vertical geometry can clip its content")
+require('abs(lspan) < 0.05' in backend and 'lspan*rspan >= 0.0' in backend,
+        "joystick calibration range validation missing")
+require('self._sync_service_mode_to_winch(force=True)' in backend[backend.find('def openJoystickCalibration'):backend.find('def cancelJoystickCalibration')],
+        "joystick wizard does not close an inherited service-calibration state safely")
+
+# v14 requested maintenance contract: AUX Preset Save choices, transferable
+# config file dialogs, strict Setup/Free-D draft semantics, and the Setup
+# Motion Profiles divider containment fix. Everything else remains locked.
+require('import QtQuick.Dialogs' in qml_setup,
+        "Setup does not import QtQuick.Dialogs for transferable config files")
+require('fileMode: FileDialog.SaveFile' in qml_setup and 'fileMode: FileDialog.OpenFile' in qml_setup,
+        "Setup Save/Load Config native file dialogs are missing")
+require('backend.exportConfigFile(selectedFile.toString())' in qml_setup and
+        'backend.stageConfigFile(selectedFile.toString())' in qml_setup,
+        "Setup Save/Load Config file dialogs are not wired to the backend")
+for i in range(1, 11):
+    require(f'"Preset {i} Save"' in qml_setup, f"AUX assignment option missing: Preset {i} Save")
+require('property var auxChoices:' in qml_setup and
+        'backend.setSetupAuxAssignment("CTRL",index,currentText)' in qml_setup,
+        "CTRL-TS AUX assignment panel is not using the shared choice list")
+require(qml_setup.index('"Joystick Calibration"') < qml_setup.index('"Limit Calibration"') < qml_setup.index('"Winch Calibration"'),
+        "CTRL-TS AUX assignment calibration options are not alphabetical")
+require('backend.setSetupAuxAssignment("W1P",index,currentText)' not in qml_setup,
+        "obsolete W1P-TS AUX assignment UI remains exposed")
+
+# Setup keeps a QML mirror for stable bindings, but every accepted edit is
+# committed and persisted immediately. Live telemetry/status indicators remain
+# separate, and old Run-page immediate APIs are not used by Setup controls.
+require('backend.setupDraft' in qml_setup and qml_setup.count('backend.setupDraft') >= 12,
+        "Setup editable controls are not consistently bound to setupDraft mirror")
+for forbidden in ('backend.renameDriveMode(', 'backend.setDriveModeValue(',
+                  'backend.setJoystickDeadband(', 'backend.setAuxAssignment('):
+    require(forbidden not in qml_setup, f"Setup contains wrong live-write binding: {forbidden}")
+for required in ('backend.renameSetupDriveMode(', 'backend.setSetupDriveModeValue(',
+                 'backend.setSetupJoystickDeadband(', 'backend.setSetupAuxAssignment(',
+                 'backend.setSetupNetwork(', 'backend.setSetupDirection(',
+                 'backend.setSetupUnitsPerM(', 'backend.setSetupPositionSource(',
+                 'backend.setSetupAccelerationMode(', 'backend.setSetupBatteryChange('):
+    require(required in qml_setup, f"Setup auto-save editor binding missing: {required}")
+require('def _commit_setup_draft' in backend and
+        'draft = copy.deepcopy(self._setup_draft)' in backend and
+        'self._restore_setup_snapshot(draft)' in backend and
+        'self._save_config()' in backend and
+        'def _refresh_setup_mirror' in backend,
+        "Setup auto-save backend is incomplete")
+require('if self.ctrl_ip != old_ctrl_ip:' in backend and
+        'if self.w1p_ip != old_w1p_ip:' in backend,
+        "Setup auto-save can unnecessarily reset healthy controller links")
+
+# Free-D controls use a stable mirror but every setter commits it immediately.
+require('property var fdDraft: backend.freeDDraft' in qml_main,
+        "Free-D page is not bound to freeDDraft mirror")
+require('def _commit_freed_draft' in backend and
+        'self._restore_freed_snapshot(copy.deepcopy(self._freed_draft))' in backend and
+        'self._save_config()' in backend and 'def _refresh_freed_mirror' in backend,
+        "Free-D auto-save backend is incomplete")
+require('backend.freeDPreviewCableProfile' in qml_main and
+        'backend.freeDInputPreview' in qml_main and 'backend.freeDOutputPreview' in qml_main,
+        "Free-D live visual preview path is incomplete")
+require('def exportConfigFile' in backend and 'def stageConfigFile' in backend and
+        '_apply_imported_run_config' in backend,
+        "transferable configuration import/export backend is incomplete")
+require('currently APPLIED full configuration' in backend and
+        'immediately apply and persist a transferable config' in backend,
+        "config transfer does not document auto-save/import semantics")
+
+# The joystick wizard's final Right capture is the commit point: it must make the
+# new calibration live and persistent immediately, so Value/Percentage use the
+# captured Left/Centre/Right range without another button press.
+joy_start = backend.find('def _joystick_calibration_next')
+joy_end = backend.find('@Slot(str,bool)', joy_start)
+joy_src = backend[joy_start:joy_end if joy_end > joy_start else None]
+require('self._setup_draft["joystick_calibration"]' in joy_src and
+        'self._commit_setup_draft(notify=False)' in joy_src and
+        'Joystick calibration saved' in joy_src,
+        "Joystick wizard completion does not immediately auto-save calibration")
+require('def joystickPercentage' in backend and
+        '_operator_joystick_axis(self._calibrated_joystick(self._ctrl_axis)) * 100.0' in backend,
+        "Joystick Percentage is not based on the active calibrated range")
+
+# Motion Profiles row must contain both six-row mode tables before the divider;
+# this is the screenshot-derived Stop Deceleration/divider overlap fix.
+require('width:parent.width; height:root.f(250)' in qml_setup and
+        qml_setup.count('spacing:root.f(2)') >= 2 and
+        'anchors.rightMargin:root.f(15)' in qml_setup and
+        'anchors.leftMargin:root.f(15)' in qml_setup and
+        qml_setup.count('width:(parent.width-root.f(1))/2') >= 2,
+        "Setup Motion Profiles even divider/containment fix is missing")
+
+# The v13 live API remains available for compatibility, but Setup.qml is not
+# permitted to call it. This protects existing backend integrations while
+# preserving the new operator-facing Apply contract.
+for token in ('def setJoystickDeadband', 'def setPositionSource', 'def setDriveModeValue', 'def setAuxAssignment'):
+    require(token in backend, f"legacy backend compatibility slot missing: {token}")
+
+# v16 final hardware-interface audit. The Qt redesign must retain the secondary
+# controller interfaces that existed in the proven pre-Qt backend as well as the
+# core joystick/W1P motion loop.
+for token in (
+    'if line_text.startswith("HMI_STATUS|")', 'def _handle_ctrl_hmi_status',
+    'if line.startswith("W1PTS_AUX")', 'if line.startswith("W1P_HMI_STATUS|")',
+    'def _handle_aux_action', 'CTRL_AUX_BITS = (FLAG_AUX1, FLAG_AUX2, FLAG_AUX3, FLAG_AUX4, FLAG_AUX5)',
+    'def _build_controller_display_packet', '"DSP1"', 'def _send_controller_display_packet',
+    'self._send_controller_display_packet()',
+):
+    require(token in backend, f"restored CTRL/W1P interface path missing: {token}")
+require('self._ctrl_ts_connected_reported' in backend and 'self._w1p_ts_connected_reported' in backend and
+        'HMI_STATUS_TIMEOUT_S = 3.5' in backend,
+        "touchscreen link-state freshness handling is missing")
+require('return bool(self._ctrl_connected() and self._ctrl_ts_connected_reported' in backend and
+        'return bool(self.w1p.connected and self._w1p_ts_connected_reported' in backend,
+        "Setup CTRL-TS/W1P-TS indicators are still aliases of the parent node link")
+require('profileValue(Number(gp.x), key)' in span_qml and
+        'var gv=root.sideView ? Number(gp.y)' not in span_qml,
+        "Free-D geometry markers are not pinned to the exact calculated cable profile")
+
+# v26.11.12.02 integration contract: fifth CTRL-TS AUX travels in the spare A7
+# 16-bit flag, and display packets expose all five state-aware labels.
+require("FLAG_AUX5 = 0x0400" in backend, "AUX5 controller flag missing")
+require('f"aux5={labels[4]}"' in backend, "DSP1 AUX5 field missing")
+require('_ctrl_aux_last = [False] * 5' in backend, "five-AUX edge handling missing")
+require('not_calibrated_mode' in backend and 'config_schema_version' in backend,
+        "calibration-state persistence/config schema migration missing")
+require('def _send_safety_stop_limited' in backend and 'self._send_safety_stop_limited' in backend,
+        "hard STOP safety-transition path missing")
+require('def _start_goto_target' in backend and 'creep_back' in backend,
+        "Goto anti-overshoot direction latch missing")
+
+# Critical proven W1P/CTRL contract. SET_POSITION is specifically wrong for
+# cable-slip re-referencing on this system; the working backend uses SYNC_POS.
+for token in (
+    "SYNC_POS", "SERVICE_MODE", "SET_UNITS_PER_M", "SET_MOTOR_REVERSE",
+    "SET_ACCEL", "SET_DECEL", "SET_CROSSOVER", "SET_STOP_DECEL",
+    "SET_ACCEL_MODE", "SET_SPAN", "SET_LIMIT_NEAR", "SET_LIMIT_FAR", "VEL ",
+    "HEARTBEAT_CODE = 0xA5", "CONTROL_PACKET_CODE = 0xA6",
+    "FLAG_ESTOP_PRESSED = 0x10", "FLAG_ADS1115_FAULT = 0x0200",
+):
+    require(token in backend, f"critical protocol token missing: {token}")
+require("SET_POSITION" not in backend, "invalid SET_POSITION command has returned")
+require("5.0 / 3.6" in backend, "5 km/h calibration/service speed limit missing")
+require("_not_calibrated\n            or self.battery_change_mode" in backend,
+        "service-mode Not Calibrated path missing")
+
+# Exact v04 failure must be structurally impossible in v05: deploy from a clean
+# RUNNER_TEMP staging directory containing an explicit allow-list.
+require("$RUNNER_TEMP/hvp2p-stage" in workflow, "workflow is not deploying from isolated staging")
+require("cp main.py backend.py firmware_authority.py resources.qrc HV_P2P_SRVR.pyproject" in workflow,
+        "workflow staging allow-list missing core files")
+require(all(name in files for name in ("pdm_client.py", "pdm_monitor.py", "qml/pages/PowerPage.qml",
+                                       "qml/components/PowerTrace.qml")),
+        "SRVR project manifest is missing Power tab sources")
+require("cp -R qml \"$STAGE/\"" in workflow, "workflow staging allow-list missing qml directory")
+require("cd \"$STAGE\"" in workflow, "deployment does not cd into isolated staging")
+require("--smoke-test" in workflow, "CI frozen/source smoke tests missing")
+require("pyside6-qmllint --max-warnings -1" in workflow, "QML syntax lint step missing or warning threshold not stabilized")
+require("pyside6-deploy main.py --init" in workflow, "explicit deployment spec initialization missing")
+require("test -s pysidedeploy.spec" in workflow, "generated deployment spec audit missing")
+require("QT_QPA_PLATFORM=cocoa" in workflow, "frozen app is not smoke-tested with the real Cocoa platform plugin")
+require("python -m tools.test_backend_logic" in workflow, "backend tests are not run as an import-safe module")
+require("sys.path.insert(0, str(ROOT))" in read("tools/test_backend_logic.py"), "backend test does not add repository root to sys.path")
+require(not re.search(r"(?m)^\s*ditto\s+.*--sequesterRsrc", workflow),
+        "software-distribution ZIP command must not use --sequesterRsrc")
+require('ditto -c -k --keepParent "release/HV P2P SRVR.app" "$ZIP"' in workflow,
+        "release ZIP is not created with the expected ditto command")
+require('ditto -x -k "$ZIP" "$VERIFY_DIR"' in workflow,
+        "release ZIP round-trip extraction validation missing")
+require('codesign --verify --deep --strict --verbose=2 "$ROUNDTRIP_APP"' in workflow,
+        "round-trip extracted app signature verification missing")
+require('xattr -cr "$APP_PATH" || true' in workflow,
+        "extended-attribute cleanup before final app signature is missing")
+require('cp assets/HV_P2P_SRVR_icon.png "$STAGE/HV_P2P_SRVR_icon.png"' in workflow and
+        'iconutil -c icns' in workflow and 'CFBundleIconFile' in workflow,
+        "P2P SRVR bundle icon is not restored during packaging")
+require('CFBundleDisplayName' in workflow and "HV P2P SRVR'" in workflow,
+        "HV P2P SRVR bundle display metadata is not enforced")
+require(all(token in workflow for token in ('CFBundleIdentifier', 'com.hvp2p.srvr', 'CFBundleShortVersionString', 'CFBundleVersion', 'HVP2PReleaseVersion', "BUNDLE_BUILD_VERSION: '2611.12.2'")),
+        "HV P2P SRVR stable bundle identity/version metadata is not enforced")
+require('three untouched native ZIPs' in workflow and 'SHA256SUMS.txt' in workflow and 'Complete Release.zip.sha256' in workflow,
+        "complete release does not preserve/hash all native SRVR ZIPs and authoritative release ZIP")
+require('QT_QPA_PLATFORM=cocoa PYTHONFAULTHANDLER=1 "$ROUNDTRIP_EXE" --smoke-test' in workflow and
+        'ROUNDTRIP_SMOKE_RC=${PIPESTATUS[0]}' in workflow,
+        "round-trip extracted app smoke test/diagnostics missing")
+require('runner: macos-15-intel' in workflow and 'runner: macos-15' in workflow and 'runs-on: windows-2025' in workflow,
+        "three-platform SRVR native CI matrix is missing")
+require('ilammy/msvc-dev-cmd@v1' in workflow and 'Get-Command dumpbin.exe' in workflow,
+        "Windows CI does not initialize/prove the MSVC dependency tools")
+require('$probePe = $env:ComSpec' in workflow and '$dumpOutput = & $dumpbin /headers $probePe 2>&1' in workflow and
+        '$dumpExit = $LASTEXITCODE' in workflow and 'dumpbin PE-header probe failed' in workflow and '& dumpbin.exe /?' not in workflow,
+        "Windows dumpbin preflight does not use a real PE-header probe or still contains the brittle help probe")
+require(workflow.count('Deployment dumpbin: $deployDumpbin') >= 2 and workflow.count('Get-Command dumpbin.exe -ErrorAction Stop') >= 3,
+        "Windows deployment steps do not re-resolve dumpbin immediately before PySide/Nuitka deployment")
+require('Nuitka==4.2.2' in workflow and '--assume-yes-for-downloads' in workflow,
+        "Windows CI does not pin Nuitka 4.2.2 and permit required non-interactive dependency-tool downloads")
+require(workflow.count("python-version: '3.12.10'") >= 3,
+        "desktop/native CI Python patch release is not pinned")
+require("Pinned Nuitka survived macOS freeze" in workflow and
+        "Pinned Nuitka survived Windows freeze" in workflow,
+        "deployment does not verify that pyside6-deploy preserved the pinned compiler")
+require("PYTHONFAULTHANDLER=1" in workflow and "recent Apple crash reports" in workflow,
+        "macOS frozen smoke failure diagnostics are missing")
+require("Select-String -Path deploy-dry-run.txt -SimpleMatch '--assume-yes-for-downloads'" in workflow,
+        "Windows deploy dry-run does not prove the actual Nuitka command is non-interactive")
+require('HV-P2P-SRVR-v26.11.12.02-macOS-Intel' in workflow and
+        'HV-P2P-SRVR-v26.11.12.02-macOS-Apple-Silicon' in workflow and
+        'HV-P2P-SRVR-v26.11.12.02-Windows-x64' in workflow,
+        "native SRVR artifact names are incomplete")
+require('def _app_data_dir' in backend and 'LOCALAPPDATA' in backend and 'XDG_CONFIG_HOME' in backend,
+        "cross-platform private config directory mapping is missing")
+require('path_text[2] == ":"' in backend and 'parsed.netloc' in backend,
+        "Windows drive-letter/UNC FileDialog path handling is missing")
+
+require('text: "Skate Weight:"' in qml_main, "Free-D must label the suspended package as Skate Weight")
+require('text: "Static Weight:"' not in qml_main, "obsolete Static Weight label remains in Free-D")
+require('freeDPage.fdDraft.skate_weight_value' in qml_main and 'setWeightValue("Skate", n)' in qml_main,
+        "auto-save Skate Weight editor is not wired to the Free-D mirror backend")
+require('Text { width:f(150); anchors.verticalCenter:parent.verticalCenter; text:"Drive Mode"' in qml_main,
+        "System Drive Mode row is not aligned to the common 150px control column")
+# Virtual is a safety mode even when CI/smoke-test suppresses hardware writes.
+# Keep the local Servo Enable inhibit latched independently of send_safety.
+_virtual_branch = backend.split('if new_source == "Virtual":', 1)[1].split('else:', 1)[0] if 'if new_source == "Virtual":' in backend else ''
+require('self._safety_servo_inhibited = True' in _virtual_branch,
+        "Virtual Position Source does not latch the local Servo Enable inhibit independently of hardware I/O")
+require('fillText("SKATE"' not in span_qml, "Top/Side span diagrams still draw the SKATE text label")
+
+# v26.11.12.02 CTRL joystick readout labels/geometry and global preset-name mode.
+setup=(ROOT/"qml/pages/SetupPage.qml").read_text()
+require('text:"Value"' in setup and 'text:"Percentage"' in setup,
+        "CTRL Setup uses Value / Percentage labels")
+require('text:Number(backend.setupJoystickValue).toFixed(2);horizontalAlignment:Text.AlignRight' in setup and
+        'text:Number(backend.setupJoystickPercentage).toFixed(1)+" %";horizontalAlignment:Text.AlignRight' in setup and
+        setup.count('width:root.f(72);anchors.verticalCenter:parent.verticalCenter') >= 2,
+        "CTRL Setup calibrated Value / Percentage readouts share the same right-aligned value column")
+require('text:"Preset Names"' in qml_main and 'text:"Short Names"' in qml_main and 'text:"Long Names"' in qml_main and
+        'backend.setPresetNameMode("Short Names")' in qml_main and 'backend.setPresetNameMode("Long Names")' in qml_main,
+        "Run Shortcuts exposes global Short Names / Long Names preset display selection")
+require('displayName' in span_qml, "Top/Side span diagrams use the selected preset display name")
+require('def setPresetNameMode' in backend and 'preset_name_mode' in backend and 'displayName' in backend,
+        "backend persists and exposes the global preset-name display mode")
+
+if ERRORS:
+    print("HV P2P SRVR preflight FAILED:", file=sys.stderr)
+    for e in ERRORS:
+        print(f"  - {e}", file=sys.stderr)
+    raise SystemExit(1)
+
+print("HV P2P SRVR preflight PASS")
+print("  Python syntax: OK")
+print("  Qt Quick only / no Tkinter: OK")
+print("  QML/backend interface: OK")
+print("  QRC/project manifest: OK")
+print("  Four-page heading/style contract + clipping guards: OK")
+print("  Joystick calibration wizard + neutral-return safety interlock: OK")
+print("  Run 20/25/25/30 geometry: OK")
+print("  Preset Short/Long naming contract: OK")
+print("  Proven W1P/CTRL critical command + secondary interface contract: OK")
+print("  Isolated deployment staging + smoke checks: OK")
