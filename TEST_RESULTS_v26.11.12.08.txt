@@ -1,0 +1,18 @@
+HV P2P SYS v26.11.12.08 source verification
+Baseline HV-P2P-v26.11.12.07-GitHub-Complete.zip
+
+PASS  All 70 source regression scripts with PySide6 enabled.
+PASS  PDM web listener and API on TCP 80, separate firmware authority
+      port 5760, older web port detection and HTTP route migration fixtures.
+PASS  Offscreen SRVR PDM and WSI monitoring with HTTP fixtures. The
+      fixture checks standard and legacy browser URLs, quiet firmware status,
+      hover diagnostics, update progress, red alarms and card alignment.
+PASS  PDM Settings address editing while offline, IPv4 and duplicate
+      address validation, Cancel, persistence on Apply and log settings
+      isolated to the connected device. Apply appears before Cancel.
+PASS  Source SRVR offscreen smoke with a fixture firmware bundle.
+      QML lint, PDM JavaScript syntax and GitHub workflow YAML parsing.
+PASS  Source ZIP integrity and per-file SHA-256 checks.
+
+Pending  Native GitHub ESP32 and packaged desktop builds.
+Pending  Port-80 browser access and OTA on the physical Olimex.

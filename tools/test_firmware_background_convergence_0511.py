@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""v26.11.12.07 firmware convergence must not depend on the Qt event loop."""
+"""v26.11.12.08 firmware convergence must not depend on the Qt event loop."""
 from pathlib import Path
 import subprocess
 from tempfile import TemporaryDirectory
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.11.12.07'
+VER = '26.11.12.08'
 B = (ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 M = (ROOT/f'SRVR_GitHub_v{VER}/main.py').read_text()
 C = (ROOT/f'HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino').read_text()
@@ -94,7 +94,7 @@ struct {
     template<typename... Args> void printf(const char*, Args...) {}
 } Serial;
 static String g_srvrFirmwareSession, g_srvrAdvertisedRelease, g_srvrFirmwareState;
-static const char* HV_AUTH_VERSION = "v26.11.12.07";
+static const char* HV_AUTH_VERSION = "v26.11.12.08";
 static bool srvrOnline, g_hmiTsCoordinatorSeen, g_hmiTsUpdateAllowed;
 static bool g_hmiSafeUpdateContinuation, g_srvrFirmwareMatched = true;
 static uint32_t g_lastSrvrRxMs, g_hmiMismatchSinceMs;
@@ -114,10 +114,10 @@ int main() {
     assert(applySrvrFirmwareBeacon(mismatched));
     assert(srvrOnline && g_lastSrvrRxMs == clockMs);
     assert(g_fwAuthorityLastAttemptMs == 1000 && g_fwAuthorityRetryDelayMs == 30000);
-    assert(applySrvrFirmwareBeacon("SRVR_FW|version=v26.11.12.07|session=abc|ts_allowed=1"));
+    assert(applySrvrFirmwareBeacon("SRVR_FW|version=v26.11.12.08|session=abc|ts_allowed=1"));
     assert(g_fwAuthorityLastAttemptMs == 0 && g_fwAuthorityRetryDelayMs == 0 && g_hmiTsUpdateAllowed);
     g_srvrFirmwareMatched = true;
-    assert(applySrvrFirmwareBeacon("SRVR_FW|version=v26.11.12.07|session=def|ts_allowed=0"));
+    assert(applySrvrFirmwareBeacon("SRVR_FW|version=v26.11.12.08|session=def|ts_allowed=0"));
     assert(!g_srvrFirmwareMatched && !g_hmiTsUpdateAllowed);
 }
 '''

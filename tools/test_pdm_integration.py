@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PDM = ROOT / f"HV_P2P_PDM_v{VER}"
 sys.path.insert(0, str(ROOT / f"SRVR_GitHub_v{VER}"))
 from firmware_authority import AUTHORITY_PORT, LEGACY_AUTHORITY_PORT, PREVIOUS_NETWORK_PORT, FirmwareAuthorityServer, FirmwareBundle
-from pdm_client import DEVICE_HTTP_PORT, LEGACY_PDM_HTTP_PORT, PdmSession, Timeline, WsiSession, parse_history_page
+from pdm_client import PDM_HTTP_PORT, WSI_HTTP_PORT, PdmSession, Timeline, WsiSession, parse_history_page
 
 EPOCH = 1_794_233_000_000
 HEADER = "t_ms,utc_ms,v48_1,v48_2,v24,v12\n"
@@ -39,8 +39,10 @@ class Device:
     live_path = "/api/voltages"
     keys = ("v48_1", "v48_2", "v24", "v12")
     role = "pdm"
-    http_port = DEVICE_HTTP_PORT
+    http_port = PDM_HTTP_PORT
     fw_update = "Current"
+    fw_authority_port = AUTHORITY_PORT
+    fw_progress = 0
     def __init__(self):
         self.samples = {}
         self.now = 10_500
@@ -59,6 +61,8 @@ class Device:
         self.thresholds = [dict(low=40, high=55), dict(low=40, high=55),
                            dict(low=20, high=28), dict(low=10, high=14)]
         self.calibration_writes = []
+        self.log_writes = []
+        self.alarms = ["OK"] * len(self.keys)
         self.names = ("Radio supply", "Brake supply", "24 V", "12 V")
         self.cursors = []
         self.clock_writes = []
@@ -88,7 +92,9 @@ class Device:
                         sd_ok=self.sd, log_healthy=self.sd, sample_period_ms=self.period,
                         log_hours=self.hours, offset0=self.offset, recent=rows[:32],
                         gap=False, more=len(rows) > 32, fw_version=SEMVER,
-                        fw_update=self.fw_update, fw_progress=0, alarms=["OK"] * len(self.keys))
+                        fw_update=self.fw_update, fw_progress=self.fw_progress, alarms=self.alarms)
+            if self.role == "pdm" and self.fw_authority_port is not None:
+                data["fw_authority_port"] = self.fw_authority_port
             data.update(zip(self.keys, latest[2:]))
             data.update({f"offset{i}": value for i, value in enumerate(self.other_offsets, 1)})
         elif url.path == "/api/history":
@@ -104,6 +110,7 @@ class Device:
         elif url.path == "/api/logcfg":
             settings = kwargs.get("body")
             if settings is not None:
+                self.log_writes.append(settings)
                 self.hours = settings["log_hours"]
                 self.period = settings["sample_period_ms"]
             data = dict(log_hours=self.hours, sample_period_ms=self.period)
@@ -146,6 +153,7 @@ class WindDevice(Device):
     live_path = "/api/wind"
     keys = ("wind_mps",)
     role = "wsi"
+    http_port = WSI_HTTP_PORT
 
     def __init__(self):
         super().__init__()
@@ -175,8 +183,10 @@ class PdmIntegration(unittest.TestCase):
 
     def test_wind_history_and_independent_log_settings(self):
         power, wind = Device(), WindDevice()
+        power.http_port = WSI_HTTP_PORT
         pdm = PdmSession(power.address, power.fetch)
         wsi = WsiSession(wind.address, wind.fetch)
+        pdm.poll()
         self.assertEqual(pdm.log_settings((6, 1000)), (6, 1000))
         self.assertEqual(wsi.log_settings((3, 2000)), (3, 2000))
         self.assertEqual(pdm.log_settings(), (6, 1000))
@@ -200,7 +210,6 @@ class PdmIntegration(unittest.TestCase):
 
     def test_channel_calibration_and_legacy_dashboard_migration(self):
         power = Device()
-        power.http_port = LEGACY_PDM_HTTP_PORT
         pdm = PdmSession(power.address, power.fetch)
         pdm.poll()
         self.assertEqual(pdm.port, 80)
@@ -212,7 +221,8 @@ class PdmIntegration(unittest.TestCase):
         self.assertEqual(pdm.calibration(1), dict(low=40, high=55, actual=None))
         with self.assertRaisesRegex(ValueError, "low alarm below"):
             pdm.calibration(2, dict(low=58, high=43))
-        for port in (PREVIOUS_NETWORK_PORT, DEVICE_HTTP_PORT):
+        self.assertEqual(pdm.summary()["authority_port"], AUTHORITY_PORT)
+        for port in (PREVIOUS_NETWORK_PORT, AUTHORITY_PORT, PDM_HTTP_PORT):
             power.http_port = port
             pdm.poll()
             self.assertEqual(pdm.port, port)
@@ -222,6 +232,23 @@ class PdmIntegration(unittest.TestCase):
         self.assertEqual(pdm.summary()["voltages"][1], 49.5)
         with self.assertRaisesRegex(ValueError, "Select a PDM"):
             WsiSession("172.20.1.111", WindDevice().fetch).calibration(1)
+
+    def test_port_80_response_from_another_service_allows_pdm_migration(self):
+        device = Device()
+        device.http_port = AUTHORITY_PORT
+
+        def fetch(address, path, **kwargs):
+            if kwargs["port"] == PDM_HTTP_PORT:
+                return b'{"service":"another dashboard"}'
+            return device.fetch(address, path, **kwargs)
+
+        session = PdmSession(device.address, fetch)
+        session.poll()
+        self.assertEqual(session.port, AUTHORITY_PORT)
+        device.http_port = PDM_HTTP_PORT
+        session.fetch = device.fetch
+        session.poll()
+        self.assertEqual(session.port, PDM_HTTP_PORT)
 
     def test_long_legacy_name_is_readable_and_editable(self):
         device = Device()
@@ -270,7 +297,11 @@ class PdmIntegration(unittest.TestCase):
         for pattern in ("HV_P2P_CTRL_EDGEBOX_*", "HV_P2P_W1P_EDGEBOX_*", "HV_P2P_PDM_*"):
             header = next(ROOT.glob(pattern)) / "HV_P2P_SRVR_Authority_OTA.h"
             self.assertIn(f"AUTHORITY_PORT = {AUTHORITY_PORT};", header.read_text())
-        self.assertIn(f"DEVICE_HTTP_PORT = {DEVICE_HTTP_PORT};", (PDM / "pdm_app.cpp").read_text())
+        pdm_source = (PDM / "pdm_app.cpp").read_text()
+        self.assertIn(f"DEVICE_HTTP_PORT = {PDM_HTTP_PORT};", pdm_source)
+        self.assertIn('doc["fw_authority_port"] = pdmOtaAuthorityPort();', pdm_source)
+        self.assertIn('pdmOtaAuthorityPort() { return HVP2PAuthorityOTA::AUTHORITY_PORT; }',
+                      (PDM / "pdm_ota.cpp").read_text())
         server = self.server(legacy_ports=(0, 0))
         now = 0.0
         window = server.pdm_window

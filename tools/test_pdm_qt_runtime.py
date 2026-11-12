@@ -80,6 +80,26 @@ def scene_item(window, name):
     return next(item for item in scene_items(window) if item.objectName() == name)
 
 
+def visible_text(window):
+    return [item.property("text") for item in scene_items(window) if item.property("visible")]
+
+
+def check_apply_order(root, apply_name, cancel_name, *, apply_first=True):
+    apply = root.findChild(QObject, apply_name)
+    cancel = root.findChild(QObject, cancel_name)
+    assert apply.property("visible") and cancel.property("visible")
+    assert (apply.mapToScene(QPointF()).x() < cancel.mapToScene(QPointF()).x()) == apply_first
+
+
+def check_web_shortcut(root, expected_url):
+    button = scene_item(root, "monitorOpenWeb")
+    assert button.property("enabled")
+    with patch("pdm_monitor.QDesktopServices") as desktop_services:
+        assert QMetaObject.invokeMethod(button, "clicked")
+        desktop_services.openUrl.assert_called_once()
+        assert desktop_services.openUrl.call_args.args[0].toString() == expected_url
+
+
 def check_visible_trace(window: QQuickWindow, count=4):
     plots = [item for item in scene_items(window) if item.objectName() == "pdmPowerTrace"]
     assert len(plots) == count, len(plots)
@@ -106,7 +126,7 @@ def check_hover(app, window, plot, unit, fraction):
     assert f" {unit}  •  " in plot.findChild(QObject, "monitorHoverReadout").property("text")
 
 
-def update_log_settings(app, root, old_hours, old_period, new_hours, new_period):
+def update_log_settings(app, root, old_hours, old_period, new_hours, new_period, *, pdm=True):
     periods = [250, 500, 1000, 2000]
     dialog = root.findChild(QObject, "monitorLogSettings")
     button = root.findChild(QObject, "monitorLogButton")
@@ -115,6 +135,12 @@ def update_log_settings(app, root, old_hours, old_period, new_hours, new_period)
     wait_for(app, lambda: dialog.property("loaded"))
     interval = root.findChild(QObject, "monitorLogInterval")
     duration = root.findChild(QObject, "monitorLogDuration")
+    label = root.findChild(QObject, "monitorPdmAddressLabel")
+    assert label.property("visible") == pdm
+    if pdm:
+        assert label.property("text") == "PDM IP Address"
+        assert label.mapToScene(QPointF()).y() < interval.mapToScene(QPointF()).y()
+    check_apply_order(root, "monitorLogApply", "monitorLogCancel", apply_first=pdm)
     assert interval.property("currentIndex") == periods.index(old_period)
     assert duration.property("currentIndex") == old_hours - 1
     interval.setProperty("currentIndex", periods.index(new_period))
@@ -129,6 +155,7 @@ def update_calibration(app, root, device):
     assert button.property("enabled")
     assert QMetaObject.invokeMethod(button, "clicked")
     wait_for(app, lambda: dialog.property("loaded"))
+    check_apply_order(root, "monitorCalibrationApply", "monitorCalibrationCancel")
     low = root.findChild(QObject, "monitorCalibrationLow")
     high = root.findChild(QObject, "monitorCalibrationHigh")
     actual = root.findChild(QObject, "monitorCalibrationActual")
@@ -164,6 +191,41 @@ def rename_channel(app, root, device):
     assert device.calibration_writes == []
 
 
+def change_offline_pdm_address(app, root, monitor, wind, path, device):
+    dialog = root.findChild(QObject, "monitorLogSettings")
+    button = scene_item(root, "monitorLogButton")
+    field = root.findChild(QObject, "pdmAddressField")
+    interval = root.findChild(QObject, "monitorLogInterval")
+    apply = root.findChild(QObject, "monitorLogApply")
+    cancel = root.findChild(QObject, "monitorLogCancel")
+    error = root.findChild(QObject, "monitorLogError")
+    previous = monitor.address
+    assert button.property("enabled") and not field.property("visible")
+    assert QMetaObject.invokeMethod(button, "clicked")
+    wait_for(app, lambda: dialog.property("opened"))
+    assert field.property("enabled") and field.property("text") == previous
+    assert not interval.property("enabled") and not apply.property("enabled")
+    field.setProperty("text", wind.address)
+    assert apply.property("enabled") and QMetaObject.invokeMethod(apply, "clicked")
+    assert "separate address" in error.property("text") and monitor.address == previous
+    field.setProperty("text", "1.2.3.999")
+    assert QMetaObject.invokeMethod(apply, "clicked")
+    assert "valid Ethernet IPv4" in error.property("text") and monitor.address == previous
+    assert QMetaObject.invokeMethod(cancel, "clicked")
+    wait_for(app, lambda: not dialog.property("visible"))
+    assert monitor.address == previous
+
+    assert QMetaObject.invokeMethod(button, "clicked")
+    wait_for(app, lambda: dialog.property("opened"))
+    assert field.property("text") == previous
+    writes = list(device.log_writes)
+    field.setProperty("text", "172.20.1.121")
+    assert apply.property("enabled") and QMetaObject.invokeMethod(apply, "clicked")
+    wait_for(app, lambda: not dialog.property("visible"))
+    assert monitor.address == "172.20.1.121" and "172.20.1.121" in path.read_text()
+    assert device.log_writes == writes
+
+
 def run(directory, server, wind_server):
     app = QGuiApplication([])
     messages = []
@@ -195,22 +257,57 @@ def run(directory, server, wind_server):
         plot = check_visible_trace(root)
         check_hover(app, root, plot, "V", 0.85)
         assert monitor.summary["port"] == 80
+        assert scene_item(root, "monitorLogButton").property("text") == "PDM Settings"
+        assert not scene_item(root, "wsiAddressField").property("visible")
+        assert "PDM IP Address" not in visible_text(root)
+        check_web_shortcut(root, "http://172.20.1.110/")
+        firmware = scene_item(root, "monitorFirmware")
+        server.device.fw_authority_port = None
         server.device.fw_update = "Looking for SRVR"
         wait_for(app, lambda: "could not open TCP 5088" in monitor.summary["ota_note"])
+        assert monitor.summary["connection"] == "Live"
+        assert firmware.property("text") == f"Firmware {SEMVER}"
+        assert monitor.summary["ota_note"] not in visible_text(root)
         monitor._authority_ports = (5760, 5000, 5088)
-        wait_for(app, lambda: "No recent PDM manifest request" in monitor.summary["ota_note"])
+        wait_for(app, lambda: "can reach" in monitor.summary["ota_note"])
         manifest_requests[server.device.address] = 5088
         wait_for(app, lambda: "request reached" in monitor.summary["ota_note"])
+        manifest_requests.clear()
+        server.device.fw_authority_port = 5760
+        wait_for(app, lambda: "TCP 5760" in monitor.summary["ota_note"])
+        assert firmware.property("text") == f"Firmware {SEMVER}"
+        point = firmware.mapToScene(QPointF(12, firmware.height() / 2)).toPoint()
+        QTest.mouseMove(root, point)
+        wait_for(app, lambda: monitor.summary["ota_note"] in visible_text(root))
+        QTest.mouseMove(root, QPoint(2, 2))
+        wait_for(app, lambda: monitor.summary["ota_note"] not in visible_text(root))
+        server.device.fw_update = "Downloading"
+        server.device.fw_progress = 35
+        wait_for(app, lambda: "Downloading" in firmware.property("text") and monitor.summary["progress"] == 35)
         server.device.fw_update = "Current"
+        server.device.fw_progress = 0
+        server.device.alarms = ["LOW", "HIGH", "OK", "OK"]
+        wait_for(app, lambda: monitor.summary["alarms"][0] == "LOW")
         for index in range(4):
-            assert scene_item(root, f"monitorChannelLive{index}").property("text").startswith("Live ")
+            live = scene_item(root, f"monitorChannelLive{index}")
+            gear = scene_item(root, f"monitorChannelSettings{index}")
+            assert live.property("text").startswith("Live ")
+            live_position, settings_position = live.mapToScene(QPointF()), gear.mapToScene(QPointF())
+            assert settings_position.y() < live_position.y()
+            assert abs(settings_position.x() + gear.width() - live_position.x() - live.width()) <= 1
             assert "Max" in scene_item(root, f"monitorChannelExtrema{index}").property("text")
+        for index, warning in enumerate(("LOW", "HIGH")):
+            alarm = scene_item(root, f"monitorChannelAlarm{index}")
+            assert alarm.property("visible") and alarm.property("text") == warning
+            assert alarm.property("color").name() == "#ef5757"
         assert scene_item(root, "monitorChannelExtrema0").property("text") == "Min 48.25 V  •  Max 48.49 V"
         rename_channel(app, root, server.device)
         update_calibration(app, root, server.device)
-        for port in (5000, 5760):
+        for port in (5000, 5760, 80):
             server.device.http_port = port
             wait_for(app, lambda: monitor.summary["port"] == port)
+            suffix = "" if port == 80 else f":{port}"
+            check_web_shortcut(root, f"http://172.20.1.110{suffix}/")
         update_log_settings(app, root, 12, 500, 6, 1000)
         wait_for(app, lambda: wind.summary["samples"] >= 5 and len(wind.graphs[0]) > 2)
         page = root.findChild(QObject, "powerPage")
@@ -218,7 +315,9 @@ def run(directory, server, wind_server):
         app.processEvents()
         wind_plot = check_visible_trace(root, count=1)
         check_hover(app, root, wind_plot, "m/s", 0.85)
-        update_log_settings(app, root, 12, 500, 3, 2000)
+        assert scene_item(root, "wsiAddressField").property("visible")
+        check_web_shortcut(root, "http://172.20.1.111:5760/")
+        update_log_settings(app, root, 12, 500, 3, 2000, pdm=False)
         assert server.device.hours == 6 and server.device.period == 1000
         assert wind_server.device.hours == 3 and wind_server.device.period == 2000
         page.setProperty("windSelected", False)
@@ -226,8 +325,7 @@ def run(directory, server, wind_server):
         wait_for(app, lambda: monitor.summary["connection"] == "Stale data")
         server.device.online = False
         wait_for(app, lambda: monitor.summary["connection"] == "Offline")
-        assert monitor.saveAddress("172.20.1.121") == "" and "172.20.1.121" in settings.read_text()
-        assert monitor.saveAddress("1.2.3.999") and monitor.address == "172.20.1.121"
+        change_offline_pdm_address(app, root, monitor, wind, settings, server.device)
         root.setProperty("page", 0)
     finally:
         monitor.close()
@@ -256,8 +354,8 @@ if __name__ == "__main__":
         devices = {item.device.address: item for item in (server, wind_server)}
 
         def connect(address, port, timeout):
-            device = devices[address]
-            if port != device.device.http_port:
+            device = devices.get(address)
+            if device is None or port != device.device.http_port:
                 raise ConnectionRefusedError
             return HTTPConnection("127.0.0.1", device.server_port, timeout=timeout)
 

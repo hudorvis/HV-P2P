@@ -1,3 +1,10 @@
+# v26.11.12.08 — 2026-11-12
+
+- Serve the PDM dashboard and API on TCP 80, with SRVR fallback to the earlier web ports during upgrades.
+- Show live connectivity separately from firmware checks. Put firmware diagnostics in the tooltip.
+- Reorder the voltage card controls, show active voltage alarms in red and place Apply before Cancel in PDM dialogs.
+- Move the monitored PDM IP address to the first row of PDM Settings and support changing it while offline.
+
 # v26.11.12.07 — 2026-11-12
 
 - Require a fresh, exact CTRL firmware report before SRVR serves a W1P update image or starts its fallback upload.

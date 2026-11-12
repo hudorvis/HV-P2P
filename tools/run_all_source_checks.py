@@ -69,7 +69,7 @@ checks=[
     ['python3',str(ROOT/'tools'/'test_release_consistency.py')],
     ['python3',str(ROOT/'tools'/'test_source_hygiene.py')],
     ['python3',str(ROOT/'tools'/'test_python_syntax.py')],
-    ['python3',str(ROOT/'SRVR_GitHub_v26.11.12.07'/'tools'/'validate_project.py')],
+    ['python3',str(ROOT/'SRVR_GitHub_v26.11.12.08'/'tools'/'validate_project.py')],
 ]
 env=os.environ.copy(); env['PYTHONDONTWRITEBYTECODE']='1'
 for cmd in checks:
@@ -82,7 +82,7 @@ try:
 except Exception:
     print('\nBACKEND_RUNTIME_TEST_SKIPPED: PySide6 not installed in source-audit environment')
 else:
-    for test in (ROOT/'SRVR_GitHub_v26.11.12.07'/'tools'/'test_backend_logic.py',
+    for test in (ROOT/'SRVR_GitHub_v26.11.12.08'/'tools'/'test_backend_logic.py',
                  ROOT/'tools'/'test_pdm_qt_runtime.py', ROOT/'tools'/'test_srvr_startup_ui.py'):
         cmd=['python3',str(test)]
         print('\n==>', ' '.join(cmd), flush=True)
