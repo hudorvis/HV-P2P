@@ -1,3 +1,9 @@
+# v26.11.12.03 — 2026-11-12
+
+- Show Live, Min and Max for each PDM graph, with a Settings popup that writes the channel calibration and alarms to the device.
+- Standardise current network service ports on 5000. SRVR retains the legacy 5088 OTA listener for installed nodes. Older PDM dashboards remain reachable through port 80 detection until upgraded.
+- Show whether PDM manifest traffic reached this SRVR and report the authority address on updated Olimex firmware.
+
 # v26.11.12.02 — 2026-11-12
 
 - Pin the GitHub firmware and complete-release packaging jobs to Ubuntu 24.04. GitHub provides the pinned Python 3.12.10 x64 build for this runner.

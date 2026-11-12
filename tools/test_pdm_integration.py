@@ -19,16 +19,16 @@ from native_build_firmware import PDM_TARGET, SEMVER, VER, make_firmware_bundle
 ROOT = Path(__file__).resolve().parents[1]
 PDM = ROOT / f"HV_P2P_PDM_v{VER}"
 sys.path.insert(0, str(ROOT / f"SRVR_GitHub_v{VER}"))
-from firmware_authority import FirmwareAuthorityServer, FirmwareBundle
-from pdm_client import PdmSession, Timeline, WsiSession, parse_history_page
+from firmware_authority import AUTHORITY_PORT, LEGACY_AUTHORITY_PORT, FirmwareAuthorityServer, FirmwareBundle
+from pdm_client import DEVICE_HTTP_PORT, LEGACY_PDM_HTTP_PORT, PdmSession, Timeline, WsiSession, parse_history_page
 
 EPOCH = 1_794_233_000_000
 HEADER = "t_ms,utc_ms,v48_1,v48_2,v24,v12\n"
 IDENTITY = f"HV_P2P_FW_ROLE=PDM;HV_P2P_FW_TARGET={PDM_TARGET};HV_P2P_FW_VERSION={SEMVER};".encode()
 
 
-def get(server, path, *, source="127.0.0.1"):
-    with closing(HTTPConnection("127.0.0.1", server.port, timeout=2, source_address=(source, 0))) as client:
+def get(server, path, *, source="127.0.0.1", port=None):
+    with closing(HTTPConnection("127.0.0.1", port or server.port, timeout=2, source_address=(source, 0))) as client:
         client.request("GET", path)
         response = client.getresponse()
         return response.status, response.read()
@@ -39,6 +39,8 @@ class Device:
     live_path = "/api/voltages"
     keys = ("v48_1", "v48_2", "v24", "v12")
     role = "pdm"
+    http_port = DEVICE_HTTP_PORT
+    fw_update = "Current"
     def __init__(self):
         self.samples = {}
         self.now = 10_500
@@ -52,6 +54,11 @@ class Device:
         self.hours = 12
         self.period = 500
         self.offset = 0.75
+        self.other_offsets = [0.0] * 3
+        self.actuals = [None] * 4
+        self.thresholds = [dict(low=40, high=55), dict(low=40, high=55),
+                           dict(low=20, high=28), dict(low=10, high=14)]
+        self.calibration_writes = []
         self.names = ("Radio supply", "Brake supply", "24 V", "12 V")
         self.cursors = []
         self.clock_writes = []
@@ -64,6 +71,8 @@ class Device:
 
     def fetch(self, address, path, **kwargs):
         assert address == self.address
+        if kwargs.get("port", self.http_port) != self.http_port:
+            raise ConnectionRefusedError
         if not self.online:
             raise TimeoutError("PDM absent")
         url = urlsplit(path)
@@ -79,8 +88,9 @@ class Device:
                         sd_ok=self.sd, log_healthy=self.sd, sample_period_ms=self.period,
                         log_hours=self.hours, offset0=self.offset, recent=rows[:32],
                         gap=False, more=len(rows) > 32, fw_version=SEMVER,
-                        fw_update="Current", fw_progress=0, alarms=["OK"] * len(self.keys))
+                        fw_update=self.fw_update, fw_progress=0, alarms=["OK"] * len(self.keys))
             data.update(zip(self.keys, latest[2:]))
+            data.update({f"offset{i}": value for i, value in enumerate(self.other_offsets, 1)})
         elif url.path == "/api/history":
             assert query["format"] == ["csv"] and query["generation"] == [str(self.generation)]
             end = int(query["end"][0])
@@ -101,6 +111,22 @@ class Device:
                 data["ok"] = True
         elif url.path == "/api/names":
             data = {f"ch{index}": name for index, name in enumerate(self.names, 1)}
+        elif url.path == "/api/calibration":
+            settings = kwargs.get("body")
+            if settings is not None:
+                self.calibration_writes.append(settings)
+                index = settings["channel"] - 1
+                self.thresholds[index] = dict(low=settings["low"], high=settings["high"])
+                if "actual" in settings:
+                    actual = settings["actual"]
+                    self.actuals[index] = actual
+                    raw = self.samples[max(self.samples)][index + 2]
+                    offset = actual - raw if actual is not None else 0.0
+                    if index == 0:
+                        self.offset = offset
+                    else:
+                        self.other_offsets[index - 1] = offset
+            data = dict(ok=settings is not None, thresholds=self.thresholds, actuals=self.actuals)
         elif url.path == "/api/time":
             self.clock_writes.append(kwargs["body"]["utc_ms"])
             data = {"ok": True}
@@ -161,11 +187,36 @@ class PdmIntegration(unittest.TestCase):
             WsiSession(power.address, power.fetch).log_settings((1, 250))
         self.assertEqual(pdm.log_settings(), (6, 1000))
 
-    def server(self):
-        server = FirmwareAuthorityServer(SEMVER, host="127.0.0.1", port=0, bundle_dir=self.bundle)
+    def server(self, *, legacy_port=None):
+        server = FirmwareAuthorityServer(SEMVER, host="127.0.0.1", port=0, bundle_dir=self.bundle,
+                                         legacy_port=legacy_port)
         server.start()
         self.addCleanup(server.close)
         return server
+
+    def test_channel_calibration_and_legacy_dashboard_migration(self):
+        power = Device()
+        power.http_port = LEGACY_PDM_HTTP_PORT
+        pdm = PdmSession(power.address, power.fetch)
+        pdm.poll()
+        self.assertEqual(pdm.port, 80)
+        self.assertEqual(pdm.calibration(1), dict(low=40, high=55, actual=None))
+        self.assertEqual(pdm.calibration(2, dict(low=44, high=58, actual=51)),
+                         dict(low=44, high=58, actual=51))
+        self.assertEqual(pdm.calibration(2, dict(low=43, high=58))["actual"], 51)
+        self.assertNotIn("actual", power.calibration_writes[-1])
+        self.assertEqual(pdm.calibration(1), dict(low=40, high=55, actual=None))
+        with self.assertRaisesRegex(ValueError, "low alarm below"):
+            pdm.calibration(2, dict(low=58, high=43))
+        power.http_port = DEVICE_HTTP_PORT
+        pdm.poll()
+        self.assertEqual(pdm.port, 5000)
+        self.assertEqual(pdm.summary()["voltages"][1], 51)
+        pdm.calibration(2, dict(low=43, high=58, actual=None))
+        pdm.poll()
+        self.assertEqual(pdm.summary()["voltages"][1], 49.5)
+        with self.assertRaisesRegex(ValueError, "Select a PDM"):
+            WsiSession("172.20.1.111", WindDevice().fetch).calibration(1)
 
     def test_pdm_optional_and_wrong_target(self):
         for problem in ("absent", "wrong manifest target", "wrong binary target", "damaged"):
@@ -195,7 +246,12 @@ class PdmIntegration(unittest.TestCase):
                 server.close()
 
     def test_live_idle_lease_and_independent_edgebox_routes(self):
-        server = self.server()
+        self.assertEqual((AUTHORITY_PORT, LEGACY_AUTHORITY_PORT), (5000, 5088))
+        for pattern in ("HV_P2P_CTRL_EDGEBOX_*", "HV_P2P_W1P_EDGEBOX_*", "HV_P2P_PDM_*"):
+            header = next(ROOT.glob(pattern)) / "HV_P2P_SRVR_Authority_OTA.h"
+            self.assertIn(f"AUTHORITY_PORT = {AUTHORITY_PORT};", header.read_text())
+        self.assertIn(f"DEVICE_HTTP_PORT = {DEVICE_HTTP_PORT};", (PDM / "pdm_app.cpp").read_text())
+        server = self.server(legacy_port=0)
         now = 0.0
         window = server.pdm_window
         window._clock = lambda: now
@@ -203,7 +259,12 @@ class PdmIntegration(unittest.TestCase):
         status, body = get(server, path + "/manifest")
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["target"], PDM_TARGET)
+        self.assertEqual(server.pdm_manifest_port("127.0.0.1"), server.port)
+        self.assertEqual(get(server, path + "/manifest", port=server.legacy_port), (status, body))
+        self.assertEqual(server.pdm_manifest_port("127.0.0.1"), server.legacy_port)
+        self.assertIsNone(server.pdm_manifest_port("127.0.0.2"))
         self.assertEqual(get(server, path + "/image")[0], 409)
+        self.assertEqual(get(server, path + "/image", port=server.legacy_port)[0], 409)
         for tick in range(12):
             now = tick * 0.25
             window.observe("127.0.0.1", True)
@@ -212,6 +273,7 @@ class PdmIntegration(unittest.TestCase):
         window.observe("127.0.0.1", True)
         self.assertEqual(get(server, path + "/permit"), (200, f"{SEMVER} {sha256(self.apps[2]).hexdigest()}\n".encode()))
         self.assertEqual(get(server, path + "/image"), (200, self.apps[2]))
+        self.assertEqual(get(server, path + "/image", port=server.legacy_port), (200, self.apps[2]))
         self.assertEqual(get(server, path + "/image", source="127.0.0.2")[0], 409)
         now += 0.5
         self.assertEqual(get(server, path + "/permit")[0], 409)

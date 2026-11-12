@@ -1,0 +1,18 @@
+HV P2P SYS v26.11.12.03 source verification
+Baseline HV-P2P-v26.11.12.02-GitHub.zip
+
+PASS  All 69 source regression commands, including Qt backend and
+      PDM/WSI runtime checks.
+PASS  All four channel readings, calibrated extrema, channel settings
+      save, preserved calibration for an alarm-only edit, and reset.
+PASS  Legacy PDM port 80, migration to port 5000, SRVR manifest request
+      diagnostics and the port 5000 WSI API fixture.
+PASS  Both firmware listeners with UDP control port 5000 bound, identical
+      manifest delivery, and idle permission enforcement on both ports.
+PASS  Verified PDM embedded assets, JavaScript syntax, Qt resource
+      compilation, QML lint and SRVR offscreen smoke.
+PASS  Verified source ZIP and its internal SHA-256 manifest.
+
+Pending  GitHub-hosted native firmware and desktop builds and the
+         field update on the physical Olimex PDM. WSI sensor firmware
+         remains pending.

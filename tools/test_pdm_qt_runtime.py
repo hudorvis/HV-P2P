@@ -68,14 +68,20 @@ def wait_for(app, condition, timeout=8):
         time.sleep(0.01)
 
 
-def check_visible_trace(window: QQuickWindow, count=4):
+def scene_items(window: QQuickWindow):
     pending = [window.contentItem()]
-    plots = []
     while pending:
         item = pending.pop()
-        if item.objectName() == "pdmPowerTrace":
-            plots.append(item)
+        yield item
         pending.extend(item.childItems())
+
+
+def scene_item(window, name):
+    return next(item for item in scene_items(window) if item.objectName() == name)
+
+
+def check_visible_trace(window: QQuickWindow, count=4):
+    plots = [item for item in scene_items(window) if item.objectName() == "pdmPowerTrace"]
     assert len(plots) == count, len(plots)
     first = min(plots, key=lambda plot: plot.mapToScene(QPointF()).y() * window.width() + plot.mapToScene(QPointF()).x())
     origin = first.mapToScene(QPointF())
@@ -117,6 +123,31 @@ def update_log_settings(app, root, old_hours, old_period, new_hours, new_period)
     wait_for(app, lambda: not dialog.property("visible"))
 
 
+def update_calibration(app, root, device):
+    dialog = root.findChild(QObject, "monitorCalibrationDialog")
+    button = scene_item(root, "monitorChannelSettings1")
+    assert button.property("enabled")
+    assert QMetaObject.invokeMethod(button, "clicked")
+    wait_for(app, lambda: dialog.property("loaded"))
+    low = root.findChild(QObject, "monitorCalibrationLow")
+    high = root.findChild(QObject, "monitorCalibrationHigh")
+    actual = root.findChild(QObject, "monitorCalibrationActual")
+    assert low.property("text") == "40"
+    assert high.property("text") == "55"
+    assert actual.property("text") == "49.50"
+    low.setProperty("text", "45")
+    high.setProperty("text", "56")
+    actual.setProperty("text", "51.25")
+    assert QMetaObject.invokeMethod(actual, "textEdited")
+    assert QMetaObject.invokeMethod(root.findChild(QObject, "monitorCalibrationApply"), "clicked")
+    wait_for(app, lambda: not dialog.property("visible"))
+    assert device.calibration_writes == [dict(channel=2, low=45, high=56, actual=51.25)]
+    live = scene_item(root, "monitorChannelLive1")
+    extrema = scene_item(root, "monitorChannelExtrema1")
+    wait_for(app, lambda: live.property("text") == "Live 51.25 V")
+    wait_for(app, lambda: extrema.property("text") == "Min 51.25 V  •  Max 51.25 V")
+
+
 def run(directory, server, wind_server):
     app = QGuiApplication([])
     messages = []
@@ -124,7 +155,8 @@ def run(directory, server, wind_server):
     backend = HVP2PBackend(version=SEMVER[1:], smoke_test=True)
     engine = QQmlApplicationEngine()
     settings = directory / "pdm.ini"
-    monitor = PdmMonitor(settings, PdmIdleWindow(), lambda: False, "")
+    manifest_requests = {}
+    monitor = PdmMonitor(settings, PdmIdleWindow(), lambda: False, "", manifest_port=manifest_requests.get)
     monitor.setParent(engine)
     wind = WsiMonitor(directory / "wsi.ini")
     wind.setParent(engine)
@@ -145,6 +177,19 @@ def run(directory, server, wind_server):
         app.processEvents()
         plot = check_visible_trace(root)
         check_hover(app, root, plot, "V", 0.85)
+        assert monitor.summary["port"] == 80
+        server.device.fw_update = "Looking for SRVR"
+        wait_for(app, lambda: "TCP 5088" in monitor.summary["ota_note"])
+        manifest_requests[server.device.address] = 5088
+        wait_for(app, lambda: "request reached" in monitor.summary["ota_note"])
+        server.device.fw_update = "Current"
+        for index in range(4):
+            assert scene_item(root, f"monitorChannelLive{index}").property("text").startswith("Live ")
+            assert "Max" in scene_item(root, f"monitorChannelExtrema{index}").property("text")
+        assert scene_item(root, "monitorChannelExtrema0").property("text") == "Min 48.25 V  •  Max 48.49 V"
+        update_calibration(app, root, server.device)
+        server.device.http_port = 5000
+        wait_for(app, lambda: monitor.summary["port"] == 5000)
         update_log_settings(app, root, 12, 500, 6, 1000)
         wait_for(app, lambda: wind.summary["samples"] >= 5 and len(wind.graphs[0]) > 2)
         page = root.findChild(QObject, "powerPage")
@@ -181,16 +226,23 @@ if __name__ == "__main__":
         sys.path.insert(0, scratch)
         import rc_resources  # noqa: F401
         server.device = Device()
+        server.device.http_port = 80
         for i in range(1, 33):
             server.device.add(10500 + 500 * i, None if 12 <= i <= 17 else 47.5 + (i % 9) * 0.03)
         server.device.durable = server.device.now - 500
         wind_server.device = WindDevice()
-        ports = {server.device.address: server.server_port, wind_server.device.address: wind_server.server_port}
+        devices = {item.device.address: item for item in (server, wind_server)}
+
+        def connect(address, port, timeout):
+            device = devices[address]
+            if port != device.device.http_port:
+                raise ConnectionRefusedError
+            return HTTPConnection("127.0.0.1", device.server_port, timeout=timeout)
+
         threading.Thread(target=server.serve_forever, daemon=True).start()
         threading.Thread(target=wind_server.serve_forever, daemon=True).start()
         try:
-            with patch("pdm_client.HTTPConnection", side_effect=lambda address, port, timeout:
-                       HTTPConnection("127.0.0.1", ports[address], timeout=timeout)):
+            with patch("pdm_client.HTTPConnection", side_effect=connect):
                 run(directory, server, wind_server)
         finally:
             server.shutdown()
