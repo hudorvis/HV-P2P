@@ -10,6 +10,7 @@ import sys
 from tempfile import TemporaryDirectory
 import threading
 import time
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from test_pdm_integration import Device, SEMVER, WindDevice
@@ -138,7 +139,8 @@ def update_log_settings(app, root, old_hours, old_period, new_hours, new_period,
     label = root.findChild(QObject, "monitorPdmAddressLabel")
     assert label.property("visible") == pdm
     if pdm:
-        assert label.property("text") == "PDM IP Address"
+        assert label.property("text") == "IP Address"
+        assert root.findChild(QObject, "monitorSettingsTitle").property("text") == "Settings"
         assert label.mapToScene(QPointF()).y() < interval.mapToScene(QPointF()).y()
     check_apply_order(root, "monitorLogApply", "monitorLogCancel", apply_first=pdm)
     assert interval.property("currentIndex") == periods.index(old_period)
@@ -233,9 +235,10 @@ def run(directory, server, wind_server):
     backend = HVP2PBackend(version=SEMVER[1:], smoke_test=True)
     engine = QQmlApplicationEngine()
     settings = directory / "pdm.ini"
-    manifest_requests = {}
-    monitor = PdmMonitor(settings, PdmIdleWindow(), lambda: False, "", manifest_port=manifest_requests.get,
-                         authority_ports=(5760, 5000))
+    activity = {}
+    authority = SimpleNamespace(port=5760, legacy_ports=(5000,), bundle=SimpleNamespace(release=SEMVER),
+                                pdm_activity=lambda peer: activity if peer == server.device.address else {})
+    monitor = PdmMonitor(settings, PdmIdleWindow(), lambda: False, "", authority=authority, log=backend._log)
     monitor.setParent(engine)
     wind = WsiMonitor(directory / "wsi.ini")
     wind.setParent(engine)
@@ -257,34 +260,55 @@ def run(directory, server, wind_server):
         plot = check_visible_trace(root)
         check_hover(app, root, plot, "V", 0.85)
         assert monitor.summary["port"] == 80
-        assert scene_item(root, "monitorLogButton").property("text") == "PDM Settings"
+        settings_button = scene_item(root, "monitorLogButton")
+        web_button = scene_item(root, "monitorOpenWeb")
+        assert settings_button.property("text") == "Settings" and web_button.property("text") == "Web UI"
+        assert web_button.mapToScene(QPointF()).x() < settings_button.mapToScene(QPointF()).x()
         assert not scene_item(root, "wsiAddressField").property("visible")
-        assert "PDM IP Address" not in visible_text(root)
+        assert "IP Address" not in visible_text(root)
         check_web_shortcut(root, "http://172.20.1.110/")
         firmware = scene_item(root, "monitorFirmware")
+        def ota_log():
+            return next((line for line in reversed(backend._logs) if "[PDM OTA]" in line), "")
+
+        previous = "v26.11.12.07"
+        server.device.fw_version = previous
+        wait_for(app, lambda: monitor.summary["version"] == previous and monitor.summary["update"] == "—")
+        assert firmware.property("text") == f"Firmware {previous}"
         server.device.fw_authority_port = None
         server.device.fw_update = "Looking for SRVR"
-        wait_for(app, lambda: "could not open TCP 5088" in monitor.summary["ota_note"])
+        wait_for(app, lambda: "could not open TCP 5088" in ota_log())
         assert monitor.summary["connection"] == "Live"
-        assert firmware.property("text") == f"Firmware {SEMVER}"
-        assert monitor.summary["ota_note"] not in visible_text(root)
-        monitor._authority_ports = (5760, 5000, 5088)
-        wait_for(app, lambda: "can reach" in monitor.summary["ota_note"])
-        manifest_requests[server.device.address] = 5088
-        wait_for(app, lambda: "request reached" in monitor.summary["ota_note"])
-        manifest_requests.clear()
+        assert firmware.property("text") == f"Firmware {previous}"
+        authority.legacy_ports = (5000, 5088)
+        wait_for(app, lambda: "Awaiting a firmware request" in ota_log())
+        activity["manifest"] = (5088, 200)
+        wait_for(app, lambda: "Manifest served" in ota_log())
+        activity.clear()
         server.device.fw_authority_port = 5760
-        wait_for(app, lambda: "TCP 5760" in monitor.summary["ota_note"])
-        assert firmware.property("text") == f"Firmware {SEMVER}"
+        wait_for(app, lambda: "TCP 5760" in ota_log())
+        assert firmware.property("text") == f"Firmware {previous}"
         point = firmware.mapToScene(QPointF(12, firmware.height() / 2)).toPoint()
         QTest.mouseMove(root, point)
-        wait_for(app, lambda: monitor.summary["ota_note"] in visible_text(root))
+        QTest.qWait(700)
+        assert "ota_note" not in monitor.summary
+        assert not any(text and ("firmware request from this PDM" in str(text) or "For firmware updates" in str(text))
+                       for text in visible_text(root))
         QTest.mouseMove(root, QPoint(2, 2))
-        wait_for(app, lambda: monitor.summary["ota_note"] not in visible_text(root))
+        activity["permit"] = (5760, 409)
+        wait_for(app, lambda: "holding the PDM update for verified safe idle" in ota_log())
+        activity["permit"] = (5760, 200)
+        wait_for(app, lambda: "Safe-idle permit granted" in ota_log())
+        activity.clear()
+        activity["image"] = (5760, 200)
+        wait_for(app, lambda: "PDM requested the firmware image" in ota_log())
+        entries = backend.filteredLogEntries("Network", "All", "PDM OTA")
+        assert entries[-1]["source"] == "PDM OTA" and "requested the firmware image" in entries[-1]["message"]
         server.device.fw_update = "Downloading"
         server.device.fw_progress = 35
         wait_for(app, lambda: "Downloading" in firmware.property("text") and monitor.summary["progress"] == 35)
         server.device.fw_update = "Current"
+        server.device.fw_version = SEMVER
         server.device.fw_progress = 0
         server.device.alarms = ["LOW", "HIGH", "OK", "OK"]
         wait_for(app, lambda: monitor.summary["alarms"][0] == "LOW")
@@ -316,6 +340,7 @@ def run(directory, server, wind_server):
         wind_plot = check_visible_trace(root, count=1)
         check_hover(app, root, wind_plot, "m/s", 0.85)
         assert scene_item(root, "wsiAddressField").property("visible")
+        assert settings_button.mapToScene(QPointF()).x() < web_button.mapToScene(QPointF()).x()
         check_web_shortcut(root, "http://172.20.1.111:5760/")
         update_log_settings(app, root, 12, 500, 3, 2000, pdm=False)
         assert server.device.hours == 6 and server.device.period == 1000

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile the real PDM OTA header against host transport and flash fixtures."""
+"""Compile the PDM OTA worker against host transport and flash fixtures."""
 from pathlib import Path
 import subprocess
 from tempfile import TemporaryDirectory
@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 with TemporaryDirectory(prefix="hvp2p-pdm-ota-") as directory:
     path = Path(directory)
     (path / "mbedtls").mkdir()
-    for stub in ("Arduino.h", "HTTPClient.h", "NetworkClient.h", "Update.h",
+    for stub in ("Arduino.h", "ETH.h", "IPAddress.h", "Preferences.h", "HTTPClient.h", "NetworkClient.h", "Update.h",
                  "esp_ota_ops.h", "esp_partition.h", "mbedtls/sha256.h"):
         (path / stub).touch()
     executable = path / "pdm_ota_host"

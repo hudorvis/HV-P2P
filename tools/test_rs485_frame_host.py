@@ -2,10 +2,10 @@
 from pathlib import Path
 import re, subprocess, tempfile, zlib
 ROOT=Path(__file__).resolve().parents[1]
-HDR=ROOT/'HV_P2P_CTRL_EDGEBOX_v26.11.12.08'/'HV_P2P_RS485_Frame.h'
+HDR=ROOT/'HV_P2P_CTRL_EDGEBOX_v26.11.12.09'/'HV_P2P_RS485_Frame.h'
 assert HDR.is_file()
 ctrl = next(HDR.parent.glob('*.ino')).read_text()
-hmi_dir = ROOT/'HV_P2P_CTRL_TS_v26.11.12.08'
+hmi_dir = ROOT/'HV_P2P_CTRL_TS_v26.11.12.09'
 hmi = next(hmi_dir.glob('*.ino')).read_text()
 assert (hmi_dir/HDR.name).read_bytes() == HDR.read_bytes()
 

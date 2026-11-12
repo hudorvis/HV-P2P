@@ -1,0 +1,21 @@
+HV P2P SYS v26.11.12.09 source verification
+Baseline HV-P2P-v26.11.12.08-GitHub-Complete.zip
+
+PASS  All 70 source regression scripts with PySide6 enabled.
+PASS  HTTP fixture confirms manifest access and idle permission are
+      separate. Tests cover requests from different peers, legacy
+      listeners, idle expiry and the verified image transfer.
+PASS  The compiled PDM OTA worker host fixture distinguishes Ethernet,
+      manifest, permit, idle and SD writer failures. It verifies the
+      pre-transfer idle retry, fresh permission after the writer pause
+      and a successful staged activation with simulated reboot.
+PASS  Offscreen SRVR PDM and WSI monitoring, Web UI / Settings placement,
+      IP Address editing, absence of firmware hover diagnostics, progress
+      display and PDM OTA entries in the structured SRVR Log.
+PASS  Source SRVR offscreen smoke with a fixture firmware bundle.
+      QML lint, PDM JavaScript syntax and GitHub workflow YAML parsing.
+PASS  Source ZIP integrity and per-file SHA-256 checks.
+
+Pending  Native GitHub ESP32 and packaged desktop builds.
+Pending  Physical OTA on the Olimex and verification of the reported
+         v26.11.12.07 installation's exact update blocker.

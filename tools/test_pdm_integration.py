@@ -43,6 +43,7 @@ class Device:
     fw_update = "Current"
     fw_authority_port = AUTHORITY_PORT
     fw_progress = 0
+    fw_version = SEMVER
     def __init__(self):
         self.samples = {}
         self.now = 10_500
@@ -91,7 +92,7 @@ class Device:
                         stored_through=self.durable, t=latest[0], utc_ms=latest[1],
                         sd_ok=self.sd, log_healthy=self.sd, sample_period_ms=self.period,
                         log_hours=self.hours, offset0=self.offset, recent=rows[:32],
-                        gap=False, more=len(rows) > 32, fw_version=SEMVER,
+                        gap=False, more=len(rows) > 32, fw_version=self.fw_version,
                         fw_update=self.fw_update, fw_progress=self.fw_progress, alarms=self.alarms)
             if self.role == "pdm" and self.fw_authority_port is not None:
                 data["fw_authority_port"] = self.fw_authority_port
@@ -312,22 +313,29 @@ class PdmIntegration(unittest.TestCase):
         status, body = get(server, path + "/manifest")
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["target"], PDM_TARGET)
-        self.assertEqual(server.pdm_manifest_port("127.0.0.1"), server.port)
+        self.assertEqual(json.loads(body)["version"], SEMVER)
+        self.assertEqual(server.pdm_activity("127.0.0.1"), {"manifest": (server.port, 200)})
         self.assertEqual(len(server.legacy_ports), 2)
         for port in server.legacy_ports:
             self.assertEqual(get(server, path + "/manifest", port=port), (status, body))
-            self.assertEqual(server.pdm_manifest_port("127.0.0.1"), port)
+            self.assertEqual(server.pdm_activity("127.0.0.1")["manifest"], (port, 200))
             self.assertEqual(get(server, path + "/image", port=port)[0], 409)
-        self.assertIsNone(server.pdm_manifest_port("127.0.0.2"))
+        self.assertEqual(get(server, path + "/manifest", source="127.0.0.2")[0], 200)
+        self.assertEqual(server.pdm_activity("127.0.0.2"), {"manifest": (server.port, 200)})
+        self.assertEqual(server.pdm_activity("127.0.0.1")["manifest"], (server.legacy_ports[-1], 200))
         self.assertEqual(get(server, path + "/image")[0], 409)
         for tick in range(12):
             now = tick * 0.25
             window.observe("127.0.0.1", True)
         self.assertEqual(get(server, path + "/permit")[0], 409)
+        self.assertEqual(server.pdm_activity("127.0.0.1")["permit"], (server.port, 409))
         now = 3.0
         window.observe("127.0.0.1", True)
         self.assertEqual(get(server, path + "/permit"), (200, f"{SEMVER} {sha256(self.apps[2]).hexdigest()}\n".encode()))
+        self.assertEqual(server.pdm_activity("127.0.0.1")["permit"], (server.port, 200))
         self.assertEqual(get(server, path + "/image"), (200, self.apps[2]))
+        self.assertEqual(next(iter(server.pdm_activity("127.0.0.1"))), "image")
+        self.assertEqual(server.pdm_activity("127.0.0.1")["image"], (server.port, 200))
         self.assertEqual(get(server, "/firmware/w1p/image")[0], 409)
         for port in server.legacy_ports:
             self.assertEqual(get(server, path + "/image", port=port), (200, self.apps[2]))

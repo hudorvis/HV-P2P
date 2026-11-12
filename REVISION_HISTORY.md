@@ -1,3 +1,9 @@
+# v26.11.12.09 — 2026-11-12
+
+- Rename and reorder the PDM Web UI and Settings controls. Rename the address field and remove the firmware hover popup.
+- Record PDM manifest, permit and image requests in the SRVR Log, including when safe idle holds an update.
+- Improve PDM Ethernet route selection and distinguish network, idle and SD pause failures. Retry a pre-transfer idle denial on the normal firmware check cadence.
+
 # v26.11.12.08 — 2026-11-12
 
 - Serve the PDM dashboard and API on TCP 80, with SRVR fallback to the earlier web ports during upgrades.
