@@ -1,0 +1,17 @@
+HV P2P SYS v26.11.12.05 source verification
+Baseline HV-P2P-v26.11.12.04-GitHub.zip
+
+PASS  All 70 source regression commands, including Qt backend, PDM/WSI,
+      startup recovery and legacy UDP migration.
+PASS  Occupied TCP 5000 while running firmware authority on TCP 5760 and
+      5088 with UDP 5760 bound. Verified identical firmware manifests
+      across the serving ports and PDM idle permission enforcement.
+PASS  Legacy W1P receives read-only discovery and OTA beacons. Legacy
+      replies cannot update live status or grant PDM isolated-bench idle.
+      Current W1P UDP commands and replies use the new control port.
+PASS  PDM HTTP fixture follows the transition from port 80 and 5000 to 5760.
+PASS  Qt resource compilation, offscreen SRVR smoke, source ZIP and
+      SHA-256 manifest.
+
+Pending  GitHub native compilation, launch on Intel macOS, and OTA
+         cutover and control validation on physical nodes.

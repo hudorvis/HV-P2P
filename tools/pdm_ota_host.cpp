@@ -83,7 +83,7 @@ class HTTPClient {
   void setTimeout(unsigned) {}
   bool begin(NetworkClient& client, const String& url) {
     manifest_ = strstr(url.c_str(), "/manifest") != nullptr;
-    assert(strstr(url.c_str(), "http://172.20.1.100:5000/firmware/pdm/"));
+    assert(strstr(url.c_str(), "http://172.20.1.100:5760/firmware/pdm/"));
     client_ = &client;
     return true;
   }

@@ -1,6 +1,6 @@
 # Wind Speed Indicator (WSI)
 
-In SRVR, open **Monitoring → WSI** and enter the WSI Olimex Ethernet address. Assign the board its own IP address. The WSI view starts without an address. **Open WSI Web UI** uses HTTP port 5000 on the saved address. **Log Settings** writes only to the selected device.
+In SRVR, open **Monitoring → WSI** and enter the WSI Olimex Ethernet address. Assign the board its own IP address. The WSI view starts without an address. **Open WSI Web UI** uses HTTP port 5760 on the saved address. **Log Settings** writes only to the selected device.
 
 ## Device API
 

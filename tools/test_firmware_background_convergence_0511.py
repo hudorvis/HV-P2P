@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""v26.11.12.03 firmware convergence must not depend on the Qt event loop."""
+"""v26.11.12.05 firmware convergence must not depend on the Qt event loop."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.11.12.03'
+VER = '26.11.12.05'
 B = (ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 M = (ROOT/f'SRVR_GitHub_v{VER}/main.py').read_text()
 C = (ROOT/f'HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino').read_text()
@@ -38,7 +38,7 @@ for tok in ('def _update_firmware_snapshot', 'FW_MATCH', 'FW_AUTH', 'FW_PROGRESS
             'def firmware_snapshot', 'self._update_firmware_snapshot(line)'):
     assert tok in client, tok
 allow = B[B.index('    def _ctrl_ts_update_allowed'):B.index('    def _limit_calibration_display_position')]
-for tok in ('self.w1p.firmware_snapshot()', '(w1p_present or snapshot_fresh) and not w1p_current',
+for tok in ('self.w1p.firmware_snapshot()', '(w1p_present or legacy_w1p_present or snapshot_fresh) and not w1p_current',
             '_w1p_fw_discovery_grace_s', '_w1p_fw_order_pending', '_w1p_fw_order_absent_timeout_s'):
     assert tok in allow, tok
 

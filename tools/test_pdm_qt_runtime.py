@@ -188,8 +188,9 @@ def run(directory, server, wind_server):
             assert "Max" in scene_item(root, f"monitorChannelExtrema{index}").property("text")
         assert scene_item(root, "monitorChannelExtrema0").property("text") == "Min 48.25 V  •  Max 48.49 V"
         update_calibration(app, root, server.device)
-        server.device.http_port = 5000
-        wait_for(app, lambda: monitor.summary["port"] == 5000)
+        for port in (5000, 5760):
+            server.device.http_port = port
+            wait_for(app, lambda: monitor.summary["port"] == port)
         update_log_settings(app, root, 12, 500, 6, 1000)
         wait_for(app, lambda: wind.summary["samples"] >= 5 and len(wind.graphs[0]) > 2)
         page = root.findChild(QObject, "powerPage")

@@ -1,4 +1,4 @@
-name: HV P2P Complete Build v26.11.12.03
+name: HV P2P Complete Build v26.11.12.05
 
 on:
   workflow_dispatch:
@@ -117,12 +117,12 @@ jobs:
 
       - name: Check that source CTRL still contains build guard
         run: |
-          grep -F '#error "CTRL-TS firmware image has not been staged.' HV_P2P_CTRL_EDGEBOX_v26.11.12.03/HV_P2P_CTRL_TS_Firmware_Image.h
+          grep -F '#error "CTRL-TS firmware image has not been staged.' HV_P2P_CTRL_EDGEBOX_v26.11.12.05/HV_P2P_CTRL_TS_Firmware_Image.h
 
       - name: Upload functional-test firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HV-P2P-v26.11.12.03-Native-Firmware
+          name: HV-P2P-v26.11.12.05-Native-Firmware
           path: ${{ runner.temp }}/HVP2P_NATIVE_BUILD_ARTIFACTS/
           if-no-files-found: error
           retention-days: 30
@@ -145,12 +145,12 @@ jobs:
     timeout-minutes: 50
     defaults:
       run:
-        working-directory: SRVR_GitHub_v26.11.12.03
+        working-directory: SRVR_GitHub_v26.11.12.05
     env:
-      APP_VERSION: '26.11.12.03'
+      APP_VERSION: '26.11.12.05'
       BUNDLE_IDENTIFIER: 'com.hvp2p.srvr'
       BUNDLE_SHORT_VERSION: '26.11.12'
-      BUNDLE_BUILD_VERSION: '2611.12.3'
+      BUNDLE_BUILD_VERSION: '2611.12.5'
       QT_QUICK_CONTROLS_STYLE: Basic
       PYTHONUNBUFFERED: '1'
       PYTHONDONTWRITEBYTECODE: '1'
@@ -165,7 +165,7 @@ jobs:
       - name: Download exact native firmware authority bundle
         uses: actions/download-artifact@v4
         with:
-          name: HV-P2P-v26.11.12.03-Native-Firmware
+          name: HV-P2P-v26.11.12.05-Native-Firmware
           path: ${{ runner.temp }}/hvp2p-native
 
       - name: Confirm macOS runner architecture
@@ -180,7 +180,7 @@ jobs:
         with:
           python-version: '3.12.10'
           cache: 'pip'
-          cache-dependency-path: SRVR_GitHub_v26.11.12.03/requirements.txt
+          cache-dependency-path: SRVR_GitHub_v26.11.12.05/requirements.txt
 
       - name: Static project preflight
         shell: bash
@@ -218,11 +218,11 @@ jobs:
           set -euxo pipefail
           # Explicitly prove CI can import the application backend before running
           # the larger regression suite. This catches path mistakes immediately.
-          PYTHONPATH="$GITHUB_WORKSPACE/SRVR_GitHub_v26.11.12.03${PYTHONPATH:+:$PYTHONPATH}" python - <<'PY'
+          PYTHONPATH="$GITHUB_WORKSPACE/SRVR_GitHub_v26.11.12.05${PYTHONPATH:+:$PYTHONPATH}" python - <<'PY'
           import backend
           print("backend import PASS:", backend.__file__)
           PY
-          PYTHONPATH="$GITHUB_WORKSPACE/SRVR_GitHub_v26.11.12.03${PYTHONPATH:+:$PYTHONPATH}" python -m tools.test_backend_logic
+          PYTHONPATH="$GITHUB_WORKSPACE/SRVR_GitHub_v26.11.12.05${PYTHONPATH:+:$PYTHONPATH}" python -m tools.test_backend_logic
 
       - name: Create isolated deployment source tree
         shell: bash
@@ -276,7 +276,8 @@ jobs:
           PY
 
           # Qt's own QML syntax/type checker is authoritative for the frontend.
-          pyside6-qmllint --max-warnings -1 qml/Main.qml qml/components/*.qml qml/pages/*.qml
+          pyside6-qmllint --max-warnings -1 qml/Main.qml qml/components/*.qml qml/pages/*.qml qml/StartupError.qml
+          python "$GITHUB_WORKSPACE/tools/test_srvr_startup_ui.py"
 
           # Prove the source application can instantiate all four pages, all
           # Shortcuts tabs and the calibration overlay without opening hardware
@@ -573,8 +574,8 @@ jobs:
       - name: Upload GitHub Actions artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HV-P2P-SRVR-v26.11.12.03-${{ matrix.artifact_suffix }}
-          path: HV P2P SRVR v26.11.12.03 ${{ matrix.platform_label }}.zip
+          name: HV-P2P-SRVR-v26.11.12.05-${{ matrix.artifact_suffix }}
+          path: HV P2P SRVR v26.11.12.05 ${{ matrix.platform_label }}.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -587,9 +588,9 @@ jobs:
     defaults:
       run:
         shell: pwsh
-        working-directory: SRVR_GitHub_v26.11.12.03
+        working-directory: SRVR_GitHub_v26.11.12.05
     env:
-      APP_VERSION: '26.11.12.03'
+      APP_VERSION: '26.11.12.05'
       QT_QUICK_CONTROLS_STYLE: Basic
       PYTHONUNBUFFERED: '1'
       PYTHONDONTWRITEBYTECODE: '1'
@@ -602,7 +603,7 @@ jobs:
       - name: Download exact native firmware authority bundle
         uses: actions/download-artifact@v4
         with:
-          name: HV-P2P-v26.11.12.03-Native-Firmware
+          name: HV-P2P-v26.11.12.05-Native-Firmware
           path: ${{ runner.temp }}\hvp2p-native
 
       - name: Initialize MSVC developer tools
@@ -636,7 +637,7 @@ jobs:
           python-version: '3.12.10'
           architecture: 'x64'
           cache: 'pip'
-          cache-dependency-path: SRVR_GitHub_v26.11.12.03/requirements.txt
+          cache-dependency-path: SRVR_GitHub_v26.11.12.05/requirements.txt
 
       - name: Static project preflight
         run: |
@@ -672,7 +673,7 @@ jobs:
 
       - name: Backend safety motion and cross-platform regression tests
         run: |
-          $env:PYTHONPATH = "$env:GITHUB_WORKSPACE\SRVR_GitHub_v26.11.12.03" + $(if ($env:PYTHONPATH) { ";$env:PYTHONPATH" } else { "" })
+          $env:PYTHONPATH = "$env:GITHUB_WORKSPACE\SRVR_GitHub_v26.11.12.05" + $(if ($env:PYTHONPATH) { ";$env:PYTHONPATH" } else { "" })
           @'
           import backend
           print("backend import PASS:", backend.__file__)
@@ -712,7 +713,7 @@ jobs:
           print('staged Python syntax PASS')
           '@ | python -
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $qmlFiles = @('qml/Main.qml') + @((Get-ChildItem qml/components/*.qml).FullName) + @((Get-ChildItem qml/pages/*.qml).FullName)
+          $qmlFiles = @('qml/Main.qml', 'qml/StartupError.qml') + @((Get-ChildItem qml/components/*.qml).FullName) + @((Get-ChildItem qml/pages/*.qml).FullName)
           & pyside6-qmllint --max-warnings -1 @qmlFiles
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python main.py --smoke-test
@@ -872,7 +873,7 @@ jobs:
           @'
           from pathlib import Path
           import zipfile
-          version = '26.11.12.03'
+          version = '26.11.12.05'
           exe = Path('release_windows/HV P2P SRVR.exe')
           assert exe.is_file() and exe.stat().st_size > 0
           out = Path(f'HV P2P SRVR v{version} Windows x64.zip')
@@ -889,8 +890,8 @@ jobs:
       - name: Upload Windows GitHub Actions artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HV-P2P-SRVR-v26.11.12.03-Windows-x64
-          path: HV P2P SRVR v26.11.12.03 Windows x64.zip
+          name: HV-P2P-SRVR-v26.11.12.05-Windows-x64
+          path: HV P2P SRVR v26.11.12.05 Windows x64.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -903,25 +904,25 @@ jobs:
       - name: Download native firmware artifact
         uses: actions/download-artifact@v4
         with:
-          name: HV-P2P-v26.11.12.03-Native-Firmware
+          name: HV-P2P-v26.11.12.05-Native-Firmware
           path: COMPLETE_RELEASE/FIRMWARE
 
       - name: Download macOS Intel SRVR artifact
         uses: actions/download-artifact@v4
         with:
-          name: HV-P2P-SRVR-v26.11.12.03-macOS-Intel
+          name: HV-P2P-SRVR-v26.11.12.05-macOS-Intel
           path: COMPLETE_RELEASE/SRVR
 
       - name: Download macOS Apple Silicon SRVR artifact
         uses: actions/download-artifact@v4
         with:
-          name: HV-P2P-SRVR-v26.11.12.03-macOS-Apple-Silicon
+          name: HV-P2P-SRVR-v26.11.12.05-macOS-Apple-Silicon
           path: COMPLETE_RELEASE/SRVR
 
       - name: Download Windows x64 SRVR artifact
         uses: actions/download-artifact@v4
         with:
-          name: HV-P2P-SRVR-v26.11.12.03-Windows-x64
+          name: HV-P2P-SRVR-v26.11.12.05-Windows-x64
           path: COMPLETE_RELEASE/SRVR
 
       - name: Create combined HV P2P release ZIP
@@ -929,18 +930,18 @@ jobs:
         run: |
           set -euxo pipefail
           cat > COMPLETE_RELEASE/README_FIRST.txt <<'EOF'
-          HV P2P v26.11.12.03 - COMPLETE GITHUB BUILD OUTPUT
+          HV P2P v26.11.12.05 - COMPLETE GITHUB BUILD OUTPUT
 
           FIRMWARE/ contains the native CTRL-TS, CTRL EdgeBox, W1P EdgeBox and
           Olimex PDM build products plus STAGED_SOURCE. For Arduino IDE programming, use the four
           sketch folders under FIRMWARE/STAGED_SOURCE; the staged CTRL source contains
           the exact compiled CTRL-TS carrier image and SHA-256 from this same build.
-          See FIRMWARE/PDM_BOOTSTRAP_v26.11.12.03.md for the one-time Olimex USB upload.
+          See FIRMWARE/PDM_BOOTSTRAP_v26.11.12.05.md for the one-time Olimex USB upload.
 
           SRVR/ contains the ORIGINAL, UNEXTRACTED native application archives:
-          - HV P2P SRVR v26.11.12.03 macOS Intel.zip
-          - HV P2P SRVR v26.11.12.03 macOS Apple Silicon.zip
-          - HV P2P SRVR v26.11.12.03 Windows x64.zip
+          - HV P2P SRVR v26.11.12.05 macOS Intel.zip
+          - HV P2P SRVR v26.11.12.05 macOS Apple Silicon.zip
+          - HV P2P SRVR v26.11.12.05 Windows x64.zip
 
           The macOS archives contain matching native HV P2P SRVR.app bundles; the
           Windows archive contains the matching native x64 HV P2P SRVR.exe.
@@ -958,9 +959,9 @@ jobs:
           import hashlib, zipfile
           root=Path('COMPLETE_RELEASE')
           expected_srvr={
-              root/'SRVR'/'HV P2P SRVR v26.11.12.03 macOS Intel.zip',
-              root/'SRVR'/'HV P2P SRVR v26.11.12.03 macOS Apple Silicon.zip',
-              root/'SRVR'/'HV P2P SRVR v26.11.12.03 Windows x64.zip',
+              root/'SRVR'/'HV P2P SRVR v26.11.12.05 macOS Intel.zip',
+              root/'SRVR'/'HV P2P SRVR v26.11.12.05 macOS Apple Silicon.zip',
+              root/'SRVR'/'HV P2P SRVR v26.11.12.05 Windows x64.zip',
           }
           srvr_entries={p for p in (root/'SRVR').iterdir() if p.is_file()}
           assert srvr_entries == expected_srvr, f'SRVR artifacts must remain three untouched native ZIPs: {sorted(map(str,srvr_entries))}'
@@ -977,7 +978,7 @@ jobs:
           files=[p for p in sorted(root.rglob('*')) if p.is_file() and p != manifest]
           manifest.write_text(''.join(f'{sha256(p)}  {p.relative_to(root).as_posix()}\n' for p in files), encoding='utf-8')
 
-          out=Path('HV P2P v26.11.12.03 Complete Release.zip')
+          out=Path('HV P2P v26.11.12.05 Complete Release.zip')
           with zipfile.ZipFile(out,'w',compression=zipfile.ZIP_DEFLATED) as z:
               for p in sorted(root.rglob('*')):
                   if p.is_file(): z.write(p, p.relative_to(root.parent))
@@ -997,10 +998,10 @@ jobs:
       - name: Upload complete matched release
         uses: actions/upload-artifact@v4
         with:
-          name: HV-P2P-v26.11.12.03-Complete-Release
+          name: HV-P2P-v26.11.12.05-Complete-Release
           path: |
-            HV P2P v26.11.12.03 Complete Release.zip
-            HV P2P v26.11.12.03 Complete Release.zip.sha256
+            HV P2P v26.11.12.05 Complete Release.zip
+            HV P2P v26.11.12.05 Complete Release.zip.sha256
           if-no-files-found: error
           compression-level: 0
           retention-days: 30

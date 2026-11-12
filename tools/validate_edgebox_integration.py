@@ -4,14 +4,14 @@ from pathlib import Path
 import hashlib, re, struct, sys
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.11.12.03'
+VER = '26.11.12.05'
 CTRL = ROOT / f'HV_P2P_CTRL_EDGEBOX_v{VER}' / f'HV_P2P_CTRL_EDGEBOX_v{VER}.ino'
 W1P = ROOT / f'HV_P2P_W1P_EDGEBOX_v{VER}' / f'HV_P2P_W1P_EDGEBOX_v{VER}.ino'
 TS = ROOT / f'HV_P2P_CTRL_TS_v{VER}' / f'HV_P2P_CTRL_TS_v{VER}.ino'
 FRAME_CTRL = ROOT / f'HV_P2P_CTRL_EDGEBOX_v{VER}' / 'HV_P2P_RS485_Frame.h'
 FRAME_TS = ROOT / f'HV_P2P_CTRL_TS_v{VER}' / 'HV_P2P_RS485_Frame.h'
 IMG_HDR = ROOT / f'HV_P2P_CTRL_EDGEBOX_v{VER}' / 'HV_P2P_CTRL_TS_Firmware_Image.h'
-SRVR_DIR = ROOT / 'SRVR_GitHub_v26.11.12.03'
+SRVR_DIR = ROOT / 'SRVR_GitHub_v26.11.12.05'
 SRVR = SRVR_DIR / 'backend.py'
 MAIN = SRVR_DIR / 'main.py'
 SETUP_QML = SRVR_DIR / 'qml' / 'pages' / 'SetupPage.qml'
@@ -121,7 +121,7 @@ for name,src in [('CTRL',c),('W1P',w)]:
 must(re.search(r'IPAddress\s+local_IP\(172,\s*20,\s*1,\s*101\)', c) is not None, 'CTRL remains 172.20.1.101')
 must(re.search(r'IPAddress\s+server_IP\(172,\s*20,\s*1,\s*100\)', c) is not None, 'CTRL SRVR target remains 172.20.1.100')
 must('LOCAL_IP(172, 20, 1, 102)' in w and 'SRVR_IP(172, 20, 1, 100)' in w, 'W1P remains 172.20.1.102 -> SRVR .100')
-must('#define UDP_PORT 5000' in c and 'TCP_PORT = 5000' in w, 'UDP port 5000 retained')
+must('#define UDP_PORT 5760' in c and 'UDP_PORT = 5760' in w, 'UDP port 5760 standardized')
 
 # CTRL E-stop: commissioned AI0 voltage input, 5 V NC loop, fail-unsafe semantics; AI1 is joystick.
 must('SGM_CONFIG_AI0_CONT_800SPS_6V144 = 0x40E3' in c and 'sampleCtrlEstopAI0' in c, 'CTRL E-stop uses SGM58031 AI0 voltage input')
@@ -236,7 +236,7 @@ expected_w1p={
 'servicePeerTimeout':'81d5f57232771f48dbe5edd46161f75a8f5adf2aee370e9bc6180d64d61a48ff',
 'preserveDisplayedPositionForMotorDirectionChange':'43dc038634f473df40ac2d6ca8e3d2f69be093170c20fcd71af652da695914e6',
 }
-for fn,h in expected_w1p.items(): must(normalized_func_hash(w,fn)==h, f'W1P reviewed v26.11.12.03 safety-critical logic preserved: {fn}')
+for fn,h in expected_w1p.items(): must(normalized_func_hash(w,fn)==h, f'W1P reviewed v26.11.12.05 safety-critical logic preserved: {fn}')
 
 expected_w1p_v07_safety={
 'driveAutoEnableReady':'ce2cd73df1636f1ba2dd7ba23da9eca4f983ba3ee6a179dd9b5398ad831dc78f',
@@ -246,7 +246,7 @@ expected_w1p_v07_safety={
 'recordDrivePositionSample':'3b67f3742005a459caff07f45cd41dba581c28da1ef8be43d757014b4cc44bea',
 'hvPrepareSafeServiceState':'80e78d9f3c6141761822da7fdbe172177e6ac99bad445cc8f3dc71edc247b777',
 }
-for fn,h in expected_w1p_v07_safety.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.11.12.03 reviewed safety extension hash locked: {fn}')
+for fn,h in expected_w1p_v07_safety.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.11.12.05 reviewed safety extension hash locked: {fn}')
 
 # v26.10.19.01 direct EdgeBox DO0 brake switching. These functions are kept
 # separately hash-locked because they are the only new physical brake authority.
@@ -257,7 +257,7 @@ expected_w1p_edgebox_brake={
 'serviceLeadshineBrakeTransitionStatus':'dad21a5c702d092e57324b24525bbcaa2fa1d6cd1fe6effcc91d969a80a9d53b',
 'serviceEdgeboxBrakeOutput':'d5df450c7d6bed5681096f4730ffe044f674498ddb13ccfec3ebd1c70585116d',
 }
-for fn,h in expected_w1p_edgebox_brake.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.11.12.03 reviewed EdgeBox brake logic hash locked: {fn}')
+for fn,h in expected_w1p_edgebox_brake.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.11.12.05 reviewed EdgeBox brake logic hash locked: {fn}')
 
 # Local W1P E-stop is intentionally migrated from DI0/24 V to AI0/5 V in
 # v26.10.19.01. Hash-lock the complete ADC acquisition + fail-unsafe decision
@@ -269,7 +269,7 @@ expected_w1p_estop={
 'w1pSgmReadConversion':'c0e9172471166ff01727bdcce358f1b35648acd2db094e5e53a5fd88b3265602',
 'updateLocalInputs':'c41b07af290d5d9e080c3e3f724665f626c558fc85de76085f7c7944edd0587f',
 }
-for fn,h in expected_w1p_estop.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.11.12.03 local AI0 E-stop path hash locked: {fn}')
+for fn,h in expected_w1p_estop.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.11.12.05 local AI0 E-stop path hash locked: {fn}')
 
 # Leadshine contract.
 for tok in ['RS485_BAUD = 115200','DRIVE_MODBUS_ID = 1','SERIAL_8N1','MODBUS_REPLY_TIMEOUT_MS = 50','MODBUS_READ_RETRIES = 3','MODBUS_INTERFRAME_GAP_US = 2000','W1P_PEER_TIMEOUT_MS = 750']:
@@ -428,7 +428,7 @@ must('text:backend.bannerText' in main_qml and '♢' not in main_qml and '◇' n
 must('def _legacy_firmware_push_worker' in s and 'HTTPConnection' in s and '"/update/app"' in s and 'multipart/form-data' in s and 'daemon=True' in s and 'def _firmware_version_is_older' in s, 'SRVR has asynchronous backwards-compatible OTA push for older pre-beacon .01 field nodes without downgrading newer firmware')
 must('ctrl_present = bool(self._ctrl_connected() or self._ctrl_authority_fresh())' in s, 'legacy CTRL firmware bridge accepts either fresh control telemetry or fresh authority/HMI status presence')
 must('firmware_bundle=authority.bundle' in m, 'SRVR backend receives the already validated immutable firmware bundle for legacy OTA bridging')
-must('ctrl_version=v26.11.12.03' in c and 'FW=" + String(FW_VERSION)' in w, 'CTRL and W1P publish actual firmware identity for Setup')
+must('ctrl_version=v26.11.12.05' in c and 'FW=" + String(FW_VERSION)' in w, 'CTRL and W1P publish actual firmware identity for Setup')
 must('ctrlFirmwareVersion' in s and 'w1pFirmwareVersion' in s and 'ctrlEStopActive' in s and 'w1pEStopActive' in s, 'SRVR exposes locked CTRL/W1P Setup diagnostics')
 must('text:"Link"' in q and 'backend.ctrlTsRs485Active?"Active":"Disconnected"' in q, 'CTRL-TS Link uses physical RS485 Active/Disconnected semantics')
 must('anchors.rightMargin:root.f(15)' in q and 'anchors.leftMargin:root.f(15)' in q and q.count('width:(parent.width-root.f(1))/2') >= 2, 'Motion Profiles centre divider has even Mode 1/Mode 2 spacing')

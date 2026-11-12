@@ -1,3 +1,14 @@
+# v26.11.12.05 — 2026-11-12
+
+- Standardise the current HV P2P control and firmware services on UDP and TCP 5760.
+- Make TCP 5000 and 5088 optional firmware migration listeners. SRVR can start while AirPlay Receiver owns TCP 5000.
+- Keep legacy UDP 5000 limited to firmware discovery and read-only W1P status. The PDM monitor follows port 80, 5000 and 5760 across upgrades.
+
+# v26.11.12.04 — 2026-11-12
+
+- Show a startup recovery window when the firmware authority cannot bind or validate its bundle. Retry starts the authority again and opens SRVR when both listeners are ready.
+- Exercise primary and legacy listener conflicts and recovery from the Qt Quick Retry button.
+
 # v26.11.12.03 — 2026-11-12
 
 - Show Live, Min and Max for each PDM graph, with a Settings popup that writes the channel calibration and alarms to the device.

@@ -19,7 +19,7 @@ from native_build_firmware import PDM_TARGET, SEMVER, VER, make_firmware_bundle
 ROOT = Path(__file__).resolve().parents[1]
 PDM = ROOT / f"HV_P2P_PDM_v{VER}"
 sys.path.insert(0, str(ROOT / f"SRVR_GitHub_v{VER}"))
-from firmware_authority import AUTHORITY_PORT, LEGACY_AUTHORITY_PORT, FirmwareAuthorityServer, FirmwareBundle
+from firmware_authority import AUTHORITY_PORT, LEGACY_AUTHORITY_PORT, PREVIOUS_NETWORK_PORT, FirmwareAuthorityServer, FirmwareBundle
 from pdm_client import DEVICE_HTTP_PORT, LEGACY_PDM_HTTP_PORT, PdmSession, Timeline, WsiSession, parse_history_page
 
 EPOCH = 1_794_233_000_000
@@ -187,9 +187,9 @@ class PdmIntegration(unittest.TestCase):
             WsiSession(power.address, power.fetch).log_settings((1, 250))
         self.assertEqual(pdm.log_settings(), (6, 1000))
 
-    def server(self, *, legacy_port=None):
+    def server(self, *, legacy_ports=()):
         server = FirmwareAuthorityServer(SEMVER, host="127.0.0.1", port=0, bundle_dir=self.bundle,
-                                         legacy_port=legacy_port)
+                                         legacy_ports=legacy_ports)
         server.start()
         self.addCleanup(server.close)
         return server
@@ -208,9 +208,10 @@ class PdmIntegration(unittest.TestCase):
         self.assertEqual(pdm.calibration(1), dict(low=40, high=55, actual=None))
         with self.assertRaisesRegex(ValueError, "low alarm below"):
             pdm.calibration(2, dict(low=58, high=43))
-        power.http_port = DEVICE_HTTP_PORT
-        pdm.poll()
-        self.assertEqual(pdm.port, 5000)
+        for port in (PREVIOUS_NETWORK_PORT, DEVICE_HTTP_PORT):
+            power.http_port = port
+            pdm.poll()
+            self.assertEqual(pdm.port, port)
         self.assertEqual(pdm.summary()["voltages"][1], 51)
         pdm.calibration(2, dict(low=43, high=58, actual=None))
         pdm.poll()
@@ -246,12 +247,12 @@ class PdmIntegration(unittest.TestCase):
                 server.close()
 
     def test_live_idle_lease_and_independent_edgebox_routes(self):
-        self.assertEqual((AUTHORITY_PORT, LEGACY_AUTHORITY_PORT), (5000, 5088))
+        self.assertEqual((AUTHORITY_PORT, PREVIOUS_NETWORK_PORT, LEGACY_AUTHORITY_PORT), (5760, 5000, 5088))
         for pattern in ("HV_P2P_CTRL_EDGEBOX_*", "HV_P2P_W1P_EDGEBOX_*", "HV_P2P_PDM_*"):
             header = next(ROOT.glob(pattern)) / "HV_P2P_SRVR_Authority_OTA.h"
             self.assertIn(f"AUTHORITY_PORT = {AUTHORITY_PORT};", header.read_text())
         self.assertIn(f"DEVICE_HTTP_PORT = {DEVICE_HTTP_PORT};", (PDM / "pdm_app.cpp").read_text())
-        server = self.server(legacy_port=0)
+        server = self.server(legacy_ports=(0, 0))
         now = 0.0
         window = server.pdm_window
         window._clock = lambda: now
@@ -260,11 +261,13 @@ class PdmIntegration(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["target"], PDM_TARGET)
         self.assertEqual(server.pdm_manifest_port("127.0.0.1"), server.port)
-        self.assertEqual(get(server, path + "/manifest", port=server.legacy_port), (status, body))
-        self.assertEqual(server.pdm_manifest_port("127.0.0.1"), server.legacy_port)
+        self.assertEqual(len(server.legacy_ports), 2)
+        for port in server.legacy_ports:
+            self.assertEqual(get(server, path + "/manifest", port=port), (status, body))
+            self.assertEqual(server.pdm_manifest_port("127.0.0.1"), port)
+            self.assertEqual(get(server, path + "/image", port=port)[0], 409)
         self.assertIsNone(server.pdm_manifest_port("127.0.0.2"))
         self.assertEqual(get(server, path + "/image")[0], 409)
-        self.assertEqual(get(server, path + "/image", port=server.legacy_port)[0], 409)
         for tick in range(12):
             now = tick * 0.25
             window.observe("127.0.0.1", True)
@@ -273,7 +276,8 @@ class PdmIntegration(unittest.TestCase):
         window.observe("127.0.0.1", True)
         self.assertEqual(get(server, path + "/permit"), (200, f"{SEMVER} {sha256(self.apps[2]).hexdigest()}\n".encode()))
         self.assertEqual(get(server, path + "/image"), (200, self.apps[2]))
-        self.assertEqual(get(server, path + "/image", port=server.legacy_port), (200, self.apps[2]))
+        for port in server.legacy_ports:
+            self.assertEqual(get(server, path + "/image", port=port), (200, self.apps[2]))
         self.assertEqual(get(server, path + "/image", source="127.0.0.2")[0], 409)
         now += 0.5
         self.assertEqual(get(server, path + "/permit")[0], 409)
