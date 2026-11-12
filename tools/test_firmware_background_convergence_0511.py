@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""v26.11.12.05 firmware convergence must not depend on the Qt event loop."""
+"""v26.11.12.07 firmware convergence must not depend on the Qt event loop."""
 from pathlib import Path
+import subprocess
+from tempfile import TemporaryDirectory
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.11.12.05'
+VER = '26.11.12.07'
 B = (ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 M = (ROOT/f'SRVR_GitHub_v{VER}/main.py').read_text()
 C = (ROOT/f'HV_P2P_CTRL_EDGEBOX_v{VER}/HV_P2P_CTRL_EDGEBOX_v{VER}.ino').read_text()
@@ -68,6 +70,64 @@ for tok in ('const bool newSession', 'const bool releaseChanged',
             'if(releaseChanged || newSession)', 'authority_session_changed',
             'g_srvrFirmwareMatched = false;', 'g_fwAuthorityLastAttemptMs = 0;'):
     assert tok in apply, tok
+
+# Exercise the exact CTRL beacon handler with a host clock and verify that
+# incoming keepalives do not reset the HTTP backoff of an unmatched node.
+fixture = r'''
+#include <cassert>
+#include <cstdint>
+#include <string>
+struct String : std::string {
+    using std::string::string;
+    String() = default;
+    String(const std::string& value) : std::string(value) {}
+    bool startsWith(const char* value) const { return rfind(value, 0) == 0; }
+};
+static String hvGetPipeField(const String& line, const char* key) {
+    const auto prefix = std::string("|") + key + "=";
+    const auto start = line.find(prefix);
+    if (start == String::npos) return "";
+    const auto value = start + prefix.size();
+    return line.substr(value, line.find('|', value) - value);
+}
+struct {
+    template<typename... Args> void printf(const char*, Args...) {}
+} Serial;
+static String g_srvrFirmwareSession, g_srvrAdvertisedRelease, g_srvrFirmwareState;
+static const char* HV_AUTH_VERSION = "v26.11.12.07";
+static bool srvrOnline, g_hmiTsCoordinatorSeen, g_hmiTsUpdateAllowed;
+static bool g_hmiSafeUpdateContinuation, g_srvrFirmwareMatched = true;
+static uint32_t g_lastSrvrRxMs, g_hmiMismatchSinceMs;
+static uint32_t g_fwAuthorityLastAttemptMs, g_fwAuthorityRetryDelayMs, g_fwAuthorityFastRetryUntilMs;
+static uint32_t clockMs = 1000;
+static uint32_t millis() { return clockMs; }
+'''
+cases = r'''
+int main() {
+    const String mismatched = "SRVR_FW|version=v26.11.12.05|session=abc|ts_allowed=0";
+    assert(applySrvrFirmwareBeacon(mismatched));
+    assert(!g_srvrFirmwareMatched && g_fwAuthorityRetryDelayMs == 0);
+    assert(g_srvrFirmwareState == "authority_changed");
+    g_fwAuthorityLastAttemptMs = 1000;
+    g_fwAuthorityRetryDelayMs = 30000;
+    clockMs = 1500;
+    assert(applySrvrFirmwareBeacon(mismatched));
+    assert(srvrOnline && g_lastSrvrRxMs == clockMs);
+    assert(g_fwAuthorityLastAttemptMs == 1000 && g_fwAuthorityRetryDelayMs == 30000);
+    assert(applySrvrFirmwareBeacon("SRVR_FW|version=v26.11.12.07|session=abc|ts_allowed=1"));
+    assert(g_fwAuthorityLastAttemptMs == 0 && g_fwAuthorityRetryDelayMs == 0 && g_hmiTsUpdateAllowed);
+    g_srvrFirmwareMatched = true;
+    assert(applySrvrFirmwareBeacon("SRVR_FW|version=v26.11.12.07|session=def|ts_allowed=0"));
+    assert(!g_srvrFirmwareMatched && !g_hmiTsUpdateAllowed);
+}
+'''
+with TemporaryDirectory(prefix="hvp2p-ctrl-beacon-") as tmp:
+    source = Path(tmp) / "beacon.cpp"
+    binary = Path(tmp) / "beacon"
+    source.write_text(fixture + apply + cases, encoding="utf-8")
+    subprocess.run(["g++", "-std=c++17", str(source), "-o", str(binary)], check=True)
+    subprocess.run([str(binary)], check=True)
+
 wcmd = W[W.index('if (line.startsWith("SRVR_FW|"))'):W.index('if (line.startsWith("DSP1|"))')]
 for tok in ('const bool newSession', 'const bool releaseChanged',
             '(releaseChanged || newSession)', 'authority_session_changed',

@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Reproduce an occupied authority port and exercise the Qt Quick Retry button."""
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import queue
 import socket
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
+import threading
 import time
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -21,6 +23,65 @@ import main
 
 ROOT = Path(__file__).resolve().parents[1]
 SRVR = ROOT / f"SRVR_GitHub_{SEMVER}"
+
+
+def check_verified_ctrl_stage(fixture):
+    authority = fixture.server()
+    controller = backend.HVP2PBackend(version=SEMVER[1:], smoke_test=True, firmware_bundle=authority.bundle,
+                                     w1p_update_gate=authority.w1p_gate)
+    path = "/firmware/w1p/image"
+    status = f"HMI_STATUS|ctrl_version={SEMVER}|fw_required={SEMVER}|fw_match=1|fw_authority=matched|"
+    digest = authority.bundle.images["ctrl"].sha256
+    peer = controller.ctrl_ip
+    try:
+        assert get(authority, path)[0] == 409
+        controller._handle_ctrl_hmi_status(status + f"fw_sha256={'0' * 64}", peer)
+        assert not controller._ctrl_fw_match and get(authority, path)[0] == 409
+        controller._handle_ctrl_hmi_status(status + f"fw_sha256={digest}", peer)
+        assert controller._ctrl_fw_match and get(authority, path) == (200, fixture.apps[1])
+        controller._set_fw_progress("ctrl", True, "Downloading", 42)
+        controller._handle_ctrl_hmi_status(status.replace("fw_match=1|fw_authority=matched",
+                                                         "fw_match=0|fw_authority=update_failed_image_stream_closed"),
+                                           peer)
+        assert not controller._fw_progress["ctrl"]["active"] and get(authority, path)[0] == 409
+        controller._set_fw_progress("w1p", True, "Downloading", 42)
+        controller._settle_node_fw_progress("w1p", "update_failed_image_sha256_mismatch", False)
+        assert not controller._fw_progress["w1p"]["active"]
+
+        # The legacy HTTP bridge must also use the bytes verified at startup.
+        uploads = []
+
+        class UploadDevice(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                uploads.append((self.path, self.rfile.read(int(self.headers["Content-Length"]))))
+                self.send_response(200)
+                self.end_headers()
+
+        with ThreadingHTTPServer(("127.0.0.1", 0), UploadDevice) as device:
+            worker = threading.Thread(target=device.serve_forever, daemon=True)
+            worker.start()
+            try:
+                (fixture.bundle / "w1p.bin").write_bytes(fixture.apps[1][:-1] + b"X")
+                with patch.object(backend, "AUTHORITY_PORT", device.server_port):
+                    controller._legacy_firmware_push_worker("w1p", "127.0.0.1")
+                    assert not uploads
+                    controller._handle_ctrl_hmi_status(status + f"fw_sha256={digest}", peer)
+                    controller._legacy_firmware_push_worker("w1p", "127.0.0.1")
+                assert len(uploads) == 1 and uploads[0][0] == "/update/app"
+                assert uploads[0][1].split(b"\r\n\r\n", 1)[1].startswith(fixture.apps[1] + b"\r\n")
+            finally:
+                device.shutdown()
+                worker.join(timeout=2)
+                (fixture.bundle / "w1p.bin").write_bytes(fixture.apps[1])
+        controller.setNetwork("CTRL", "172.20.1.113")
+        controller._handle_ctrl_hmi_status(status + f"fw_sha256={digest}", peer)
+        assert get(authority, path)[0] == 409
+    finally:
+        controller.shutdown()
+        authority.close()
 
 
 def check_control_migration():
@@ -173,6 +234,7 @@ if __name__ == "__main__":
             check_retry(app, fixture, legacy_conflict=False)
             check_retry(app, fixture, legacy_conflict=True)
             check_control_migration()
+            check_verified_ctrl_stage(fixture)
         finally:
             fixture.doCleanups()
     print("SRVR_STARTUP_WINDOW_PORT_RETRY_PASS")

@@ -15,7 +15,7 @@ from unittest.mock import patch
 from test_pdm_integration import Device, SEMVER, WindDevice
 
 os.environ.update(QT_QPA_PLATFORM="offscreen", QT_QUICK_BACKEND="software", QT_QUICK_CONTROLS_STYLE="Basic")
-from PySide6.QtCore import QMetaObject, QObject, QPoint, QPointF, QUrl, qInstallMessageHandler
+from PySide6.QtCore import QMetaObject, QObject, QPoint, QPointF, Qt, QUrl, qInstallMessageHandler
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickWindow
@@ -148,6 +148,22 @@ def update_calibration(app, root, device):
     wait_for(app, lambda: extrema.property("text") == "Min 51.25 V  •  Max 51.25 V")
 
 
+def rename_channel(app, root, device):
+    title = scene_item(root, "monitorChannelName0")
+    point = title.mapToScene(QPointF(8, title.height() / 2)).toPoint()
+    QTest.mouseClick(root, Qt.LeftButton, Qt.NoModifier, point)
+    dialog = root.findChild(QObject, "monitorCalibrationDialog")
+    wait_for(app, lambda: dialog.property("visible") and dialog.property("loaded"))
+    name = root.findChild(QObject, "monitorCalibrationName")
+    assert name.property("text") == device.names[0] and name.property("activeFocus")
+    name.setProperty("text", "Radio battery α")
+    assert QMetaObject.invokeMethod(root.findChild(QObject, "monitorCalibrationApply"), "clicked")
+    wait_for(app, lambda: not dialog.property("visible"))
+    wait_for(app, lambda: title.property("text") == "Radio battery α")
+    assert device.names[:2] == ("Radio battery α", "Brake supply")
+    assert device.calibration_writes == []
+
+
 def run(directory, server, wind_server):
     app = QGuiApplication([])
     messages = []
@@ -156,7 +172,8 @@ def run(directory, server, wind_server):
     engine = QQmlApplicationEngine()
     settings = directory / "pdm.ini"
     manifest_requests = {}
-    monitor = PdmMonitor(settings, PdmIdleWindow(), lambda: False, "", manifest_port=manifest_requests.get)
+    monitor = PdmMonitor(settings, PdmIdleWindow(), lambda: False, "", manifest_port=manifest_requests.get,
+                         authority_ports=(5760, 5000))
     monitor.setParent(engine)
     wind = WsiMonitor(directory / "wsi.ini")
     wind.setParent(engine)
@@ -172,14 +189,16 @@ def run(directory, server, wind_server):
         root.resize(1280, 720)
         root.setProperty("page", 4)
         wait_for(app, lambda: monitor.summary["samples"] == len(server.device.samples) and len(monitor.graphs[0]) > 2)
-        assert monitor.summary["labels"][0] == "Radio supply" and monitor.summary["connection"] == "Live"
+        assert monitor.summary["labels"][0] == server.device.names[0] and monitor.summary["connection"] == "Live"
         assert any(value is None for _, value in monitor.graphs[0])
         app.processEvents()
         plot = check_visible_trace(root)
         check_hover(app, root, plot, "V", 0.85)
         assert monitor.summary["port"] == 80
         server.device.fw_update = "Looking for SRVR"
-        wait_for(app, lambda: "TCP 5088" in monitor.summary["ota_note"])
+        wait_for(app, lambda: "could not open TCP 5088" in monitor.summary["ota_note"])
+        monitor._authority_ports = (5760, 5000, 5088)
+        wait_for(app, lambda: "No recent PDM manifest request" in monitor.summary["ota_note"])
         manifest_requests[server.device.address] = 5088
         wait_for(app, lambda: "request reached" in monitor.summary["ota_note"])
         server.device.fw_update = "Current"
@@ -187,6 +206,7 @@ def run(directory, server, wind_server):
             assert scene_item(root, f"monitorChannelLive{index}").property("text").startswith("Live ")
             assert "Max" in scene_item(root, f"monitorChannelExtrema{index}").property("text")
         assert scene_item(root, "monitorChannelExtrema0").property("text") == "Min 48.25 V  •  Max 48.49 V"
+        rename_channel(app, root, server.device)
         update_calibration(app, root, server.device)
         for port in (5000, 5760):
             server.device.http_port = port
@@ -227,6 +247,7 @@ if __name__ == "__main__":
         sys.path.insert(0, scratch)
         import rc_resources  # noqa: F401
         server.device = Device()
+        server.device.names = ("Radio supply — " * 12, *server.device.names[1:])
         server.device.http_port = 80
         for i in range(1, 33):
             server.device.add(10500 + 500 * i, None if 12 <= i <= 17 else 47.5 + (i % 9) * 0.03)

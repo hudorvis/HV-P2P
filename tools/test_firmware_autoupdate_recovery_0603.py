@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""v26.11.12.05 regression: automatic update recovery must not require GUI ticks/reboots."""
+"""v26.11.12.07 regression: automatic update recovery must not require GUI ticks/reboots."""
 from pathlib import Path
 import re
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.11.12.05'
+VER='26.11.12.07'
 B=(ROOT/f'SRVR_GitHub_v{VER}'/'backend.py').read_text(encoding='utf-8')
 
 # Primary release discovery remains in the independent comms worker.
@@ -25,7 +25,7 @@ assert 'self.w1p.send("STOP")' in rb and 'self.w1p.clear_velocity_refresh()' in 
 
 # A proven stale CTRL status should cause an immediate release beacon rather than
 # waiting for the next periodic opportunity or a device reboot.
-status=re.search(r'def _handle_ctrl_hmi_status\(self, line: str\):(?P<body>.*?)(?=\n    def _joystick_min_cal_span)', B, re.S)
+status=re.search(r'def _handle_ctrl_hmi_status\([^\n]*\):(?P<body>.*?)(?=\n    def _joystick_min_cal_span)', B, re.S)
 assert status
 sb=status.group('body')
 assert 'self._send_ctrl_firmware_beacon(force=True)' in sb

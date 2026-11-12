@@ -1,0 +1,21 @@
+HV P2P SYS v26.11.12.07 source verification
+Baseline HV-P2P-v26.11.12.06-GitHub-Complete.zip
+
+PASS  All 70 source regression scripts with PySide6 enabled.
+PASS  W1P download gating and immutable verified assets on the primary and
+      both migration listeners. Tested on TCP 5760, 5000 and 5088.
+PASS  CTRL version and exact SHA checks, W1P fallback upload payload,
+      stale authorization and selected CTRL changes.
+PASS  Production CTRL beacon backoff exercised by a compiled host fixture.
+PASS  Aborted update progress reconciliation, flash staging interruption,
+      wrong target and lost idle permission in host fixtures.
+PASS  Optional PDM isolation, history while logging, labels, calibration
+      and independent PDM and WSI log settings using HTTP fixtures.
+PASS  Source SRVR offscreen smoke with a fixture firmware bundle. This run
+      reports the existing Linux HelveticaNeue font warnings.
+PASS  QML lint completed with the baseline warning categories and counts.
+      PDM JavaScript syntax and GitHub workflow YAML parsing passed.
+PASS  Source archive integrity and complete per-file SHA-256 checks.
+
+Pending  GitHub compilation of ESP32 binaries and packaged desktop apps.
+Pending  Physical OTA, CTRL-TS/RS485, drive and Olimex commissioning.

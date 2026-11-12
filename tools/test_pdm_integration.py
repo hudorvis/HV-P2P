@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from embed_pdm_web import ASSETS
 from native_build_firmware import PDM_TARGET, SEMVER, VER, make_firmware_bundle
+from test_srvr_authority_server import fixture_image
 
 ROOT = Path(__file__).resolve().parents[1]
 PDM = ROOT / f"HV_P2P_PDM_v{VER}"
@@ -24,7 +25,6 @@ from pdm_client import DEVICE_HTTP_PORT, LEGACY_PDM_HTTP_PORT, PdmSession, Timel
 
 EPOCH = 1_794_233_000_000
 HEADER = "t_ms,utc_ms,v48_1,v48_2,v24,v12\n"
-IDENTITY = f"HV_P2P_FW_ROLE=PDM;HV_P2P_FW_TARGET={PDM_TARGET};HV_P2P_FW_VERSION={SEMVER};".encode()
 
 
 def get(server, path, *, source="127.0.0.1", port=None):
@@ -111,6 +111,10 @@ class Device:
                 data["ok"] = True
         elif url.path == "/api/names":
             data = {f"ch{index}": name for index, name in enumerate(self.names, 1)}
+            if settings := kwargs.get("body"):
+                data.update(settings)
+                self.names = tuple(data[f"ch{index}"] for index in range(1, 5))
+                data["ok"] = True
         elif url.path == "/api/calibration":
             settings = kwargs.get("body")
             if settings is not None:
@@ -161,7 +165,7 @@ class PdmIntegration(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         root = Path(self.tmp.name)
         self.bundle = root / "bundle"
-        self.apps = (b"\xe9CTRL", b"\xe9W1P", b"\xe9" + IDENTITY + b"\0" * 32768)
+        self.apps = (fixture_image("CTRL"), fixture_image("W1P"), fixture_image("PDM", PDM_TARGET))
         files = []
         for index, image in enumerate(self.apps):
             path = root / f"{index}.bin"
@@ -219,6 +223,19 @@ class PdmIntegration(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Select a PDM"):
             WsiSession("172.20.1.111", WindDevice().fetch).calibration(1)
 
+    def test_long_legacy_name_is_readable_and_editable(self):
+        device = Device()
+        inherited_name = "Standby 48 V — " * 12
+        device.names = (inherited_name, *device.names[1:])
+        pdm = PdmSession(device.address, device.fetch)
+        pdm.poll()
+        pdm.service_labels_and_clock()
+        self.assertEqual(pdm.summary()["labels"][0], inherited_name)
+        self.assertEqual(pdm.channel_name(1), inherited_name)
+        pdm.calibration(1, dict(low=41, high=55))
+        self.assertEqual(pdm.channel_name(1), inherited_name)
+        self.assertEqual(pdm.channel_name(1, "Standby 48 V"), "Standby 48 V")
+
     def test_pdm_optional_and_wrong_target(self):
         for problem in ("absent", "wrong manifest target", "wrong binary target", "damaged"):
             with self.subTest(problem=problem):
@@ -241,6 +258,8 @@ class PdmIntegration(unittest.TestCase):
                 self.assertEqual(set(bundle.images), {"ctrl", "w1p"})
                 self.assertEqual(bool(bundle.pdm_error), problem != "absent")
                 server = self.server()
+                server.w1p_gate.select_controller("127.0.0.1")
+                server.w1p_gate.observe("127.0.0.1", server.w1p_gate._clock() + 3.5)
                 self.assertEqual(get(server, "/firmware/pdm/manifest")[0], 404)
                 self.assertEqual(get(server, "/firmware/ctrl/image"), (200, self.apps[0]))
                 self.assertEqual(get(server, "/firmware/w1p/image"), (200, self.apps[1]))
@@ -256,6 +275,8 @@ class PdmIntegration(unittest.TestCase):
         now = 0.0
         window = server.pdm_window
         window._clock = lambda: now
+        server.w1p_gate._clock = lambda: now
+        server.w1p_gate.select_controller("127.0.0.1")
         path = "/firmware/pdm"
         status, body = get(server, path + "/manifest")
         self.assertEqual(status, 200)
@@ -276,6 +297,7 @@ class PdmIntegration(unittest.TestCase):
         window.observe("127.0.0.1", True)
         self.assertEqual(get(server, path + "/permit"), (200, f"{SEMVER} {sha256(self.apps[2]).hexdigest()}\n".encode()))
         self.assertEqual(get(server, path + "/image"), (200, self.apps[2]))
+        self.assertEqual(get(server, "/firmware/w1p/image")[0], 409)
         for port in server.legacy_ports:
             self.assertEqual(get(server, path + "/image", port=port), (200, self.apps[2]))
         self.assertEqual(get(server, path + "/image", source="127.0.0.2")[0], 409)
@@ -287,6 +309,7 @@ class PdmIntegration(unittest.TestCase):
         self.assertEqual(get(server, path + "/permit")[0], 200)
         window.observe("127.0.0.1", False)
         self.assertEqual(get(server, path + "/permit")[0], 409)
+        server.w1p_gate.observe("127.0.0.1", now + 3.5)
         self.assertEqual(get(server, "/firmware/w1p/image"), (200, self.apps[1]))
 
     def test_history_load_during_logging_and_reboot(self):

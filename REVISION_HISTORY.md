@@ -1,3 +1,15 @@
+# v26.11.12.07 — 2026-11-12
+
+- Require a fresh, exact CTRL firmware report before SRVR serves a W1P update image or starts its fallback upload.
+- Serve verified in-memory firmware bytes and validate the embedded role, target and version at startup.
+- Preserve CTRL retry backoff and recover inactive progress after an interrupted CTRL or W1P transfer.
+- Allow edits to PDM channels with long labels retained from older firmware.
+
+# v26.11.12.06 — 2026-11-12
+
+- Add Channel Name to the PDM channel settings and make graph titles open that editor.
+- Save channel names through the PDM's existing names API. Display when an expected OTA listener failed to open.
+
 # v26.11.12.05 — 2026-11-12
 
 - Standardise the current HV P2P control and firmware services on UDP and TCP 5760.
