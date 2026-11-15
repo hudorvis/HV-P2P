@@ -1,3 +1,9 @@
+# v26.11.15.08 — 2026-11-15
+
+- Give each SRVR browser a viewport-sized Qt Quick layout independent of the desktop.
+- Keep the shared tabs, system controls and telemetry available across desktop and browser views.
+- Tighten P1–P5 label spacing and align the values and unit dropdowns in Free-D Geometry.
+
 # v26.11.15.07 — 2026-11-15
 
 - Reduce SRVR response delay with frame-ready delivery, reusable HTTP connections and immediate queued Qt input.

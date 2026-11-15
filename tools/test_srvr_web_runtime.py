@@ -13,10 +13,11 @@ from native_build_firmware import SEMVER, make_firmware_bundle
 from test_pdm_qt_runtime import scene_item, scene_items, wait_for
 from test_srvr_authority_server import fixture_image
 
-from PySide6.QtCore import QCoreApplication, QEvent, QMetaObject, QObject, QPointF, Qt, QUrl, qInstallMessageHandler
-from PySide6.QtGui import QColor, QGuiApplication, QImage
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPointF, Qt, QUrl, qInstallMessageHandler
+from PySide6.QtGui import QColor, QImage
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication
 
 from backend import HVP2PBackend
 from firmware_authority import FirmwareAuthorityServer, MONITOR_TARGETS
@@ -85,33 +86,38 @@ def exercise(app, window, web, authority, backend):
     first = connect()
     second = connect()
     assert first != second
+    sizes = {first: (1280, 720), second: (1600, 800)}
 
     def latest(viewer=None, foreground=True):
-        return request(port, "/srvr-web/frame", viewer=viewer or first,
-                       headers={"X-SRVR-Foreground": "1" if foreground else "0"})
+        viewer = viewer or first
+        width, height = sizes[viewer]
+        return request(port, "/srvr-web/frame", viewer=viewer,
+                       headers={"X-SRVR-Foreground": "1" if foreground else "0",
+                                "X-SRVR-Viewport": f"{width}x{height}"})
 
-    def resolve(name_or_item):
-        return scene_item(window, name_or_item) if isinstance(name_or_item, str) else name_or_item
+    def browser(viewer=first):
+        return web._viewports[viewer].quickWindow()
 
-    def center(name_or_item):
-        item = resolve(name_or_item)
+    def center(surface, name_or_item):
+        item = scene_item(surface, name_or_item) if isinstance(name_or_item, str) else name_or_item
         return item.mapToScene(QPointF(item.width() / 2, item.height() / 2))
 
     def desktop_click(name_or_item):
-        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=center(name_or_item).toPoint())
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=center(window, name_or_item).toPoint())
         app.processEvents()
 
-    def input_packet(name_or_item, frame):
-        pt = center(name_or_item)
+    def input_packet(name_or_item, frame, viewer):
+        surface = browser(viewer)
+        pt = center(surface, name_or_item)
         return {"kind": "click", "frame": frame, "points": [
-            [pt.x() / (window.width() - 1), pt.y() / (window.height() - 1)],
+            [pt.x() / (surface.width() - 1), pt.y() / (surface.height() - 1)],
         ]}
 
     def send(packet, viewer=first):
         return request(port, "/srvr-web/input", "POST", packet, viewer=viewer)[0]
 
     def click(name_or_item, frame, viewer=first):
-        return send(input_packet(name_or_item, frame), viewer)
+        return send(input_packet(name_or_item, frame, viewer), viewer)
 
     def fresh_frame(after=0, viewer=first):
         number = 0
@@ -126,14 +132,16 @@ def exercise(app, window, web, authority, backend):
         return number
 
     initial = fresh_frame()
+    initial_second = fresh_frame(viewer=second)
     status, headers, jpeg = latest()
     second_status, second_headers, second_jpeg = latest(second)
     assert status == second_status == 200
-    assert headers["X-SRVR-Frame"] == second_headers["X-SRVR-Frame"]
+    assert headers["X-SRVR-Frame"] != second_headers["X-SRVR-Frame"]
     assert headers["X-SRVR-Input"] == second_headers["X-SRVR-Input"] == "ready"
-    assert jpeg == second_jpeg
     image = QImage.fromData(jpeg)
-    assert (image.width(), image.height()) == (window.width(), window.height())
+    assert (image.width(), image.height()) == sizes[first]
+    second_image = QImage.fromData(second_jpeg)
+    assert (second_image.width(), second_image.height()) == sizes[second]
     pixel, background = image.pixelColor(2, 2), window.color()
     assert max(abs(a - b) for a, b in zip(pixel.getRgb(), background.getRgb())) <= 5, (pixel, background)
 
@@ -163,6 +171,25 @@ def exercise(app, window, web, authority, backend):
     finally:
         connection.close()
 
+    # Window resizes leave each browser's rendered layout and pointer
+    # coordinates alone. A browser resize invalidates only its own frames.
+    first_size = browser().size()
+    second_size = browser(second).size()
+    window.resize(1440, 900)
+    app.processEvents()
+    assert browser().size() == first_size and browser(second).size() == second_size
+    sizes[second] = (1000, 1000)
+    assert latest(second)[1].get("X-SRVR-Wait") == "frame"
+    assert click("mainTab1", initial_second, second) == 409
+    resize_frame = fresh_frame(initial_second, second)
+    resized_image = QImage.fromData(latest(second)[2])
+    assert resized_image.width() == resized_image.height() == 1050
+    assert browser().size() == first_size and window.width() == 1440 and window.height() == 900
+    assert request(port, "/srvr-web/frame", viewer=second,
+                   headers={"X-SRVR-Viewport": "50000x0"})[0] == 400
+    assert click("mainTab1", resize_frame, first) == 409
+
+    initial = fresh_frame()
     assert click("mainTab3", initial) == 204
     wait_for(app, lambda: window.property("page") == 3)
     page = scene_item(window, "powerPage")
@@ -185,23 +212,25 @@ def exercise(app, window, web, authority, backend):
     assert not page.property("historyActive")
     frame = fresh_frame(frame, second)
     assert click("srvrLogSearch", frame, second) == 204
-    search = scene_item(window, "srvrLogSearch")
+    search = scene_item(browser(second), "srvrLogSearch")
     wait_for(app, lambda: search.hasFocus())
     frame = fresh_frame(frame, second)
     assert send({"kind": "text", "frame": frame, "text": "fixture é"}, second) == 204
     wait_for(app, lambda: search.property("text") == "fixture é")
+    assert scene_item(window, "srvrLogSearch").property("text") == ""
 
     # Pressing and releasing at the desktop protects that gesture from a
     # stale browser click. Both browsers can act on the updated view.
     frame = fresh_frame(frame)
-    QTest.mousePress(window, Qt.MouseButton.LeftButton, pos=center("mainTab1").toPoint())
+    QTest.mousePress(window, Qt.MouseButton.LeftButton, pos=center(window, "mainTab1").toPoint())
     assert click("mainTab0", frame) == 409
-    QTest.mouseRelease(window, Qt.MouseButton.LeftButton, pos=center("mainTab1").toPoint())
+    QTest.mouseRelease(window, Qt.MouseButton.LeftButton, pos=center(window, "mainTab1").toPoint())
     wait_for(app, lambda: window.property("page") == 1)
     assert click("srvrSaveConfigButton", fresh_frame(frame, second), second) == 204
-    picker = window.findChild(QObject, "srvrSaveConfigDialog")
+    picker = scene_item(browser(second), "webSrvrView").findChild(QObject, "srvrSaveConfigDialog")
     wait_for(app, lambda: picker.property("visible"))
-    assert QMetaObject.invokeMethod(picker, "reject")
+    assert not window.findChild(QObject, "srvrSaveConfigDialog").property("visible")
+    assert send({"kind": "key", "frame": fresh_frame(viewer=second), "key": "Escape"}, second) == 204
     wait_for(app, lambda: not picker.property("visible"))
 
     # Exercise the real QML recall and confirm actions, with a simulated
@@ -212,16 +241,22 @@ def exercise(app, window, web, authority, backend):
     desktop_click("mainTab0")
     assert window.property("page") == 0
     backend.setPresetPosition(0, 10.0)
-    recall = next(item for item in scene_items(window)
+    recall = next(item for item in scene_items(browser())
                   if item.isVisible() and item.property("actionKey") == "preset:recall:0")
     frame = fresh_frame()
     assert click(recall, frame) == 204
-    wait_for(app, lambda: window.property("pendingShortcutAction") == "preset:recall:0")
+    wait_for(app, lambda: scene_item(browser(), "webSrvrView").property("pendingShortcutAction")
+             == "preset:recall:0")
     assert backend.goto_target_m is None
     assert click(recall, fresh_frame(frame)) == 204
     wait_for(app, lambda: backend._goto_browser == first and backend.goto_target_m is not None)
     desktop_click("mainTab2")
     assert window.property("page") == 2 and web.server.control_live(first)
+    for surface in (window, browser(), browser(second)):
+        check_geometry_layout(surface)
+    window.resize(1280, 720)
+    app.processEvents()
+    check_geometry_layout(window)
 
     # An unrelated browser keeps polling while the initiating browser loses
     # its heartbeat. Only its own window drives the recall lease.
@@ -255,16 +290,36 @@ def exercise(app, window, web, authority, backend):
 
     latest(first, foreground=False)
     fresh_frame(viewer=second)
-    captured = web.server._frames[-1].captured
+    browser_state = web.server._viewers[second]
+    captured = browser_state.frames[-1].captured
     latest(second, foreground=False)
-    assert web.server.capture_generation() is None and not web.server.control_live(second)
-    wait_for(app, lambda: latest(second)[0] == 200 and web.server._frames[-1].captured > captured)
+    assert web.server.capture_requests()[second] is None and not web.server.control_live(second)
+    wait_for(app, lambda: not web._viewports[second].isVisible())
+    wait_for(app, lambda: latest(second)[0] == 200 and browser_state.frames[-1].captured > captured)
     assert request(port, "/srvr-web/disconnect", "POST", {}, viewer=second)[0] == 204
     assert not web.server.viewers_active()
-    assert fresh_frame(viewer=connect())
-    print("SRVR_LAN_UI_HTTP_QML_PASS: direct startup, simultaneous desktop/browser control, two viewers, "
-          "stale input, shared tabs, config and device link, per-browser recall STOP, Retina encoding, "
-          "keep-alive, background pause, exposure, firmware and reconnect")
+    reconnected = connect()
+    sizes[reconnected] = (1280, 720)
+    assert fresh_frame(viewer=reconnected)
+    print("SRVR_LAN_UI_HTTP_QML_PASS: independent layouts and Free-D field alignment, two viewers, "
+          "stale input, shared tabs, per-view focus and config dialogs, device link, per-browser recall STOP, "
+          "Retina encoding, keep-alive, background pause, exposure, firmware and reconnect")
+
+
+def check_geometry_layout(window):
+    headings = scene_item(window, "geometryColumnHeadings")
+    header_fields = [item for item in headings.childItems() if item.property("text") is not None]
+    for index in range(5):
+        label, *fields = scene_item(window, f"geometryPointRow{index}").childItems()
+        assert label.property("text") == f"P{index + 1}"
+        assert 0 < fields[0].x() - label.property("implicitWidth") < 40
+        assert [field.x() for field in fields] == [field.x() for field in header_fields[1:]]
+        assert [field.width() for field in fields] == [field.width() for field in header_fields[1:]]
+        assert fields[-1].property("readOnly") is (index not in (0, 4))
+    rows = [scene_item(window, name).childItems()
+            for name in ("geometrySkateWeight", "geometryCableWeight", "geometryCableTension")]
+    assert len({(value.x(), value.width(), unit.x(), unit.width()) for _, value, unit in rows}) == 1
+    assert [unit.property("currentText") for _, _, unit in rows] == ["kg", "kg/100m", "kg"]
 
 
 def main():
@@ -275,7 +330,7 @@ def main():
         sys.path.insert(0, str(directory))
         import rc_resources  # noqa: F401
 
-        app = QGuiApplication(["test_srvr_web_runtime", "-platform", "offscreen"])
+        app = QApplication(["test_srvr_web_runtime", "-platform", "offscreen"])
         previous = qInstallMessageHandler(
             lambda kind, context, text: print(text, file=sys.stderr)
             if "The font families specified are invalid: HelveticaNeue" not in text else None)
@@ -292,7 +347,7 @@ def main():
             engine.rootContext().setContextProperty(name, obj)
         engine.setInitialProperties({"webShare": web})
         try:
-            engine.load(QUrl("qrc:/qml/Main.qml"))
+            engine.load(QUrl("qrc:/qml/DesktopWindow.qml"))
             window = engine.rootObjects()[0]
             window.resize(1280, 720)
             web.attach(window)

@@ -1,0 +1,30 @@
+HV P2P SYS v26.11.15.08 source verification
+Baseline HV-P2P-v26.11.15.07-GitHub-Complete.zip
+
+PASS  All 71 source regressions with PySide6 enabled.
+PASS  QML lint at the repository threshold, SRVR and PDM JavaScript syntax,
+      workflow YAML and Qt deployment imports.
+PASS  Isolated deployment-source startup with verified firmware fixtures.
+      The smoke test rendered a browser viewport from embedded QML.
+PASS  Two live Chromium views at TCP 5760, normal and simulated Retina DPI.
+      Wide, square and tall windows filled their browser viewports. Desktop
+      resizing kept both browser layouts steady. Resizing one browser kept
+      the desktop and the second browser steady. The resized browser rejected
+      an unfinished gesture and mapped new clicks to the displayed controls.
+PASS  P1–P5 labels and XYZ fields align. The three weight and tension values
+      and their unit dropdowns share widths. Editing a point and choosing
+      lbs/100m in Chromium updated the desktop.
+PASS  Shared navigation, per-view focus, Log typing, config dialog dismissal,
+      per-browser device Web UI links, frame freshness, view shutdown and
+      reconnect. Losing the initiating browser stopped its simulated recall
+      while the second browser stayed connected.
+PASS  Shared firmware and browser listener, verified OTA image/role gates,
+      existing control-node update sequencing and PDM/WSI monitoring fixtures.
+
+Verify the ZIP contents with sha256sum -c CHECKSUMS_SHA256.txt.
+Run python3 tools/run_all_source_checks.py with PySide6 installed.
+
+Remaining checks
+  GitHub Actions native firmware and frozen macOS/Windows builds.
+  Installed Mac Safari and Chrome viewport and response checks.
+  Equipment-LAN and physical checks in NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.11.15.08.md.

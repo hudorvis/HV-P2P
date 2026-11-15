@@ -253,7 +253,7 @@ def run(directory, server, wind_server):
     context.setContextProperty("windMonitor", wind)
     context.setContextProperty("appVersion", SEMVER[1:])
     try:
-        engine.load(QUrl("qrc:/qml/Main.qml"))
+        engine.load(QUrl("qrc:/qml/DesktopWindow.qml"))
         root = engine.rootObjects()[0]
         root.resize(1280, 720)
         wait_for(app, lambda: server.device.firmware_checks == [{}] and monitor.summary["version"] == SEMVER
