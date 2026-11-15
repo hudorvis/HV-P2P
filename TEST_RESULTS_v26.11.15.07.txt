@@ -1,0 +1,27 @@
+HV P2P SYS v26.11.15.07 source verification
+Baseline HV-P2P-v26.11.15.06-GitHub-Complete.zip
+
+PASS  All 71 source regressions with PySide6 enabled.
+PASS  Isolated deployment-source SRVR startup and QML/JavaScript checks.
+PASS  Chromium viewport fitting, gesture cancellation and logical click
+      mapping at 1× and simulated 2× device-pixel scale. The Retina encoder
+      kept all quadrants and the frame cap counted physical pixels.
+PASS  Two browser windows and the desktop operated the shared Qt session.
+      Setup dialogs, Free-D, PDM/WSI Monitoring, Log and reload were exercised.
+      Qt received the grouped wheel input and activated a focused button.
+      Device Web UI navigation was sent to the initiating browser.
+PASS  Same-socket frame wait, background capture pause, stale click rejection,
+      recall stop on viewer loss and firmware authority coexisting on TCP 5760.
+PASS  Cable profiles and Free-D outputs matched the baseline for 60 cases.
+      A changed calibrated span refreshed the Free-D preview cache.
+
+Local offscreen benchmark
+  Median time from browser click to fresh displayed frame was 382 ms before
+  and 208 ms after across 12 tab changes in each revision.
+  The same 160 cable-profile calculations took 215 ms before and 74 ms after.
+  The browser fixture ran on loopback and the native timing check uses the Mac.
+
+Remaining checks
+  GitHub Actions native firmware and frozen macOS/Windows builds.
+  Mac Safari and Chrome performance and trackpad feel on the equipment LAN.
+  Physical safety and device verification in NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.11.15.07.md.

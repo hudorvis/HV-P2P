@@ -14,14 +14,14 @@ from test_pdm_qt_runtime import scene_item, scene_items, wait_for
 from test_srvr_authority_server import fixture_image
 
 from PySide6.QtCore import QCoreApplication, QEvent, QMetaObject, QObject, QPointF, Qt, QUrl, qInstallMessageHandler
-from PySide6.QtGui import QGuiApplication, QImage
+from PySide6.QtGui import QColor, QGuiApplication, QImage
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtTest import QTest
 
 from backend import HVP2PBackend
 from firmware_authority import FirmwareAuthorityServer, MONITOR_TARGETS
 from pdm_monitor import PdmMonitor, WsiMonitor
-from web_mirror import WebMirror
+from web_mirror import WebMirror, _jpeg
 
 SRVR = Path(__file__).resolve().parents[1] / f"SRVR_GitHub_{SEMVER}"
 
@@ -136,11 +136,43 @@ def exercise(app, window, web, authority, backend):
     assert (image.width(), image.height()) == (window.width(), window.height())
     pixel, background = image.pixelColor(2, 2), window.color()
     assert max(abs(a - b) for a, b in zip(pixel.getRgb(), background.getRgb())) <= 5, (pixel, background)
+
+    # The intended physical-pixel image must include all four quadrants on Retina.
+    retina = QImage(64, 32, QImage.Format.Format_ARGB32_Premultiplied)
+    retina.setDevicePixelRatio(2)
+    retina.fill(QColor("#ff0000"))
+    composed = QImage.fromData(_jpeg(retina, QColor("#000000")))
+    assert composed.size() == retina.size()
+    assert composed.pixelColor(60, 28).red() > 240
+
+    # A bounded wait on the same frame and a subsequent request reuse TCP.
+    connection = HTTPConnection("127.0.0.1", port, timeout=2)
+    try:
+        frame_headers = {"X-SRVR-Viewer": first, "X-SRVR-Foreground": "1",
+                         "X-SRVR-Frame": str(initial), "X-SRVR-Next-Frame": "1"}
+        connection.request("GET", "/srvr-web/frame", headers=frame_headers)
+        held = connection.getresponse()
+        assert held.status == 204 and held.getheader("X-SRVR-Next-Frame") == "1"
+        held.read()
+        socket_used = connection.sock
+        del frame_headers["X-SRVR-Frame"]
+        connection.request("GET", "/srvr-web/frame", headers=frame_headers)
+        available = connection.getresponse()
+        assert available.status == 200 and available.read() == jpeg
+        assert socket_used is not None and connection.sock is socket_used
+    finally:
+        connection.close()
+
     assert click("mainTab3", initial) == 204
     wait_for(app, lambda: window.property("page") == 3)
     page = scene_item(window, "powerPage")
     assert page.property("subtab") == 0
     assert click("mainTab1", initial, second) == 409
+
+    assert click("monitorOpenWeb", fresh_frame(initial)) == 204
+    node_url = page.property("monitor").webUrl().toString()
+    wait_for(app, lambda: latest()[1].get("X-SRVR-Open-URL") == node_url)
+    assert "X-SRVR-Open-URL" not in latest(second)[1]
 
     before_desktop = fresh_frame(initial)
     desktop_click("monitorWsiTab")
@@ -221,11 +253,18 @@ def exercise(app, window, web, authority, backend):
     assert request(port, "/firmware/pdm/image")[2] == authority.bundle.images["pdm"].payload
     assert request(port, "/firmware/w1p/image")[0] == 409
 
+    latest(first, foreground=False)
+    fresh_frame(viewer=second)
+    captured = web.server._frames[-1].captured
+    latest(second, foreground=False)
+    assert web.server.capture_generation() is None and not web.server.control_live(second)
+    wait_for(app, lambda: latest(second)[0] == 200 and web.server._frames[-1].captured > captured)
     assert request(port, "/srvr-web/disconnect", "POST", {}, viewer=second)[0] == 204
     assert not web.server.viewers_active()
     assert fresh_frame(viewer=connect())
     print("SRVR_LAN_UI_HTTP_QML_PASS: direct startup, simultaneous desktop/browser control, two viewers, "
-          "stale input, shared tabs and config, per-browser recall STOP, exposure, firmware and reconnect")
+          "stale input, shared tabs, config and device link, per-browser recall STOP, Retina encoding, "
+          "keep-alive, background pause, exposure, firmware and reconnect")
 
 
 def main():

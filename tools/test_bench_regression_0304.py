@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-VER='26.11.15.05'
+VER='26.11.15.07'
 B=(ROOT/f'SRVR_GitHub_v{VER}/backend.py').read_text()
 Q=(ROOT/f'SRVR_GitHub_v{VER}/qml/Main.qml').read_text()
 L=(ROOT/f'SRVR_GitHub_v{VER}/qml/pages/LogPage.qml').read_text()
@@ -16,8 +16,10 @@ assert 'self.configChanged.emit()' in notify
 assert 'self.stateChanged.emit()' not in notify
 assert 'QTimer.singleShot(0, self._emit_config_changed)' in notify
 assert 'root.visible ? backend.filteredLogEntries' in L
-assert 'window.page===0?backend.cableProfile:[]' in Q
-assert 'window.page===2?backend.freeDPreviewCableProfile:[]' in Q
+assert 'runCableProfile: window.page===0?backend.cableProfile:[]' in Q
+assert Q.count('cableProfile:window.runCableProfile') == 2
+assert 'previewProfile: visible ? backend.freeDPreviewCableProfile : []' in Q
+assert Q.count('cableProfile:freeDPage.previewProfile') == 2
 assert '_last_ctrl_display_build_at' in B and '< HMI_DISPLAY_MIN_CHANGE_INTERVAL_S' in B
 
 # AUX calibration preserves the axis sample from the exact CTRL packet that

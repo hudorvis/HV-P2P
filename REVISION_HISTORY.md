@@ -1,3 +1,15 @@
+# v26.11.15.07 — 2026-11-15
+
+- Reduce SRVR response delay with frame-ready delivery, reusable HTTP connections and immediate queued Qt input.
+- Apply the physical-pixel capture cap and composite the whole image on Retina displays.
+- Share Free-D preview data, prepare cable interpolation once per curve and refresh the preview when the span changes.
+- Check browser wheel, keyboard focus and monitoring device shortcuts through the same Qt controls as the desktop.
+
+# v26.11.15.06 — 2026-11-15
+
+- Expand the live SRVR image to fit the browser viewport and centre it while preserving its proportions.
+- Cancel an unfinished browser pointer gesture if the viewport resizes.
+
 # v26.11.15.05 — 2026-11-15
 
 - Enable direct SRVR Web UI access on the closed LAN at the SRVR host's IP on TCP 5760.
