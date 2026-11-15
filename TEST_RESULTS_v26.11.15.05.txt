@@ -1,0 +1,24 @@
+HV P2P SYS v26.11.15.05 source verification
+Baseline HV-P2P-v26.11.15.04-GitHub-Complete.zip
+
+PASS  All 71 source regression scripts with PySide6 enabled.
+PASS  QML lint at the repository threshold and JavaScript syntax for SRVR
+      and the firmware-embedded PDM Web UI.
+PASS  Isolated SRVR desktop stage with verified firmware bundle fixture.
+PASS  Two Chromium views opened and reloaded directly at TCP 5760. Input
+      alternated between both browsers and the desktop. Run, Setup and
+      Free-D navigation, file dialogs, Monitoring and Log search worked.
+PASS  HTTP/QML tests covered Host and Origin checks, shared frames,
+      stale gestures, minimized-window recovery, reconnect and stop on
+      loss of the browser that confirmed a preset recall. The other
+      browser remained alive during the recall loss and STOP test.
+PASS  Firmware HTTP and control UDP fixture traffic coexisted with the
+      browser on port 5760. PDM OTA and W1P ordering regressions passed.
+
+Verify the source ZIP with sha256sum -c CHECKSUMS_SHA256.txt.
+Run python3 tools/run_all_source_checks.py with PySide6 installed.
+
+Remaining checks
+  GitHub Actions native firmware and frozen macOS/Windows compilation.
+  Second-device equipment-LAN and isolated hardware checks in
+  NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.11.15.05.md.

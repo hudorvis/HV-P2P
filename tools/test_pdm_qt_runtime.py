@@ -266,7 +266,7 @@ def run(directory, server, wind_server):
         authority.bundle.release = SEMVER
         server.device.fw_version = SEMVER
         server.device.fw_check_supported = False
-        root.setProperty("page", 4)
+        root.setProperty("page", 3)
         wait_for(app, lambda: monitor.summary["samples"] == len(server.device.samples) and len(monitor.graphs[0]) > 2)
         assert monitor.summary["labels"][0] == server.device.names[0] and monitor.summary["connection"] == "Live"
         assert any(value is None for _, value in monitor.graphs[0])
@@ -358,7 +358,7 @@ def run(directory, server, wind_server):
         update_log_settings(app, root, 12, 500, 6, 1000)
         wait_for(app, lambda: wind.summary["samples"] >= 5 and len(wind.graphs[0]) > 2)
         page = root.findChild(QObject, "powerPage")
-        page.setProperty("windSelected", True)
+        assert QMetaObject.invokeMethod(scene_item(root, "monitorWsiTab"), "clicked")
         app.processEvents()
         wind_plot = check_visible_trace(root, count=1)
         check_hover(app, root, wind_plot, "m/s", 0.85)
@@ -368,14 +368,16 @@ def run(directory, server, wind_server):
         update_log_settings(app, root, 12, 500, 3, 2000, pdm=False)
         assert server.device.hours == 6 and server.device.period == 1000
         assert wind_server.device.hours == 3 and wind_server.device.period == 2000
-        page.setProperty("windSelected", False)
+        assert QMetaObject.invokeMethod(scene_item(root, "monitorPdmTab"), "clicked")
         server.device.now += 4000
         wait_for(app, lambda: monitor.summary["connection"] == "Stale data")
         server.device.online = False
         wait_for(app, lambda: monitor.summary["connection"] == "Offline")
         change_offline_pdm_address(app, root, monitor, wind, settings, server.device)
-        root.setProperty("page", 3)
+        assert QMetaObject.invokeMethod(scene_item(root, "monitorLogTab"), "clicked")
         app.processEvents()
+        assert page.property("subtab") == 2 and not page.property("historyActive")
+        assert scene_item(root, "monitorLogPage").property("visible")
         save_button = scene_item(root, "saveSrvrLogButton")
         failure = root.findChild(QObject, "srvrLogSaveFailure")
         detail = root.findChild(QObject, "srvrLogSaveDetail")

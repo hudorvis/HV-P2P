@@ -1,3 +1,15 @@
+# v26.11.15.05 — 2026-11-15
+
+- Enable direct SRVR Web UI access on the closed LAN at the SRVR host's IP on TCP 5760.
+- Give the desktop and connected browsers concurrent control of the same SRVR window.
+- Track the initiating browser for preset and limit recalls. Stale input is rejected after the shared view changes.
+
+# v26.11.15.04 — 2026-11-15
+
+- Share the running SRVR window with one paired browser on TCP 5760. Browser input is enabled from SRVR and desktop input takes precedence.
+- Move Log under Monitoring with PDM and WSI on desktop and in the browser.
+- Cancel browser-initiated preset or limit recall on loss of browser control.
+
 # v26.11.15.03 — 2026-11-15
 
 - Update the configured PDM over Ethernet independently of motion and E-stop state. Provide the same policy for optional WSI images.
