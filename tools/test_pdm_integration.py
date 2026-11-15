@@ -42,6 +42,8 @@ class Device:
     http_port = PDM_HTTP_PORT
     fw_update = "Current"
     fw_authority_port = AUTHORITY_PORT
+    fw_authority_ip = ""
+    fw_check_supported = False
     fw_progress = 0
     fw_version = SEMVER
     def __init__(self):
@@ -67,6 +69,7 @@ class Device:
         self.names = ("Radio supply", "Brake supply", "24 V", "12 V")
         self.cursors = []
         self.clock_writes = []
+        self.firmware_checks = []
         for stamp in (8500, 9000, 9500, 10000, 10500):
             self.add(stamp, None if stamp == 9500 else 47.5)
 
@@ -83,19 +86,24 @@ class Device:
         url = urlsplit(path)
         query = parse_qs(url.query)
         if url.path == self.live_path:
-            after = int(query["after"][0])
-            self.cursors.append(after)
             latest = self.samples[max(self.samples)]
-            rows = [row for row in self.samples.values() if row[0] > after]
             data = dict(boot=self.boot, generation=self.generation, now_t=self.now,
                         now_utc_ms=EPOCH + self.now if self.synced else 0,
                         stored_through=self.durable, t=latest[0], utc_ms=latest[1],
                         sd_ok=self.sd, log_healthy=self.sd, sample_period_ms=self.period,
-                        log_hours=self.hours, offset0=self.offset, recent=rows[:32],
-                        gap=False, more=len(rows) > 32, fw_version=self.fw_version,
+                        log_hours=self.hours, offset0=self.offset, fw_version=self.fw_version,
                         fw_update=self.fw_update, fw_progress=self.fw_progress, alarms=self.alarms)
+            if "after" in query:
+                after = int(query["after"][0])
+                self.cursors.append(after)
+                rows = [row for row in self.samples.values() if row[0] > after]
+                data.update(recent=rows[:32], gap=False, more=len(rows) > 32)
             if self.role == "pdm" and self.fw_authority_port is not None:
                 data["fw_authority_port"] = self.fw_authority_port
+            if self.role == "pdm" and self.fw_authority_ip:
+                data["fw_authority_ip"] = self.fw_authority_ip
+            if self.role == "pdm" and self.fw_check_supported:
+                data["fw_check_supported"] = True
             data.update(zip(self.keys, latest[2:]))
             data.update({f"offset{i}": value for i, value in enumerate(self.other_offsets, 1)})
         elif url.path == "/api/history":
@@ -142,6 +150,9 @@ class Device:
         elif url.path == "/api/time":
             self.clock_writes.append(kwargs["body"]["utc_ms"])
             data = {"ok": True}
+        elif url.path == "/api/firmware/check":
+            self.firmware_checks.append(kwargs["body"])
+            data = {"ok": True}
         else:
             raise AssertionError(path)
         if self.role != "pdm":
@@ -181,6 +192,26 @@ class PdmIntegration(unittest.TestCase):
             path.write_bytes(image)
             files.append(path)
         self.manifest = make_firmware_bundle(*files, self.bundle)
+
+    def test_firmware_check_requires_an_online_capable_pdm_and_resumes_after_reboot(self):
+        device = Device()
+        device.fw_version = "v26.11.12.07"
+        session = PdmSession(device.address, device.fetch)
+        session.request_firmware_check()
+        session.poll()
+        session.request_firmware_check()
+        self.assertEqual(device.firmware_checks, [])
+        device.fw_check_supported = True
+        session.poll()
+        session.request_firmware_check()
+        self.assertEqual(device.firmware_checks, [{}])
+        device.fw_version, device.boot = SEMVER, "rebooted"
+        device.cursors.clear()
+        session.poll(track_samples=False)
+        session.request_firmware_check()
+        self.assertEqual(device.firmware_checks, [{}, {}])
+        self.assertEqual(device.cursors, [])
+        self.assertEqual(session.summary()["samples"], 0)
 
     def test_wind_history_and_independent_log_settings(self):
         power, wind = Device(), WindDevice()
@@ -300,6 +331,8 @@ class PdmIntegration(unittest.TestCase):
             self.assertIn(f"AUTHORITY_PORT = {AUTHORITY_PORT};", header.read_text())
         pdm_source = (PDM / "pdm_app.cpp").read_text()
         self.assertIn(f"DEVICE_HTTP_PORT = {PDM_HTTP_PORT};", pdm_source)
+        self.assertIn('server.on("/api/firmware/check", HTTP_POST, handleFirmwareCheck);', pdm_source)
+        self.assertIn('requestPdmOta(server.client().remoteIP(), server.client().localIP())', pdm_source)
         self.assertIn('doc["fw_authority_port"] = pdmOtaAuthorityPort();', pdm_source)
         self.assertIn('pdmOtaAuthorityPort() { return HVP2PAuthorityOTA::AUTHORITY_PORT; }',
                       (PDM / "pdm_ota.cpp").read_text())

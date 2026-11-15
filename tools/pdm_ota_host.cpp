@@ -47,6 +47,7 @@ struct WorkerWait {};
 struct WorkerRestart {};
 bool stopAfterWorkerWait = false;
 uint32_t millis() { return nowMs; }
+uint64_t uptimeMs() { return nowMs; }
 void delay(uint32_t ms) {
   nowMs += ms;
   if (stopAfterWorkerWait && ms >= 5000) throw WorkerWait{};
@@ -82,6 +83,7 @@ class IPAddress {
 };
 
 const IPAddress ethernet{172, 20, 1, 110}, wifi{192, 168, 1, 1}, srvr{172, 20, 1, 100};
+const IPAddress alternateSrvr{172, 20, 1, 104}, offSubnet{192, 168, 50, 10};
 constexpr int HTTP_CODE_OK = 200;
 std::vector<uint8_t> reply, canonical, wrongBoard, runningImage;
 IPAddress source = ethernet;
@@ -92,6 +94,9 @@ String permitReply;
 int permitCode = HTTP_CODE_OK;
 int imageCode = HTTP_CODE_OK;
 uint32_t permitDelayMs = 0;
+int configuredManifestCode = HTTP_CODE_OK;
+int alternateManifestCode = HTTP_CODE_OK;
+bool servedAlternateImage = false;
 
 class NetworkClient {
  public:
@@ -115,12 +120,17 @@ class HTTPClient {
   bool begin(NetworkClient& client, const String& url) {
     manifest_ = strstr(url.c_str(), "/manifest") != nullptr;
     permit_ = strstr(url.c_str(), "/permit") != nullptr;
-    assert(strstr(url.c_str(), "http://172.20.1.100:5760/firmware/pdm/"));
+    alternate_ = strstr(url.c_str(), "http://172.20.1.104:5760/firmware/pdm/") != nullptr;
+    assert(alternate_ || strstr(url.c_str(), "http://172.20.1.100:5760/firmware/pdm/"));
     client_ = &client;
     return true;
   }
   int GET() const {
-    if (!permit_) return manifest_ ? HTTP_CODE_OK : imageCode;
+    if (manifest_) return alternate_ ? alternateManifestCode : configuredManifestCode;
+    if (!permit_) {
+      servedAlternateImage = alternate_;
+      return imageCode;
+    }
     nowMs += permitDelayMs;
     return permitCode;
   }
@@ -137,6 +147,7 @@ class HTTPClient {
   NetworkClient* client_ = nullptr;
   bool manifest_ = false;
   bool permit_ = false;
+  bool alternate_ = false;
 };
 
 constexpr int ESP_OK = 0, U_FLASH = 0, ESP_PARTITION_TYPE_DATA = 1, ESP_PARTITION_SUBTYPE_DATA_OTA = 0;
@@ -214,26 +225,52 @@ struct EthernetFixture {
   bool linkUp() const { return true; }
   bool hasIP() const { return true; }
   IPAddress localIP() const { return ethernet; }
+  IPAddress subnetMask() const { return {255, 255, 0, 0}; }
   bool isDefault() const { return selected; }
   bool setDefault() { return selected = true; }
 } ETH;
 
 struct SerialFixture {
+  std::string input;
+  size_t consumed = 0;
   template<typename... Args> void printf(const char*, Args...) {}
   void println(const char*) {}
-  int available() const { return 0; }
-  int read() const { return -1; }
+  int available() const { return input.size() - consumed; }
+  int read() { return input[consumed++]; }
 } Serial;
 
 struct Preferences {
+  static inline uint32_t savedAuthority = 0;
   bool begin(const char*, bool) { return true; }
-  uint32_t getUInt(const char*, uint32_t fallback) { return fallback; }
-  size_t putUInt(const char*, uint32_t) { return sizeof(uint32_t); }
+  bool isKey(const char*) { return savedAuthority != 0; }
+  uint32_t getUInt(const char*, uint32_t fallback) { return savedAuthority ? savedAuthority : fallback; }
+  size_t putUInt(const char*, uint32_t value) {
+    savedAuthority = value;
+    return sizeof(uint32_t);
+  }
 };
 
-constexpr int pdPASS = 1;
-int xTaskCreate(void (*)(void*), const char*, unsigned, void*, unsigned, void*) { return pdPASS; }
-void vTaskDelete(void*) { assert(false); }
+constexpr int pdPASS = 1, pdTRUE = 1;
+using portMUX_TYPE = int;
+constexpr int portMUX_INITIALIZER_UNLOCKED = 0;
+void portENTER_CRITICAL(portMUX_TYPE*) {}
+void portEXIT_CRITICAL(portMUX_TYPE*) {}
+using TaskHandle_t = void*;
+int taskId;
+int wakeNotifications = 0;
+int xTaskCreate(void (*)(void*), const char*, unsigned, void*, unsigned, TaskHandle_t* task) {
+  *task = &taskId;
+  return pdPASS;
+}
+void xTaskNotifyGive(TaskHandle_t task) {
+  assert(task == &taskId);
+  ++wakeNotifications;
+}
+uint32_t pdMS_TO_TICKS(uint32_t ms) { return ms; }
+uint32_t ulTaskNotifyTake(int, uint32_t ticks) {
+  delay(ticks);
+  return 0;
+}
 struct {
   void restart() {
     runningImage = Update.staging;
@@ -269,17 +306,23 @@ int main(int argc, char** argv) {
   assert(argc == 2);
   const String version = argv[1];
   const String target = "OLIMEX_ESP32_POE_ISO";
-  canonical.assign(35000, 0);
-  canonical[0] = 0xe9;
-  const String identity = String("HV_P2P_FW_ROLE=PDM;HV_P2P_FW_TARGET=") + target + ";HV_P2P_FW_VERSION=" + version + ";";
-  memcpy(canonical.data() + 500, identity.c_str(), identity.length()); // Spans a network read boundary.
+  const String goodDigest = std::string(64, '1');
+  const auto serveRelease = [&](const String& release) {
+    canonical.assign(35000, 0);
+    canonical[0] = 0xe9;
+    const String identity = String("HV_P2P_FW_ROLE=PDM;HV_P2P_FW_TARGET=") + target +
+                            ";HV_P2P_FW_VERSION=" + release + ";";
+    memcpy(canonical.data() + 500, identity.c_str(), identity.length()); // Spans a network read boundary.
+    manifestJson = String("{\"schema\":\"hv-p2p-firmware-manifest-v1\",\"authority\":\"HV_P2P_SRVR\",") +
+        "\"bundle_id\":\"" + std::string(64, 'b') + "\",\"release\":\"" + release +
+        "\",\"role\":\"PDM\",\"target\":\"" + target + "\",\"version\":\"" + release +
+        "\",\"size\":35000,\"sha256\":\"" + goodDigest + "\"}";
+    permitReply = release + " " + goodDigest + "\n";
+    reply = canonical;
+  };
+  serveRelease(version);
   wrongBoard = canonical;
   wrongBoard[500 + strlen("HV_P2P_FW_ROLE=PDM;HV_P2P_FW_TARGET=")] = 'X';
-  const String goodDigest = std::string(64, '1');
-  manifestJson = String("{\"schema\":\"hv-p2p-firmware-manifest-v1\",\"authority\":\"HV_P2P_SRVR\",") +
-      "\"bundle_id\":\"" + std::string(64, 'b') + "\",\"release\":\"" + version +
-      "\",\"role\":\"PDM\",\"target\":\"" + target + "\",\"version\":\"" + version +
-      "\",\"size\":35000,\"sha256\":\"" + goodDigest + "\"}";
   String error;
   Manifest manifest;
   source = wifi;
@@ -340,7 +383,9 @@ int main(int argc, char** argv) {
 
   // Run the device's worker, including the installed-image hash, fresh permit
   // after the writer pause, and selection/reboot only after a successful stage.
+  assert(!pdmOtaCheckSupported());
   startPdmOta();
+  assert(pdmOtaCheckSupported());
   runningImage = wrongBoard;
   permitCode = -1;
   const int writesBeforeRejection = Update.writes;
@@ -364,5 +409,50 @@ int main(int argc, char** argv) {
   storageBusy = false;
   assert(runWorkerCycle() && phase.load() == Phase::Restarting);
   assert(Update.activations == 2 && runningImage == canonical);
+
+  // An unconfigured PDM can check a connected SRVR when the factory
+  // destination is unavailable. Configured destinations stay pinned.
+  runningImage = wrongBoard;
+  assert(!requestPdmOta(alternateSrvr, wifi));
+  assert(!requestPdmOta(ethernet, ethernet));
+  assert(!requestPdmOta(offSubnet, ethernet));
+  assert(requestPdmOta(alternateSrvr, ethernet) && wakeNotifications == 1);
+  alternateManifestCode = 404;
+  assert(runWorkerCycle() && !servedAlternateImage);
+  runningImage = wrongBoard;
+  configuredManifestCode = 404;
+  alternateManifestCode = HTTP_CODE_OK;
+  permitCode = 409;
+  assert(!runWorkerCycle() && phase.load() == Phase::Waiting);
+  permitCode = HTTP_CODE_OK;
+  assert(runWorkerCycle() && servedAlternateImage && runningImage == canonical);
+  assert(pdmOtaAuthorityIp() == srvr && Preferences::savedAuthority == 0);
+  const int exactImageWrites = Update.writes;
+  assert(!runWorkerCycle() && phase.load() == Phase::Current && Update.writes == exactImageWrites);
+  nowMs += 60000;
+  runningImage = wrongBoard;
+  assert(!runWorkerCycle() && phase.load() == Phase::Searching);
+  assert(Update.activations == 4);
+
+  // Exercise a different release through the request and actual OTA worker.
+  runningImage = canonical;
+  serveRelease("v99.12.31.99");
+  assert(requestPdmOta(alternateSrvr, ethernet));
+  permitCode = 409;
+  assert(!runWorkerCycle() && phase.load() == Phase::Waiting && Update.writes == exactImageWrites);
+  permitCode = HTTP_CODE_OK;
+  assert(runWorkerCycle() && phase.load() == Phase::Restarting);
+  assert(Update.activations == 5 && runningImage == canonical);
+  serveRelease("v00.01.01.01");
+  const int newerWrites = Update.writes;
+  assert(!runWorkerCycle() && phase.load() == Phase::Newer && Update.writes == newerWrites);
+
+  Serial.input = "SRVR_IP 172.20.1.100\n";
+  servicePdmOtaConsole();
+  assert(Preferences::savedAuthority == (uint32_t)srvr && currentOffer() == 0);
+  assert(!requestPdmOta(alternateSrvr, ethernet));
+  startPdmOta();
+  assert(!requestPdmOta(alternateSrvr, ethernet));
+  assert(requestPdmOta(srvr, ethernet));
   puts("PDM_OTA_HOST_PASS");
 }

@@ -10,8 +10,9 @@ ROOT = Path(__file__).resolve().parents[1]
 with TemporaryDirectory(prefix="hvp2p-pdm-ota-") as directory:
     path = Path(directory)
     (path / "mbedtls").mkdir()
+    (path / "freertos").mkdir()
     for stub in ("Arduino.h", "ETH.h", "IPAddress.h", "Preferences.h", "HTTPClient.h", "NetworkClient.h", "Update.h",
-                 "esp_ota_ops.h", "esp_partition.h", "mbedtls/sha256.h"):
+                 "esp_ota_ops.h", "esp_partition.h", "mbedtls/sha256.h", "freertos/FreeRTOS.h", "freertos/task.h"):
         (path / stub).touch()
     executable = path / "pdm_ota_host"
     subprocess.run(["g++", "-std=c++17", "-I", str(path), "-I", str(ROOT / f"HV_P2P_PDM_{SEMVER}"),

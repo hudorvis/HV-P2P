@@ -236,7 +236,8 @@ def run(directory, server, wind_server):
     engine = QQmlApplicationEngine()
     settings = directory / "pdm.ini"
     activity = {}
-    authority = SimpleNamespace(port=5760, legacy_ports=(5000,), bundle=SimpleNamespace(release=SEMVER),
+    next_release = "v26.11.14.02"
+    authority = SimpleNamespace(port=5760, legacy_ports=(5000,), bundle=SimpleNamespace(release=next_release),
                                 pdm_activity=lambda peer: activity if peer == server.device.address else {})
     monitor = PdmMonitor(settings, PdmIdleWindow(), lambda: False, "", authority=authority, log=backend._log)
     monitor.setParent(engine)
@@ -252,6 +253,14 @@ def run(directory, server, wind_server):
         engine.load(QUrl("qrc:/qml/Main.qml"))
         root = engine.rootObjects()[0]
         root.resize(1280, 720)
+        wait_for(app, lambda: server.device.firmware_checks == [{}] and monitor.summary["version"] == SEMVER)
+        assert root.property("page") == 0 and monitor.summary["version"] == SEMVER
+        assert monitor.graphs == [[], [], [], []] and not server.device.clock_writes and not server.device.cursors
+        server.device.boot, server.device.fw_version = "updatedboot", next_release
+        wait_for(app, lambda: server.device.firmware_checks == [{}, {}] and monitor.summary["version"] == next_release)
+        authority.bundle.release = SEMVER
+        server.device.fw_version = SEMVER
+        server.device.fw_check_supported = False
         root.setProperty("page", 4)
         wait_for(app, lambda: monitor.summary["samples"] == len(server.device.samples) and len(monitor.graphs[0]) > 2)
         assert monitor.summary["labels"][0] == server.device.names[0] and monitor.summary["connection"] == "Live"
@@ -286,8 +295,15 @@ def run(directory, server, wind_server):
         wait_for(app, lambda: "Manifest served" in ota_log())
         activity.clear()
         server.device.fw_authority_port = 5760
-        wait_for(app, lambda: "TCP 5760" in ota_log())
+        server.device.fw_authority_ip = "172.20.1.100"
+        wait_for(app, lambda: "172.20.1.100:5760" in ota_log())
         assert firmware.property("text") == f"Firmware {previous}"
+        with patch("pdm_monitor.local_ipv4_addresses", return_value=["172.20.1.104", "192.168.1.10"]):
+            monitor._local_addresses_at = 0.0
+            wait_for(app, lambda: "172.20.1.100 is not assigned to this computer" in ota_log())
+            assert "172.20.1.104" in ota_log() and "SRVR_IP" in ota_log()
+        monitor._local_addresses_at = 0.0
+        wait_for(app, lambda: "172.20.1.100:5760" in ota_log())
         point = firmware.mapToScene(QPointF(12, firmware.height() / 2)).toPoint()
         QTest.mouseMove(root, point)
         QTest.qWait(700)
@@ -351,6 +367,17 @@ def run(directory, server, wind_server):
         server.device.online = False
         wait_for(app, lambda: monitor.summary["connection"] == "Offline")
         change_offline_pdm_address(app, root, monitor, wind, settings, server.device)
+        root.setProperty("page", 3)
+        app.processEvents()
+        save_button = scene_item(root, "saveSrvrLogButton")
+        status = scene_item(root, "srvrLogSaveStatus")
+        with patch.object(backend, "_log_export_dir", return_value=directory / "missing"):
+            assert QMetaObject.invokeMethod(save_button, "clicked")
+            assert status.property("visible") and status.property("text") == "Could not save beside SRVR"
+        with patch.object(backend, "_log_export_dir", return_value=directory):
+            assert QMetaObject.invokeMethod(save_button, "clicked")
+            assert not status.property("visible")
+            assert len(list(directory.glob("HV_P2P_SRVR_Log_*.txt"))) == 1
         root.setProperty("page", 0)
     finally:
         monitor.close()
@@ -370,6 +397,7 @@ if __name__ == "__main__":
         sys.path.insert(0, scratch)
         import rc_resources  # noqa: F401
         server.device = Device()
+        server.device.fw_check_supported = True
         server.device.names = ("Radio supply — " * 12, *server.device.names[1:])
         server.device.http_port = 80
         for i in range(1, 33):
@@ -387,7 +415,8 @@ if __name__ == "__main__":
         threading.Thread(target=server.serve_forever, daemon=True).start()
         threading.Thread(target=wind_server.serve_forever, daemon=True).start()
         try:
-            with patch("pdm_client.HTTPConnection", side_effect=connect):
+            with (patch("pdm_client.HTTPConnection", side_effect=connect),
+                  patch("pdm_monitor.local_ipv4_addresses", return_value=["172.20.1.100"])):
                 run(directory, server, wind_server)
         finally:
             server.shutdown()

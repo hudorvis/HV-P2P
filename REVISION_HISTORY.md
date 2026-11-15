@@ -1,3 +1,9 @@
+# v26.11.14.01 — 2026-11-14
+
+- Request PDM firmware checks in the background and repeat the check after the PDM reboots. Allow a PDM using the factory address to check a connected SRVR on the local Ethernet subnet.
+- Save exported logs beside the running SRVR app and show any write failure in the Log page.
+- Compare the PDM's saved firmware authority address with the SRVR computer's active IPv4 addresses when a PDM request is missing.
+
 # v26.11.12.09 — 2026-11-12
 
 - Rename and reorder the PDM Web UI and Settings controls. Rename the address field and remove the firmware hover popup.
