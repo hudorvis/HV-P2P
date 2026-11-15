@@ -58,6 +58,7 @@ class IPAddress {
  public:
   IPAddress() = default;
   explicit IPAddress(uint32_t value) : value_(value) {}
+  explicit IPAddress(const uint8_t* address) : IPAddress(address[0], address[1], address[2], address[3]) {}
   IPAddress(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
       : value_(uint32_t(a) | (uint32_t(b) << 8) | (uint32_t(c) << 16) | (uint32_t(d) << 24)) {}
   uint8_t operator[](size_t index) const { return value_ >> (8 * index); }
@@ -207,17 +208,17 @@ int mbedtls_sha256_finish(mbedtls_sha256_context* ctx, uint8_t digest[32]) {
 #include "HV_P2P_SRVR_Authority_OTA.h"
 
 using namespace HVP2PAuthorityOTA;
-bool lease = false;
+bool permitCommit = false;
 bool storageBusy = false;
-bool dropIdleAfterPause = false;
+bool denyAfterPause = false;
 bool writerPaused = false;
 int commitChecks = 0;
 bool mayActivate(const IPAddress& peer, const Manifest& manifest, String& error) {
   ++commitChecks;
   assert(peer == srvr && manifest.role == "PDM");
-  if (!lease) error = "idle_window_closed";
+  if (!permitCommit) error = "permit_denied";
   else if (storageBusy) error = "sd_writer_pause_timeout";
-  return lease && !storageBusy;
+  return permitCommit && !storageBusy;
 }
 
 struct EthernetFixture {
@@ -282,12 +283,141 @@ bool pauseLogForUpdate(uint32_t timeout) {
   assert(timeout == 1500);
   if (storageBusy) return false;
   writerPaused = true;
-  if (dropIdleAfterPause) permitCode = 409;
+  if (denyAfterPause) permitCode = 403;
   return true;
 }
 void resumeLogAfterUpdate() { writerPaused = false; }
 
 #include "pdm_ota.cpp"
+
+namespace ApFixture {
+#include "pdm_ap_config.h"
+LanConfig lan;
+WifiConfig wifi;
+bool ethConfigOk, apStarted, apConfigOk, naptActive;
+const char* routingState = "starting";
+uint64_t routingCheckAt;
+constexpr int WIFI_AP = 1, WIFI_OFF = 0;
+
+struct Ethernet {
+  IPAddress ip, mask, dns;
+  bool selected = false;
+  bool begin() { return true; }
+  bool config(IPAddress address, IPAddress, IPAddress subnet, IPAddress resolver) {
+    ip = address;
+    mask = subnet;
+    dns = resolver;
+    return true;
+  }
+  bool linkUp() const { return true; }
+  bool hasIP() const { return (uint32_t)ip != 0; }
+  bool isDefault() const { return selected; }
+  bool setDefault() { return selected = true; }
+  IPAddress localIP() const { return ip; }
+  IPAddress subnetMask() const { return mask; }
+  IPAddress dnsIP() const { return dns; }
+} ETH;
+
+struct WifiDriver {
+  struct AccessPoint {
+    IPAddress ip, mask;
+    bool nat = false;
+    IPAddress subnetMask() const { return mask; }
+    IPAddress localIP() const { return ip; }
+    bool enableNAPT(bool enable) { nat = enable; return true; }
+  } AP;
+  bool enabled = false;
+  bool configurationFails = false;
+  int starts = 0;
+  int stops = 0;
+  std::string ssid, pass;
+  bool mode(int selected) {
+    enabled = selected == WIFI_AP;
+    if (!enabled) {
+      ++stops;
+      AP = {};
+    }
+    return true;
+  }
+  void setSleep(bool) {}
+  bool softAPConfig(IPAddress ip, IPAddress, IPAddress mask, IPAddress lease, IPAddress) {
+    assert(enabled && (uint32_t)lease);
+    AP.ip = ip;
+    AP.mask = mask;
+    return !configurationFails;
+  }
+  bool softAP(const char* name, const char* password, int, int) {
+    assert(enabled);
+    ssid = name;
+    pass = password ? password : "";
+    ++starts;
+    return true;
+  }
+  IPAddress softAPIP() const { return AP.ip; }
+} WiFi;
+
+#include "pdm_ap_startup.h"
+
+void reset() {
+  lan = {};
+  wifi = {};
+  ETH = {};
+  WiFi = {};
+  ethConfigOk = apStarted = apConfigOk = naptActive = false;
+  routingCheckAt = 0;
+  routingState = "starting";
+}
+
+void checkRouting() {
+  reset();
+  const IPAddress oldAp(172, 20, 1, 1);
+  wifi.ip = wifi.gateway = (uint32_t)oldAp;
+  strcpy(wifi.ssid, "Saved equipment AP");
+  strcpy(wifi.pass, "saved password");
+  startNetwork();
+  assert(apStarted && apConfigOk && ETH.localIP() == ethernet && WiFi.softAPIP() == DEFAULT_AP);
+  assert(wifi.ip == (uint32_t)oldAp && WiFi.ssid == wifi.ssid && WiFi.pass == wifi.pass);
+  serviceRouting();
+  assert(ETH.isDefault() && WiFi.AP.nat && naptActive);
+
+  reset();
+  lan.ip = (uint32_t)IPAddress(192, 168, 1, 110);
+  lan.mask = (uint32_t)DEFAULT_AP_MASK;
+  lan.gateway = (uint32_t)IPAddress(192, 168, 1, 254);
+  startNetwork();
+  assert(apStarted && WiFi.softAPIP() == IPAddress(192, 168, 4, 1) && wifi.ip == (uint32_t)DEFAULT_AP);
+
+  reset();
+  WiFi.configurationFails = true;
+  startNetwork();
+  assert(ethConfigOk && !apStarted && !apConfigOk && !WiFi.enabled && !WiFi.starts && WiFi.stops == 1);
+
+  reset();
+  lan.dhcp = 1;
+  wifi.ip = wifi.gateway = (uint32_t)oldAp;
+  wifi.bridge = 0;
+  startNetwork();
+  assert(apStarted && WiFi.softAPIP() == oldAp && !ETH.hasIP());
+  ETH.ip = ethernet;
+  ETH.mask = DEFAULT_MASK;
+  serviceRouting();
+  assert(apStarted && WiFi.softAPIP() == DEFAULT_AP && WiFi.stops == 1);
+  assert(ETH.isDefault() && !WiFi.AP.nat && wifi.ip == (uint32_t)oldAp);
+  assert(strcmp(routingState, "disabled") == 0);
+
+  reset();
+  const IPAddress distinctAp(192, 168, 50, 1);
+  wifi.ip = wifi.gateway = (uint32_t)distinctAp;
+  startNetwork();
+  assert(apStarted && WiFi.softAPIP() == distinctAp && !WiFi.stops);
+
+  reset();
+  wifi.enabled = 0;
+  startNetwork();
+  assert(ethConfigOk && !apStarted && !WiFi.enabled && !WiFi.starts);
+  puts("PDM_AP_STARTUP_AND_ETHERNET_ROUTE_PASS");
+}
+}  // namespace ApFixture
 
 bool runWorkerCycle() {
   stopAfterWorkerWait = true;
@@ -333,21 +463,21 @@ int main(int argc, char** argv) {
   bool validVersion = false;
   assert(compareVersions("v26.11.12.07", version, validVersion) < 0 && validVersion);
   permitReply = manifest.release + " " + manifest.sha256 + "\n";
-  permitCode = 409;
-  assert(!fetchIdlePermit(srvr, manifest, ethernet, error) && error == "idle_window_closed");
+  permitCode = 403;
+  assert(!fetchUpdatePermit(srvr, manifest, ethernet, error) && error == "permit_http_403");
   permitCode = -1;
-  assert(!fetchIdlePermit(srvr, manifest, ethernet, error) && error == "permit_http_-1");
+  assert(!fetchUpdatePermit(srvr, manifest, ethernet, error) && error == "permit_http_-1");
   permitCode = HTTP_CODE_OK;
   source = wifi;
-  assert(!fetchIdlePermit(srvr, manifest, ethernet, error) && error == "permit_wrong_interface");
+  assert(!fetchUpdatePermit(srvr, manifest, ethernet, error) && error == "permit_wrong_interface");
   source = ethernet;
   permitReply = manifest.release + " " + std::string(64, '3') + "\n";
-  assert(!fetchIdlePermit(srvr, manifest, ethernet, error) && error == "permit_image_identity_mismatch");
+  assert(!fetchUpdatePermit(srvr, manifest, ethernet, error) && error == "permit_image_identity_mismatch");
   permitReply = manifest.release + " " + manifest.sha256 + "\n";
   permitDelayMs = PERMIT_MAX_RTT_MS + 1;
-  assert(!fetchIdlePermit(srvr, manifest, ethernet, error) && error == "permit_expired");
+  assert(!fetchUpdatePermit(srvr, manifest, ethernet, error) && error == "permit_expired");
   permitDelayMs = 0;
-  assert(fetchIdlePermit(srvr, manifest, ethernet, error) && !error.length());
+  assert(fetchUpdatePermit(srvr, manifest, ethernet, error) && !error.length());
   const auto stage = [&] { return downloadAndStage(srvr, manifest, "PDM", target.c_str(),
                                                   ethernet, error, nullptr, mayActivate); };
   contentLength = manifest.size;
@@ -369,9 +499,9 @@ int main(int argc, char** argv) {
   assert(!stage() && error == "image_embedded_identity_mismatch" && Update.aborts == 4);
   reply = canonical;
   manifest.sha256 = goodDigest;
-  assert(!stage() && error == "idle_window_closed" && Update.aborts == 5);
+  assert(!stage() && error == "permit_denied" && Update.aborts == 5);
   assert(Update.activations == 0 && commitChecks == 1 && Update.staging.empty());
-  lease = true;
+  permitCommit = true;
   storageBusy = true;
   assert(!stage() && error == "sd_writer_pause_timeout" && Update.aborts == 6);
   assert(Update.activations == 0 && commitChecks == 2 && Update.staging.empty());
@@ -392,16 +522,16 @@ int main(int argc, char** argv) {
   assert(!runWorkerCycle() && ETH.isDefault() && phase.load() == Phase::PermitRetry);
   assert(Update.writes == writesBeforeRejection && Update.activations == 1);
   permitCode = HTTP_CODE_OK;
-  imageCode = 409;
+  imageCode = 403;
   const uint32_t retryStarted = millis();
   assert(!runWorkerCycle() && ETH.isDefault());
-  assert(phase.load() == Phase::Waiting && millis() - retryStarted == 5000);
+  assert(phase.load() == Phase::PermitRetry && millis() - retryStarted == 5000);
   assert(Update.writes == writesBeforeRejection && Update.activations == 1);
   imageCode = HTTP_CODE_OK;
-  dropIdleAfterPause = true;
-  assert(!runWorkerCycle() && phase.load() == Phase::Waiting && !writerPaused);
+  denyAfterPause = true;
+  assert(!runWorkerCycle() && phase.load() == Phase::PermitRetry && !writerPaused);
   assert(Update.activations == 1);
-  dropIdleAfterPause = false;
+  denyAfterPause = false;
   permitCode = HTTP_CODE_OK;
   storageBusy = true;
   assert(!runWorkerCycle() && phase.load() == Phase::StorageBusy && !writerPaused);
@@ -422,8 +552,8 @@ int main(int argc, char** argv) {
   runningImage = wrongBoard;
   configuredManifestCode = 404;
   alternateManifestCode = HTTP_CODE_OK;
-  permitCode = 409;
-  assert(!runWorkerCycle() && phase.load() == Phase::Waiting);
+  permitCode = 403;
+  assert(!runWorkerCycle() && phase.load() == Phase::PermitRetry);
   permitCode = HTTP_CODE_OK;
   assert(runWorkerCycle() && servedAlternateImage && runningImage == canonical);
   assert(pdmOtaAuthorityIp() == srvr && Preferences::savedAuthority == 0);
@@ -438,8 +568,8 @@ int main(int argc, char** argv) {
   runningImage = canonical;
   serveRelease("v99.12.31.99");
   assert(requestPdmOta(alternateSrvr, ethernet));
-  permitCode = 409;
-  assert(!runWorkerCycle() && phase.load() == Phase::Waiting && Update.writes == exactImageWrites);
+  permitCode = 403;
+  assert(!runWorkerCycle() && phase.load() == Phase::PermitRetry && Update.writes == exactImageWrites);
   permitCode = HTTP_CODE_OK;
   assert(runWorkerCycle() && phase.load() == Phase::Restarting);
   assert(Update.activations == 5 && runningImage == canonical);
@@ -454,5 +584,6 @@ int main(int argc, char** argv) {
   startPdmOta();
   assert(!requestPdmOta(alternateSrvr, ethernet));
   assert(requestPdmOta(srvr, ethernet));
+  ApFixture::checkRouting();
   puts("PDM_OTA_HOST_PASS");
 }

@@ -1,3 +1,12 @@
+# v26.11.15.03 — 2026-11-15
+
+- Update the configured PDM over Ethernet independently of motion and E-stop state. Provide the same policy for optional WSI images.
+- Mirror the SRVR Monitoring layout in the PDM Web UI, with LAN Settings and Wifi Settings in the header.
+
+# v26.11.15.02 — 2026-11-15
+
+- Keep the PDM AP off the Ethernet subnet and stop Wi-Fi when AP setup fails. Recheck for overlap when Ethernet acquires a DHCP lease.
+
 # v26.11.15.01 — 2026-11-15
 
 - Show the failed destination and filesystem error in Log and allow one export to a folder the operator selects.

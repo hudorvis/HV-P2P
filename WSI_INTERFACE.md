@@ -17,4 +17,8 @@ The Olimex WSI firmware needs to provide these endpoints. The sensor model and w
 
 Use the PDM cursor semantics for `boot`, `generation`, `now_t`, `now_utc_ms`, `stored_through`, `t`, `utc_ms`, `gap`, `more`, `sd_ok` and `log_healthy`. Use `null` for unavailable live measurements and empty CSV fields for missing values. An optional `fw_version` identifies the running firmware. Use integer log durations of 1–12 hours and intervals of 250, 500, 1000 or 2000 milliseconds.
 
-This release includes the SRVR integration and a simulated WSI endpoint for tests. Olimex WSI sensor firmware is pending.
+## Firmware updates
+
+Once the WSI application is available, bundle `wsi.bin` under the optional `wsi` manifest role. The role is `WSI` and target is `OLIMEX_ESP32_POE_ISO`. Use the same release, app identity, OTA slots and SHA-256 checks as PDM. Supply `fw_check_supported: true` in the live response when the updater is running and accept `POST /api/firmware/check` on the authorised Ethernet interface. The WSI can pull from `/firmware/wsi/manifest`, `/firmware/wsi/permit` and `/firmware/wsi/image` on SRVR TCP 5760. The image and permit use the configured WSI IP independently of motion and E-stop state.
+
+This release includes the SRVR support and a simulated WSI endpoint for tests. The Olimex WSI sensor firmware is pending.

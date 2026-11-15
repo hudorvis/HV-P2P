@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pack the existing PDM web pages into the Olimex application image."""
+"""Pack the PDM dashboard into the Olimex application image."""
 import argparse
 import gzip
 import io
@@ -7,10 +7,7 @@ from pathlib import Path
 
 ASSETS = {
     "index.html": "index",
-    "index_ios.html": "indexIos",
     "pdm.js": "dashboard",
-    "chart.umd.min.js": "chart",
-    "Chart.js-LICENSE.txt": "chartLicense",
 }
 
 

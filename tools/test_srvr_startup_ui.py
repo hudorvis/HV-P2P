@@ -9,7 +9,6 @@ import sys
 from tempfile import TemporaryDirectory
 import threading
 import time
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from test_pdm_integration import PdmIntegration, SEMVER, get
@@ -105,13 +104,6 @@ def check_control_migration():
                     time.sleep(0.01)
                 assert client.legacy_connected and not client.connected and rx.empty()
                 assert client.firmware_snapshot()[:2] == ("v26.11.12.04", False)
-                stopped_bench = SimpleNamespace(
-                    smoke_test=False, calibration_open=False, joystick_calibration_open=False,
-                    battery_change_mode=False, goto_target_m=None, last_winch_output=0,
-                    requested_speed_mps=0, _w1p_status_fresh=lambda: False, _srvr_estop=True, w1p=client,
-                )
-                assert not backend.HVP2PBackend.pdm_update_idle(stopped_bench)
-
                 beacon = f"SRVR_FW|version={SEMVER}|session=test"
                 client.send(beacon)
                 client.send("VEL 1.000")
@@ -173,7 +165,9 @@ def check_retry(app, fixture, *, legacy_conflict):
                     assert len(authority.legacy_ports) == 1
                     for port in (authority.port, *authority.legacy_ports):
                         assert get(authority, "/firmware/pdm/manifest", port=port)[0] == 200
-                        assert get(authority, "/firmware/pdm/permit", port=port)[0] == 409
+                        assert get(authority, "/firmware/pdm/permit", port=port)[0] == 403
+                    authority.select_monitor_peer("pdm", "127.0.0.1")
+                    assert get(authority, "/firmware/pdm/permit")[0] == 200
                 finally:
                     authority.close()
                 return
@@ -214,7 +208,7 @@ def check_retry(app, fixture, *, legacy_conflict):
                 assert authority is not None
                 for port in (primary_port, legacy_port):
                     assert get(authority, "/firmware/ctrl/manifest", port=port)[0] == 200
-                    assert get(authority, "/firmware/pdm/permit", port=port)[0] == 409
+                    assert get(authority, "/firmware/pdm/permit", port=port)[0] == 403
             finally:
                 if authority is not None:
                     authority.close()

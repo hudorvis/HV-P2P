@@ -102,7 +102,7 @@ class Device:
                 data["fw_authority_port"] = self.fw_authority_port
             if self.role == "pdm" and self.fw_authority_ip:
                 data["fw_authority_ip"] = self.fw_authority_ip
-            if self.role == "pdm" and self.fw_check_supported:
+            if self.fw_check_supported:
                 data["fw_check_supported"] = True
             data.update(zip(self.keys, latest[2:]))
             data.update({f"offset{i}": value for i, value in enumerate(self.other_offsets, 1)})
@@ -315,7 +315,7 @@ class PdmIntegration(unittest.TestCase):
                 (self.bundle / "manifest.json").write_text(json.dumps(self.manifest))
                 bundle = FirmwareBundle(self.bundle, SEMVER)
                 self.assertEqual(set(bundle.images), {"ctrl", "w1p"})
-                self.assertEqual(bool(bundle.pdm_error), problem != "absent")
+                self.assertEqual("pdm" in bundle.monitor_errors, problem != "absent")
                 server = self.server()
                 server.w1p_gate.select_controller("127.0.0.1")
                 server.w1p_gate.observe("127.0.0.1", server.w1p_gate._clock() + 3.5)
@@ -324,7 +324,7 @@ class PdmIntegration(unittest.TestCase):
                 self.assertEqual(get(server, "/firmware/w1p/image"), (200, self.apps[1]))
                 server.close()
 
-    def test_live_idle_lease_and_independent_edgebox_routes(self):
+    def test_monitor_routes_are_independent_of_the_edgebox_gate(self):
         self.assertEqual((AUTHORITY_PORT, PREVIOUS_NETWORK_PORT, LEGACY_AUTHORITY_PORT), (5760, 5000, 5088))
         for pattern in ("HV_P2P_CTRL_EDGEBOX_*", "HV_P2P_W1P_EDGEBOX_*", "HV_P2P_PDM_*"):
             header = next(ROOT.glob(pattern)) / "HV_P2P_SRVR_Authority_OTA.h"
@@ -337,52 +337,58 @@ class PdmIntegration(unittest.TestCase):
         self.assertIn('pdmOtaAuthorityPort() { return HVP2PAuthorityOTA::AUTHORITY_PORT; }',
                       (PDM / "pdm_ota.cpp").read_text())
         server = self.server(legacy_ports=(0, 0))
-        now = 0.0
-        window = server.pdm_window
-        window._clock = lambda: now
-        server.w1p_gate._clock = lambda: now
         server.w1p_gate.select_controller("127.0.0.1")
         path = "/firmware/pdm"
         status, body = get(server, path + "/manifest")
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["target"], PDM_TARGET)
         self.assertEqual(json.loads(body)["version"], SEMVER)
-        self.assertEqual(server.pdm_activity("127.0.0.1"), {"manifest": (server.port, 200)})
+        self.assertEqual(server.monitor_activity("pdm", "127.0.0.1"), {"manifest": (server.port, 200)})
         self.assertEqual(len(server.legacy_ports), 2)
-        for port in server.legacy_ports:
+        for port in (server.port, *server.legacy_ports):
             self.assertEqual(get(server, path + "/manifest", port=port), (status, body))
-            self.assertEqual(server.pdm_activity("127.0.0.1")["manifest"], (port, 200))
-            self.assertEqual(get(server, path + "/image", port=port)[0], 409)
-        self.assertEqual(get(server, path + "/manifest", source="127.0.0.2")[0], 200)
-        self.assertEqual(server.pdm_activity("127.0.0.2"), {"manifest": (server.port, 200)})
-        self.assertEqual(server.pdm_activity("127.0.0.1")["manifest"], (server.legacy_ports[-1], 200))
-        self.assertEqual(get(server, path + "/image")[0], 409)
-        for tick in range(12):
-            now = tick * 0.25
-            window.observe("127.0.0.1", True)
-        self.assertEqual(get(server, path + "/permit")[0], 409)
-        self.assertEqual(server.pdm_activity("127.0.0.1")["permit"], (server.port, 409))
-        now = 3.0
-        window.observe("127.0.0.1", True)
+            self.assertEqual(get(server, path + "/image", port=port)[0], 403)
+
+        server.select_monitor_peer("pdm", "127.0.0.1")
         self.assertEqual(get(server, path + "/permit"), (200, f"{SEMVER} {sha256(self.apps[2]).hexdigest()}\n".encode()))
-        self.assertEqual(server.pdm_activity("127.0.0.1")["permit"], (server.port, 200))
-        self.assertEqual(get(server, path + "/image"), (200, self.apps[2]))
-        self.assertEqual(next(iter(server.pdm_activity("127.0.0.1"))), "image")
-        self.assertEqual(server.pdm_activity("127.0.0.1")["image"], (server.port, 200))
-        self.assertEqual(get(server, "/firmware/w1p/image")[0], 409)
-        for port in server.legacy_ports:
+        for port in (server.port, *server.legacy_ports):
             self.assertEqual(get(server, path + "/image", port=port), (200, self.apps[2]))
-        self.assertEqual(get(server, path + "/image", source="127.0.0.2")[0], 409)
-        now += 0.5
-        self.assertEqual(get(server, path + "/permit")[0], 409)
-        for tick in range(13):
-            now = 4.0 + tick * 0.25
-            window.observe("127.0.0.1", True)
-        self.assertEqual(get(server, path + "/permit")[0], 200)
-        window.observe("127.0.0.1", False)
-        self.assertEqual(get(server, path + "/permit")[0], 409)
-        server.w1p_gate.observe("127.0.0.1", now + 3.5)
+            self.assertEqual(get(server, path + "/image", source="127.0.0.2", port=port)[0], 403)
+        self.assertEqual(server.monitor_activity("pdm", "127.0.0.2")["image"], (server.legacy_ports[-1], 403))
+        self.assertEqual(get(server, "/firmware/w1p/image")[0], 409)
+        server.select_monitor_peer("pdm", "127.0.0.2")
+        self.assertEqual(get(server, path + "/permit")[0], 403)
+        self.assertEqual(get(server, path + "/image", source="127.0.0.2"), (200, self.apps[2]))
+        server.w1p_gate.observe("127.0.0.1", server.w1p_gate._clock() + 3.5)
         self.assertEqual(get(server, "/firmware/w1p/image"), (200, self.apps[1]))
+
+    def test_optional_wsi_image_has_its_own_verified_update_route(self):
+        metadata = self.bundle / "manifest.json"
+        doc = json.loads(metadata.read_text())
+        image = fixture_image("WSI", PDM_TARGET)
+        (self.bundle / "wsi.bin").write_bytes(image)
+        doc["images"]["wsi"] = dict(file="wsi.bin", role="WSI", target=PDM_TARGET, version=SEMVER,
+                                     size=len(image), sha256=sha256(image).hexdigest())
+        metadata.write_text(json.dumps(doc))
+        server = self.server()
+        server.select_monitor_peer("pdm", "127.0.0.1")
+        server.select_monitor_peer("wsi", "127.0.0.2")
+        status, body = get(server, "/firmware/wsi/manifest", source="127.0.0.2")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["role"], "WSI")
+        self.assertEqual(get(server, "/firmware/wsi/permit")[0], 403)
+        self.assertEqual(get(server, "/firmware/wsi/permit", source="127.0.0.2"),
+                         (200, f"{SEMVER} {sha256(image).hexdigest()}\n".encode()))
+        self.assertEqual(get(server, "/firmware/wsi/image", source="127.0.0.2"), (200, image))
+        self.assertEqual(get(server, "/firmware/pdm/image", source="127.0.0.2")[0], 403)
+        self.assertEqual(get(server, "/firmware/w1p/image")[0], 409)
+
+        doc["images"]["wsi"]["target"] = "EDGEBOX_ESP100"
+        metadata.write_text(json.dumps(doc))
+        bad = self.server()
+        self.assertIn("wsi", bad.bundle.monitor_errors)
+        self.assertEqual(get(bad, "/firmware/wsi/manifest")[0], 404)
+        self.assertEqual(get(bad, "/firmware/pdm/manifest")[0], 200)
 
     def test_history_load_during_logging_and_reboot(self):
         device = Device()
@@ -466,6 +472,22 @@ class PdmIntegration(unittest.TestCase):
             self.assertIsNotNone(match, symbol)
             data = bytes(int(value, 16) for value in re.findall(r"0x([0-9a-f]{2})", match[1]))
             self.assertEqual(gzip.decompress(data), (PDM / "web" / filename).read_bytes())
+
+    def test_pdm_dashboard_uses_the_monitoring_palette_and_button_order(self):
+        dashboard = (PDM / "web" / "index.html").read_text()
+        actions = re.search(r'<div class="status-actions">(.*?)</div>', dashboard, re.S)
+        self.assertIsNotNone(actions)
+        self.assertEqual(re.findall(r'id="(btn-[a-z-]+)"', actions[1]),
+                         ["btn-lan-settings", "btn-wifi-settings", "btn-open-web", "btn-log-settings"])
+        qml = ROOT / f"SRVR_GitHub_v{VER}" / "qml"
+        panel = (qml / "components" / "Panel.qml").read_text()
+        main = (qml / "Main.qml").read_text()
+        for name, qml_text, property_name in (("panel", panel, "color"), ("border", panel, "border.color"),
+                                              ("background", main, "bg"), ("cyan", main, "blue")):
+            colour = re.search(rf'{re.escape(property_name)}: "(#[a-f0-9]{{6}})"', qml_text)[1]
+            self.assertIn(f"--{name}: {colour};", dashboard)
+        app = (PDM / "pdm_app.cpp").read_text()
+        self.assertIn('server.on("/index_ios.html", HTTP_GET, [] { serveAsset(PdmWeb::index,', app)
 
 
 if __name__ == "__main__":

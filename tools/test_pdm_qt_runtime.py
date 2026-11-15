@@ -22,7 +22,6 @@ from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickWindow
 from PySide6.QtTest import QTest
 from backend import HVP2PBackend
-from firmware_authority import PdmIdleWindow
 from pdm_monitor import PdmMonitor, WsiMonitor
 
 SRVR = Path(__file__).resolve().parents[1] / f"SRVR_GitHub_{SEMVER}"
@@ -236,14 +235,18 @@ def run(directory, server, wind_server):
     engine = QQmlApplicationEngine()
     settings = directory / "pdm.ini"
     activity = {}
-    next_release = SEMVER.rsplit(".", 1)[0] + ".02"
+    selected_peers = {}
+    release_date, revision = SEMVER.rsplit(".", 1)
+    next_release = f"{release_date}.{int(revision) + 1:02d}"
     authority = SimpleNamespace(port=5760, legacy_ports=(5000,), bundle=SimpleNamespace(release=next_release),
-                                pdm_activity=lambda peer: activity if peer == server.device.address else {})
-    monitor = PdmMonitor(settings, PdmIdleWindow(), lambda: False, "", authority=authority, log=backend._log)
+                                select_monitor_peer=selected_peers.__setitem__,
+                                monitor_activity=lambda role, peer: activity if role == "pdm" and peer == server.device.address else {})
+    monitor = PdmMonitor(settings, authority=authority, log=backend._log)
     monitor.setParent(engine)
-    wind = WsiMonitor(directory / "wsi.ini")
+    wind = WsiMonitor(directory / "wsi.ini", authority=authority, log=backend._log)
     wind.setParent(engine)
     assert wind.saveAddress(wind_server.device.address) == ""
+    assert selected_peers == {"pdm": server.device.address, "wsi": wind_server.device.address}
     context = engine.rootContext()
     context.setContextProperty("backend", backend)
     context.setContextProperty("powerMonitor", monitor)
@@ -253,7 +256,9 @@ def run(directory, server, wind_server):
         engine.load(QUrl("qrc:/qml/Main.qml"))
         root = engine.rootObjects()[0]
         root.resize(1280, 720)
-        wait_for(app, lambda: server.device.firmware_checks == [{}] and monitor.summary["version"] == SEMVER)
+        wait_for(app, lambda: server.device.firmware_checks == [{}] and monitor.summary["version"] == SEMVER
+                 and wind_server.device.firmware_checks == [{}])
+        assert not backend._srvr_estop
         assert root.property("page") == 0 and monitor.summary["version"] == SEMVER
         assert monitor.graphs == [[], [], [], []] and not server.device.clock_writes and not server.device.cursors
         server.device.boot, server.device.fw_version = "updatedboot", next_release
@@ -311,10 +316,12 @@ def run(directory, server, wind_server):
         assert not any(text and ("firmware request from this PDM" in str(text) or "For firmware updates" in str(text))
                        for text in visible_text(root))
         QTest.mouseMove(root, QPoint(2, 2))
-        activity["permit"] = (5760, 409)
-        wait_for(app, lambda: "holding the PDM update for verified safe idle" in ota_log())
+        server.device.fw_update = "Waiting for idle"  # Migration from an installed PDM.
+        activity["permit"] = (5760, 403)
+        wait_for(app, lambda: "Check the configured PDM Ethernet address" in ota_log())
+        wait_for(app, lambda: "Checking for update" in firmware.property("text"))
         activity["permit"] = (5760, 200)
-        wait_for(app, lambda: "Safe-idle permit granted" in ota_log())
+        wait_for(app, lambda: "Firmware permit granted" in ota_log())
         activity.clear()
         activity["image"] = (5760, 200)
         wait_for(app, lambda: "PDM requested the firmware image" in ota_log())
@@ -401,6 +408,7 @@ def run(directory, server, wind_server):
     finally:
         monitor.close()
         wind.close()
+        assert selected_peers == {"pdm": "", "wsi": ""}
         backend.shutdown()
         del engine
     relevant = [message for message in messages if any(name in message for name in ("PowerPage", "PowerTrace", "LogPage"))]
@@ -423,6 +431,7 @@ if __name__ == "__main__":
             server.device.add(10500 + 500 * i, None if 12 <= i <= 17 else 47.5 + (i % 9) * 0.03)
         server.device.durable = server.device.now - 500
         wind_server.device = WindDevice()
+        wind_server.device.fw_check_supported = True
         devices = {item.device.address: item for item in (server, wind_server)}
 
         def connect(address, port, timeout):
