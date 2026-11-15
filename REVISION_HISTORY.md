@@ -1,3 +1,7 @@
+# v26.11.15.01 — 2026-11-15
+
+- Show the failed destination and filesystem error in Log and allow one export to a folder the operator selects.
+
 # v26.11.14.01 — 2026-11-14
 
 - Request PDM firmware checks in the background and repeat the check after the PDM reboots. Allow a PDM using the factory address to check a connected SRVR on the local Ethernet subnet.

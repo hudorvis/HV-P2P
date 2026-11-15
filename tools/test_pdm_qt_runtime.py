@@ -236,7 +236,7 @@ def run(directory, server, wind_server):
     engine = QQmlApplicationEngine()
     settings = directory / "pdm.ini"
     activity = {}
-    next_release = "v26.11.14.02"
+    next_release = SEMVER.rsplit(".", 1)[0] + ".02"
     authority = SimpleNamespace(port=5760, legacy_ports=(5000,), bundle=SimpleNamespace(release=next_release),
                                 pdm_activity=lambda peer: activity if peer == server.device.address else {})
     monitor = PdmMonitor(settings, PdmIdleWindow(), lambda: False, "", authority=authority, log=backend._log)
@@ -370,13 +370,32 @@ def run(directory, server, wind_server):
         root.setProperty("page", 3)
         app.processEvents()
         save_button = scene_item(root, "saveSrvrLogButton")
-        status = scene_item(root, "srvrLogSaveStatus")
+        failure = root.findChild(QObject, "srvrLogSaveFailure")
+        detail = root.findChild(QObject, "srvrLogSaveDetail")
+        choose_folder = root.findChild(QObject, "chooseSrvrLogFolder")
+        picker = root.findChild(QObject, "srvrLogDestination")
         with patch.object(backend, "_log_export_dir", return_value=directory / "missing"):
             assert QMetaObject.invokeMethod(save_button, "clicked")
-            assert status.property("visible") and status.property("text") == "Could not save beside SRVR"
+            wait_for(app, lambda: failure.property("opened"))
+            assert str(directory / "missing") in detail.property("text")
+            assert "No such file or directory" in detail.property("text")
+            assert not list(directory.rglob("HV_P2P_SRVR_Log_*.txt"))
+            assert QMetaObject.invokeMethod(choose_folder, "clicked")
+            wait_for(app, lambda: picker.property("visible"))
+            assert QMetaObject.invokeMethod(picker, "reject")
+            assert not list(directory.rglob("HV_P2P_SRVR_Log_*.txt"))
+
+            assert QMetaObject.invokeMethod(save_button, "clicked")
+            wait_for(app, lambda: failure.property("opened"))
+            assert QMetaObject.invokeMethod(choose_folder, "clicked")
+            chosen = directory / "Selected Logs"
+            chosen.mkdir()
+            assert picker.setProperty("selectedFolder", QUrl.fromLocalFile(str(chosen)))
+            assert QMetaObject.invokeMethod(picker, "accept")
+            assert len(list(chosen.glob("HV_P2P_SRVR_Log_*.txt"))) == 1
         with patch.object(backend, "_log_export_dir", return_value=directory):
             assert QMetaObject.invokeMethod(save_button, "clicked")
-            assert not status.property("visible")
+            assert not failure.property("visible") and not picker.property("visible")
             assert len(list(directory.glob("HV_P2P_SRVR_Log_*.txt"))) == 1
         root.setProperty("page", 0)
     finally:
@@ -384,7 +403,7 @@ def run(directory, server, wind_server):
         wind.close()
         backend.shutdown()
         del engine
-    relevant = [message for message in messages if "PowerPage" in message or "PowerTrace" in message]
+    relevant = [message for message in messages if any(name in message for name in ("PowerPage", "PowerTrace", "LogPage"))]
     assert not relevant, relevant[:8]
 
 

@@ -1,0 +1,29 @@
+HV P2P SYS v26.11.15.01 source verification
+Baseline HV-P2P-v26.11.14.01-GitHub-Complete.zip
+
+PASS  All 70 source regression scripts with PySide6 enabled.
+PASS  Qt HTTP fixture requests a firmware check with Monitoring closed
+      and checks again after the PDM changes boot ID and reports the new
+      release. Background checks request no sample backlog or SD history.
+PASS  Compiled PDM OTA worker fixture covers a newer SRVR release, an
+      expired authority offer, saved authority persistence, Ethernet-only
+      checks, the verified idle permit, image activation and no downgrade.
+      It also covers wrong target, interruption, a lost commit permit,
+      an unavailable SD writer and exact-image checks without flash writes.
+PASS  HTTP fixture covers update gating by PDM IP and safe idle, the
+      legacy update ports, and independent CTRL and W1P image routes.
+PASS  Offscreen SRVR Monitoring, history during logging, Log save beside
+      the app, repeated saves, filesystem errors and OTA diagnostics.
+PASS  Log write failure dialog reports the attempted folder and OS error.
+      Fixtures cover the macOS read-only launch path and the folder picker
+      accepting or cancelling a retry, including the next normal save.
+PASS  Source SRVR offscreen smoke with a fixture firmware bundle.
+      QML lint with the project's warning settings, PDM JavaScript syntax
+      and GitHub workflow YAML parsing.
+PASS  Source ZIP integrity and per-file SHA-256 checks.
+
+Pending  Native GitHub ESP32 and packaged desktop builds.
+Pending  macOS log export from an actual Google Drive folder and a
+         Gatekeeper-translocated launch.
+Pending  Physical Olimex update, reboot and verification of the exact
+         network or device condition affecting the installed v26.11.12.07.
