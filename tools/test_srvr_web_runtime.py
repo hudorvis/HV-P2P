@@ -157,21 +157,42 @@ def exercise(app, window, web, authority, backend):
     assert composed.pixelColor(60, 28) == QColor("#ff0000")
     assert composed.pixelColor(62, 28) == QColor("#28b6d5")
 
-    # A bounded wait on the same frame and a subsequent request reuse TCP.
+    # A bounded wait and subsequent frame requests reuse the same TCP socket.
     connection = HTTPConnection("127.0.0.1", port, timeout=2)
     try:
+        seen = int(headers["X-SRVR-Frame"])
         frame_headers = {"X-SRVR-Viewer": first, "X-SRVR-Foreground": "1",
-                         "X-SRVR-Frame": headers["X-SRVR-Frame"], "X-SRVR-Next-Frame": "1"}
+                         "X-SRVR-Frame": str(seen), "X-SRVR-Next-Frame": "1"}
         connection.request("GET", "/srvr-web/frame", headers=frame_headers)
         held = connection.getresponse()
         assert held.status == 204 and held.getheader("X-SRVR-Next-Frame") == "1"
-        held.read()
+        assert held.read() == b""
         socket_used = connection.sock
+        assert socket_used is not None
         del frame_headers["X-SRVR-Frame"]
-        connection.request("GET", "/srvr-web/frame", headers=frame_headers)
-        available = connection.getresponse()
-        assert available.status == 200 and available.read() == png
-        assert socket_used is not None and connection.sock is socket_used
+        del frame_headers["X-SRVR-Next-Frame"]
+
+        def frame_available():
+            connection.request("GET", "/srvr-web/frame", headers=frame_headers)
+            available = connection.getresponse()
+            payload = available.read()
+            assert connection.sock is socket_used
+            if available.status == 204:
+                assert available.getheader("X-SRVR-Wait") == "frame" and payload == b""
+                return False
+            assert available.status == 200, (available.status, available.headers)
+            assert available.getheader("Content-Type") == "image/png"
+            number = int(available.getheader("X-SRVR-Frame"))
+            assert number >= seen
+            if number == seen:
+                assert payload == png
+            frame = QImage.fromData(payload)
+            assert (frame.width(), frame.height()) == sizes[first]
+            return True
+
+        # The blocking long poll can outlive the cached PNG on a slow runner.
+        # Process Qt events between polls so it can render a replacement.
+        wait_for(app, frame_available)
     finally:
         connection.close()
 

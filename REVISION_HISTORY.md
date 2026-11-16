@@ -1,3 +1,7 @@
+# v26.11.16.05 — 2026-11-16
+
+- Fix the SRVR browser keep-alive test used by GitHub Actions. It now allows Qt to render a fresh PNG when the original expires and verifies that the response uses the original TCP connection.
+
 # v26.11.16.04 — 2026-11-16
 
 - Latch accepted CTRL-ES and W1P-ES assertions through the SRVR motion tick so a short pulse cancels motion and requires joystick-neutral re-arm. Report DI0 transitions from W1P immediately after its local safety handling.

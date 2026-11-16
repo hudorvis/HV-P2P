@@ -1,0 +1,33 @@
+HV P2P SYS v26.11.16.05 build verification
+Baseline HV-P2P-v26.11.16.04-GitHub-Complete.zip
+
+Source and runtime
+PASS  All 71 source checks with PySide6 6.11.1.
+PASS  Reproduced the Intel job's assertion in v26.11.16.04 by allowing the
+      original live PNG to expire while the fixture was making requests.
+PASS  Three delayed SRVR browser runs, plus an instrumented run that
+      observed HTTP 204 for the expired frame before a valid PNG arrived
+      over the original TCP socket.
+PASS  SRVR browser regression with the Qt host scaled to 2x.
+PASS  QML lint at the project threshold, both web scripts parsed, and
+      isolated SRVR startup with the matched native firmware bundle.
+
+Native firmware
+PASS  Arduino CLI 1.5.1, esp32:esp32@3.3.8 and the pinned libraries.
+  CTRL     1,511,152 bytes
+  CTRL_TS    790,192 bytes
+  PDM      1,215,568 bytes
+  W1P        706,032 bytes
+      Verified role, version, board identity, checksums, the CTRL-TS image
+      carried by CTRL, and the PDM partition table.
+
+GitHub Actions
+PASS  Workflow validation with actionlint and parsing of inline scripts.
+      Ran the staged SRVR preflight locally. Verified combined-release
+      packaging with the native firmware and desktop archive fixtures.
+PENDING  Hosted GitHub Actions builds and frozen application verification
+         on macOS Intel, macOS Apple Silicon and Windows x64.
+
+Physical hardware
+PENDING  On-equipment verification from
+         NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.11.16.05.md.
