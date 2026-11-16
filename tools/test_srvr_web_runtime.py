@@ -161,7 +161,7 @@ def exercise(app, window, web, authority, backend):
     connection = HTTPConnection("127.0.0.1", port, timeout=2)
     try:
         frame_headers = {"X-SRVR-Viewer": first, "X-SRVR-Foreground": "1",
-                         "X-SRVR-Frame": str(initial), "X-SRVR-Next-Frame": "1"}
+                         "X-SRVR-Frame": headers["X-SRVR-Frame"], "X-SRVR-Next-Frame": "1"}
         connection.request("GET", "/srvr-web/frame", headers=frame_headers)
         held = connection.getresponse()
         assert held.status == 204 and held.getheader("X-SRVR-Next-Frame") == "1"
@@ -229,6 +229,18 @@ def exercise(app, window, web, authority, backend):
     wait_for(app, lambda: page.property("subtab") == 2)
     assert scene_item(window, "monitorLogPage").property("visible")
     assert not page.property("historyActive")
+    log = scene_item(window, "srvrEventLog")
+    backend._log_link_batch(["[SRVR] log history fixture"] * 1200)
+    wait_for(app, lambda: log.property("count") == 1200 and log.property("atYEnd"))
+    log.setProperty("contentY", 0.0)
+    wait_for(app, lambda: not log.property("atYEnd"))
+    desktop_click("srvrSafetyBanner")
+    wait_for(app, lambda: log.property("atYEnd"))
+    assert log.property("count") == 1200 and backend._srvr_estop
+    assert backend.filteredLogEntries("Safety", "Fault", "E-Stop")[-1]["source"] == "SRVR"
+    desktop_click("srvrSafetyBanner")
+    assert not backend._srvr_estop
+    assert backend.filteredLogEntries("Safety", "Info", "E-Stop")[-1]["source"] == "SRVR"
     frame = fresh_frame(frame, second)
     assert click("srvrLogSearch", frame, second) == 204
     search = scene_item(browser(second), "srvrLogSearch")

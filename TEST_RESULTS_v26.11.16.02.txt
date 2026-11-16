@@ -1,0 +1,34 @@
+HV P2P SYS v26.11.16.02 verification
+Baseline HV-P2P-v26.11.16.01-GitHub-Complete.zip
+
+PASS  All 71 source checks with PySide6 6.11.1, including the motion safety,
+      OTA, PDM/WSI monitoring and SRVR browser protocol regression suites.
+PASS  Validated CTRL and W1P E-Stop input transitions, the SRVR software latch,
+      the Safety filter, duplicate suppression and auto-scroll at 1,200 rows.
+PASS  Firmware phase changes, 10% milestones and continued use of live
+      reported percentages. Expected W1P host-unreachable retries are suppressed.
+PASS  LVGL 8.3.11 host render at 800 × 480. Verified matching heading icons
+      and speed columns, the full Battery Change Mode label, and centred
+      distance pairs after sign and digit-count changes.
+PASS  QML lint at the repository threshold, SRVR and PDM JavaScript syntax,
+      and multi-size PNG/ICO icon assets.
+PASS  Independent browser viewports and lossless Qt/HTTP frames with simulated
+      browser DPR 1x and 2x, including the same fixture with the Qt host at 2x.
+PASS  Isolated SRVR source startup, compiled QRC and verified native firmware bundle.
+
+Local native ESP32 build
+PASS  Arduino CLI 1.5.1 with esp32:esp32@3.3.8 and pinned libraries.
+  CTRL     1,511,056 bytes
+  CTRL_TS    790,128 bytes
+  PDM      1,215,520 bytes
+  W1P        730,992 bytes
+      Matched role, target and release identity and image hashes. Verified
+      the staged CTRL-TS carrier and the PDM bootstrap partition table.
+
+GitHub Actions
+      Run the complete build for the ESP32 and frozen macOS Intel,
+      macOS Apple Silicon and Windows x64 release artifacts.
+
+Physical verification
+      Use NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.11.16.02.md for the
+      E-Stop, on-device screen, installed app and equipment-LAN checks.

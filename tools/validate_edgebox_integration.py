@@ -4,14 +4,14 @@ from pathlib import Path
 import hashlib, re, struct, sys
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.11.16.01'
+VER = '26.11.16.02'
 CTRL = ROOT / f'HV_P2P_CTRL_EDGEBOX_v{VER}' / f'HV_P2P_CTRL_EDGEBOX_v{VER}.ino'
 W1P = ROOT / f'HV_P2P_W1P_EDGEBOX_v{VER}' / f'HV_P2P_W1P_EDGEBOX_v{VER}.ino'
 TS = ROOT / f'HV_P2P_CTRL_TS_v{VER}' / f'HV_P2P_CTRL_TS_v{VER}.ino'
 FRAME_CTRL = ROOT / f'HV_P2P_CTRL_EDGEBOX_v{VER}' / 'HV_P2P_RS485_Frame.h'
 FRAME_TS = ROOT / f'HV_P2P_CTRL_TS_v{VER}' / 'HV_P2P_RS485_Frame.h'
 IMG_HDR = ROOT / f'HV_P2P_CTRL_EDGEBOX_v{VER}' / 'HV_P2P_CTRL_TS_Firmware_Image.h'
-SRVR_DIR = ROOT / 'SRVR_GitHub_v26.11.16.01'
+SRVR_DIR = ROOT / 'SRVR_GitHub_v26.11.16.02'
 SRVR = SRVR_DIR / 'backend.py'
 MAIN = SRVR_DIR / 'main.py'
 SETUP_QML = SRVR_DIR / 'qml' / 'pages' / 'SetupPage.qml'
@@ -236,7 +236,7 @@ expected_w1p={
 'servicePeerTimeout':'81d5f57232771f48dbe5edd46161f75a8f5adf2aee370e9bc6180d64d61a48ff',
 'preserveDisplayedPositionForMotorDirectionChange':'43dc038634f473df40ac2d6ca8e3d2f69be093170c20fcd71af652da695914e6',
 }
-for fn,h in expected_w1p.items(): must(normalized_func_hash(w,fn)==h, f'W1P reviewed v26.11.16.01 safety-critical logic preserved: {fn}')
+for fn,h in expected_w1p.items(): must(normalized_func_hash(w,fn)==h, f'W1P reviewed v26.11.16.02 safety-critical logic preserved: {fn}')
 
 expected_w1p_v07_safety={
 'driveAutoEnableReady':'ce2cd73df1636f1ba2dd7ba23da9eca4f983ba3ee6a179dd9b5398ad831dc78f',
@@ -246,7 +246,7 @@ expected_w1p_v07_safety={
 'recordDrivePositionSample':'3b67f3742005a459caff07f45cd41dba581c28da1ef8be43d757014b4cc44bea',
 'hvPrepareSafeServiceState':'80e78d9f3c6141761822da7fdbe172177e6ac99bad445cc8f3dc71edc247b777',
 }
-for fn,h in expected_w1p_v07_safety.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.11.16.01 reviewed safety extension hash locked: {fn}')
+for fn,h in expected_w1p_v07_safety.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.11.16.02 reviewed safety extension hash locked: {fn}')
 
 # v26.10.19.01 direct EdgeBox DO0 brake switching. These functions are kept
 # separately hash-locked because they are the only new physical brake authority.
@@ -257,7 +257,7 @@ expected_w1p_edgebox_brake={
 'serviceLeadshineBrakeTransitionStatus':'dad21a5c702d092e57324b24525bbcaa2fa1d6cd1fe6effcc91d969a80a9d53b',
 'serviceEdgeboxBrakeOutput':'d5df450c7d6bed5681096f4730ffe044f674498ddb13ccfec3ebd1c70585116d',
 }
-for fn,h in expected_w1p_edgebox_brake.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.11.16.01 reviewed EdgeBox brake logic hash locked: {fn}')
+for fn,h in expected_w1p_edgebox_brake.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.11.16.02 reviewed EdgeBox brake logic hash locked: {fn}')
 
 # Local W1P E-stop is intentionally migrated from DI0/24 V to AI0/5 V in
 # v26.10.19.01. Hash-lock the complete ADC acquisition + fail-unsafe decision
@@ -269,7 +269,7 @@ expected_w1p_estop={
 'w1pSgmReadConversion':'c0e9172471166ff01727bdcce358f1b35648acd2db094e5e53a5fd88b3265602',
 'updateLocalInputs':'c41b07af290d5d9e080c3e3f724665f626c558fc85de76085f7c7944edd0587f',
 }
-for fn,h in expected_w1p_estop.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.11.16.01 local AI0 E-stop path hash locked: {fn}')
+for fn,h in expected_w1p_estop.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.11.16.02 local AI0 E-stop path hash locked: {fn}')
 
 # Leadshine contract.
 for tok in ['RS485_BAUD = 115200','DRIVE_MODBUS_ID = 1','SERIAL_8N1','MODBUS_REPLY_TIMEOUT_MS = 50','MODBUS_READ_RETRIES = 3','MODBUS_INTERFRAME_GAP_US = 2000','W1P_PEER_TIMEOUT_MS = 750']:
@@ -359,7 +359,8 @@ must('_goto_approach_dir' in s and '_goto_velocity_for_distance' in s, 'SRVR Got
 
 
 # SRVR/CTRL-TS interface-alignment and Free-D diagram regression guards.
-must('text:"Link"' in q and 'text:"RS485"' in q and 'text:"E-Stop"' in q and 'text:"Firmware"' in q, 'Setup uses locked generic CTRL/W1P status row labels')
+must(all(f'text:"{label}"' in q for label in ('Link', 'RS485', 'CTRL-ES', 'W1P-ES', 'Firmware', 'CTRL-JS Direction')),
+     'Setup shows CTRL and W1P status with named E-Stop and joystick inputs')
 must('W1P-TS Link' not in q, 'Setup does not expose the excluded W1P-TS')
 must('CTRL_HMI_ARCH "EdgeBox ESP-100' in c and 'EdgeBox-ESP-100' in w, 'CTRL and W1P source identify the EdgeBox-ESP-100 hardware baseline')
 must('▣  CTRL-TS' in q and 'CTRL-TS / FIRMWARE' not in q and 'ctrlTsFirmwareDisplay' in q and 'Detected' not in q[q.index('▣  CTRL-TS'):q.index('Panel {', q.index('▣  CTRL-TS')+1)] and 'Required' not in q[q.index('▣  CTRL-TS'):q.index('Panel {', q.index('▣  CTRL-TS')+1)] and 'W1P-TS AUX ASSIGN' not in q, 'Setup preserves approved CTRL-TS panel with one Firmware value field')
@@ -407,7 +408,9 @@ must('if(pct == g_fw_last_display_pct' in t and 'return;' in t[t.index('if(pct =
 must('g_status_text = "E-Stop | " + src;' in t and 'detail.startsWith("E-Stop / ")' in t and 'while(detail.startsWith("/"))' in t, 'CTRL-TS E-stop banner reconstructs delimiter-safe source text without slash typo')
 for glyph in ('◇','⚙','◴','⌖'):
     must(glyph not in t, f'CTRL-TS compiled-font UI contains no unsupported glyph {glyph!r}')
-must('const char *aux_heads[AUX_COUNT]={"AUX 1","AUX 2","AUX 3","AUX 4","AUX 5"}' in t and 'make_label(drive,"DRIVE"' in t and 'make_label(speed,"SPEED"' in t and 'make_label(position,"POSITION"' in t, 'CTRL-TS AUX/Drive/Speed/Position headings are plain supported text')
+must('const char *aux_heads[AUX_COUNT]={"AUX 1","AUX 2","AUX 3","AUX 4","AUX 5"}' in t
+     and 'make_label(drive, "DRIVE"' in t and 'make_label(speed, "SPEED"' in t and 'make_label(position, "POSITION"' in t,
+     'CTRL-TS AUX/Drive/Speed/Position heading labels use supported text')
 must('static void service_runtime_connection_screen()' in t and 'const char *msg = ctrl_link_alive ? "Waiting for SRVR" : "Waiting for CTRL";' in t and 'lv_scr_load(boot_scr);' in t and 'lv_scr_load(g_main_scr);' in t, 'CTRL-TS returns to the resident startup splash on runtime SRVR/CTRL loss')
 must(q.index('"Joystick Calibration"') < q.index('"Limit Calibration"') < q.index('"Winch Calibration"'), 'CTRL AUX Assign calibration actions are exposed in alphabetical order')
 aux_handler=s[s.index('def _handle_aux_action'):s.index('def _display_field', s.index('def _handle_aux_action'))]
@@ -428,7 +431,7 @@ must('text:backend.bannerText' in main_qml and '♢' not in main_qml and '◇' n
 must('def _legacy_firmware_push_worker' in s and 'HTTPConnection' in s and '"/update/app"' in s and 'multipart/form-data' in s and 'daemon=True' in s and 'def _firmware_version_is_older' in s, 'SRVR has asynchronous backwards-compatible OTA push for older pre-beacon .01 field nodes without downgrading newer firmware')
 must('ctrl_present = bool(self._ctrl_connected() or self._ctrl_authority_fresh())' in s, 'legacy CTRL firmware bridge accepts either fresh control telemetry or fresh authority/HMI status presence')
 must('firmware_bundle=authority.bundle' in m, 'SRVR backend receives the already validated immutable firmware bundle for legacy OTA bridging')
-must('ctrl_version=v26.11.16.01' in c and 'FW=" + String(FW_VERSION)' in w, 'CTRL and W1P publish actual firmware identity for Setup')
+must('ctrl_version=v26.11.16.02' in c and 'FW=" + String(FW_VERSION)' in w, 'CTRL and W1P publish actual firmware identity for Setup')
 must('ctrlFirmwareVersion' in s and 'w1pFirmwareVersion' in s and 'ctrlEStopActive' in s and 'w1pEStopActive' in s, 'SRVR exposes locked CTRL/W1P Setup diagnostics')
 must('text:"Link"' in q and 'backend.ctrlTsRs485Active?"Active":"Disconnected"' in q, 'CTRL-TS Link uses physical RS485 Active/Disconnected semantics')
 must('anchors.rightMargin:root.f(15)' in q and 'anchors.leftMargin:root.f(15)' in q and q.count('width:(parent.width-root.f(1))/2') >= 2, 'Motion Profiles centre divider has even Mode 1/Mode 2 spacing')

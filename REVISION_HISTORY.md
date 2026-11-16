@@ -1,3 +1,9 @@
+# v26.11.16.02 — 2026-11-16
+
+- Log E-Stop activation and clearance from CTRL-ES, W1P-ES and SRVR. Identify the joystick as CTRL-JS in diagnostics.
+- Show firmware stages, results and transfer progress in 10% steps. Follow the latest Log entry when the history buffer is full.
+- Update the macOS and Windows SRVR app icon to match the in-app wordmark. Match the CTRL-TS Drive, Speed and Position cards to the SRVR layout.
+
 # v26.11.16.01 — 2026-11-16
 
 - Monitoring → Log reports confirmed CTRL, W1P, CTRL-TS, Leadshine, PDM and WSI link changes. Link-loss entries use existing evidence and a short log-only debounce. Routine W1P UDP host/network unreachable retries are omitted. Unexpected send errors and shutdown safety-send errors remain visible.

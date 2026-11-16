@@ -332,6 +332,12 @@ def run(directory, server, wind_server):
         server.device.fw_update = "Downloading"
         server.device.fw_progress = 35
         wait_for(app, lambda: "Downloading" in firmware.property("text") and monitor.summary["progress"] == 35)
+        assert "Downloading (30%)" in ota_log()
+        server.device.fw_progress = 39
+        wait_for(app, lambda: monitor.summary["progress"] == 39)
+        assert sum("Downloading (30%)" in line for line in backend._logs) == 1
+        server.device.fw_progress = 42
+        wait_for(app, lambda: "Downloading (40%)" in ota_log() and monitor.summary["progress"] == 42)
         server.device.fw_update = "Current"
         server.device.fw_version = SEMVER
         server.device.fw_progress = 0
