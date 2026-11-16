@@ -260,6 +260,8 @@ def run(directory, server, wind_server):
                  and wind_server.device.firmware_checks == [{}])
         assert not backend._srvr_estop
         assert root.property("page") == 0 and monitor.summary["version"] == SEMVER
+        wait_for(app, lambda: f"[PDM] Connected · {server.device.address}" in backend.logText
+                 and f"[WSI] Connected · {wind_server.device.address}" in backend.logText)
         assert monitor.graphs == [[], [], [], []] and not server.device.clock_writes and not server.device.cursors
         server.device.boot, server.device.fw_version = "updatedboot", next_release
         wait_for(app, lambda: server.device.firmware_checks == [{}, {}] and monitor.summary["version"] == next_release)
@@ -373,6 +375,9 @@ def run(directory, server, wind_server):
         wait_for(app, lambda: monitor.summary["connection"] == "Stale data")
         server.device.online = False
         wait_for(app, lambda: monitor.summary["connection"] == "Offline")
+        lost = f"[PDM] Connection lost · {server.device.address}"
+        wait_for(app, lambda: lost in backend.logText)
+        assert backend.logText.count(lost) == 1
         change_offline_pdm_address(app, root, monitor, wind, settings, server.device)
         assert QMetaObject.invokeMethod(scene_item(root, "monitorLogTab"), "clicked")
         app.processEvents()

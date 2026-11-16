@@ -1,0 +1,23 @@
+HV P2P SYS v26.11.16.01 source verification
+Baseline HV-P2P-v26.11.15.08-GitHub-Complete.zip
+
+PASS  All 71 source checks with PySide6 6.11.1 enabled.
+PASS  Qt QML lint at the repository threshold and both web JavaScript syntax checks.
+PASS  Isolated SRVR main.py startup with compiled QRC and verified firmware
+      fixtures. The startup smoke produced a 3000 x 1500 browser frame.
+PASS  Live Qt/HTTP fixture with two viewer sessions at 1x and 2x browser DPR.
+      Verified PNG MIME type, exact coloured pixels, 3840 x 2160 output,
+      independent viewport sizing, stale input rejection, foreground capture,
+      shared navigation, per-browser focus and dialogs, and recall disconnect STOP.
+      The same fixture passed with the Qt host scaled to 2x.
+PASS  W1P retry suppression, retained unexpected error, firmware progress filter,
+      PDM/WSI first connection and sustained PDM loss logged once.
+PASS  Embedded PDM dashboard matches its source. Control and monitor OTA gates,
+      motion safety, host firmware fixtures and build workflow regressions passed.
+
+Remaining verification
+  Live installed browser rendering and response on the operator's macOS system.
+  Local Chromium could not launch because the runner denied its socket creation.
+  GitHub Actions native firmware and frozen macOS Intel, macOS Apple Silicon
+  and Windows x64 builds.
+  Physical equipment-LAN and bench tests in NATIVE_BUILD_AND_BENCH_CHECKLIST_v26.11.16.01.md.

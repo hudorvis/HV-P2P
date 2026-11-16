@@ -22,7 +22,7 @@ from PySide6.QtWidgets import QApplication
 from backend import HVP2PBackend
 from firmware_authority import FirmwareAuthorityServer, MONITOR_TARGETS
 from pdm_monitor import PdmMonitor, WsiMonitor
-from web_mirror import WebMirror, _jpeg
+from web_mirror import WebMirror, _png
 
 SRVR = Path(__file__).resolve().parents[1] / f"SRVR_GitHub_{SEMVER}"
 
@@ -87,13 +87,14 @@ def exercise(app, window, web, authority, backend):
     second = connect()
     assert first != second
     sizes = {first: (1280, 720), second: (1600, 800)}
+    densities = {}
 
     def latest(viewer=None, foreground=True):
         viewer = viewer or first
         width, height = sizes[viewer]
         return request(port, "/srvr-web/frame", viewer=viewer,
                        headers={"X-SRVR-Foreground": "1" if foreground else "0",
-                                "X-SRVR-Viewport": f"{width}x{height}"})
+                                "X-SRVR-Viewport": f"{width}x{height}@{densities.get(viewer, 100)}"})
 
     def browser(viewer=first):
         return web._viewports[viewer].quickWindow()
@@ -133,25 +134,28 @@ def exercise(app, window, web, authority, backend):
 
     initial = fresh_frame()
     initial_second = fresh_frame(viewer=second)
-    status, headers, jpeg = latest()
-    second_status, second_headers, second_jpeg = latest(second)
+    status, headers, png = latest()
+    second_status, second_headers, second_png = latest(second)
     assert status == second_status == 200
     assert headers["X-SRVR-Frame"] != second_headers["X-SRVR-Frame"]
     assert headers["X-SRVR-Input"] == second_headers["X-SRVR-Input"] == "ready"
-    image = QImage.fromData(jpeg)
+    assert headers["Content-Type"] == "image/png" and png.startswith(b"\x89PNG\r\n\x1a\n")
+    image = QImage.fromData(png)
     assert (image.width(), image.height()) == sizes[first]
-    second_image = QImage.fromData(second_jpeg)
+    second_image = QImage.fromData(second_png)
     assert (second_image.width(), second_image.height()) == sizes[second]
     pixel, background = image.pixelColor(2, 2), window.color()
-    assert max(abs(a - b) for a, b in zip(pixel.getRgb(), background.getRgb())) <= 5, (pixel, background)
+    assert pixel == background, (pixel, background)
 
     # The intended physical-pixel image must include all four quadrants on Retina.
     retina = QImage(64, 32, QImage.Format.Format_ARGB32_Premultiplied)
     retina.setDevicePixelRatio(2)
     retina.fill(QColor("#ff0000"))
-    composed = QImage.fromData(_jpeg(retina, QColor("#000000")))
+    retina.setPixelColor(62, 28, QColor("#28b6d5"))
+    composed = QImage.fromData(_png(retina, QColor("#000000")))
     assert composed.size() == retina.size()
-    assert composed.pixelColor(60, 28).red() > 240
+    assert composed.pixelColor(60, 28) == QColor("#ff0000")
+    assert composed.pixelColor(62, 28) == QColor("#28b6d5")
 
     # A bounded wait on the same frame and a subsequent request reuse TCP.
     connection = HTTPConnection("127.0.0.1", port, timeout=2)
@@ -166,7 +170,7 @@ def exercise(app, window, web, authority, backend):
         del frame_headers["X-SRVR-Frame"]
         connection.request("GET", "/srvr-web/frame", headers=frame_headers)
         available = connection.getresponse()
-        assert available.status == 200 and available.read() == jpeg
+        assert available.status == 200 and available.read() == png
         assert socket_used is not None and connection.sock is socket_used
     finally:
         connection.close()
@@ -183,11 +187,26 @@ def exercise(app, window, web, authority, backend):
     assert click("mainTab1", initial_second, second) == 409
     resize_frame = fresh_frame(initial_second, second)
     resized_image = QImage.fromData(latest(second)[2])
-    assert resized_image.width() == resized_image.height() == 1050
+    assert resized_image.width() == resized_image.height() == 1000
     assert browser().size() == first_size and window.width() == 1440 and window.height() == 900
     assert request(port, "/srvr-web/frame", viewer=second,
                    headers={"X-SRVR-Viewport": "50000x0"})[0] == 400
     assert click("mainTab1", resize_frame, first) == 409
+    logical_width = scene_item(browser(second), "webSrvrView").width()
+    densities[second] = 200
+    assert latest(second)[1].get("X-SRVR-Wait") == "frame"
+    assert click("mainTab1", resize_frame, second) == 409
+    resize_frame = fresh_frame(resize_frame, second)
+    dense_image = QImage.fromData(latest(second)[2])
+    assert dense_image.width() == dense_image.height() == 2000
+    assert scene_item(browser(second), "webSrvrView").width() == logical_width
+    assert browser().size() == first_size
+    sizes[second] = (1920, 1080)
+    full_frame = fresh_frame(resize_frame, second)
+    full_image = QImage.fromData(latest(second)[2])
+    assert (full_image.width(), full_image.height()) == (3840, 2160)
+    sizes[second] = (1000, 1000)
+    resize_frame = fresh_frame(full_frame, second)
 
     initial = fresh_frame()
     assert click("mainTab3", initial) == 204
