@@ -41,7 +41,7 @@ checks=[
     ['python3',str(ROOT/'tools'/'test_hmi_display_bound_transport_0610.py')],
     ['python3',str(ROOT/'tools'/'test_ctrl_ts_marker_smoothness_0611.py')],
     ['python3',str(ROOT/'tools'/'test_w1p_edgebox_brake_do0_1008.py')],
-    ['python3',str(ROOT/'tools'/'test_w1p_estop_ai0_100803.py')],
+    ['python3',str(ROOT/'tools'/'test_w1p_estop_di0.py')],
     ['python3',str(ROOT/'tools'/'test_full_system_update_status_1008.py')],
     ['python3',str(ROOT/'tools'/'test_bench_regression_0504.py')],
     ['python3',str(ROOT/'tools'/'test_ctrl_ts_parser_diagnostics_contract.py')],
@@ -69,7 +69,7 @@ checks=[
     ['python3',str(ROOT/'tools'/'test_release_consistency.py')],
     ['python3',str(ROOT/'tools'/'test_source_hygiene.py')],
     ['python3',str(ROOT/'tools'/'test_python_syntax.py')],
-    ['python3',str(ROOT/'SRVR_GitHub_v26.11.16.02'/'tools'/'validate_project.py')],
+    ['python3',str(ROOT/'SRVR_GitHub_v26.11.16.04'/'tools'/'validate_project.py')],
 ]
 env=os.environ.copy(); env['PYTHONDONTWRITEBYTECODE']='1'
 for cmd in checks:
@@ -82,7 +82,7 @@ try:
 except Exception:
     print('\nBACKEND_RUNTIME_TEST_SKIPPED: PySide6 not installed in source-audit environment')
 else:
-    for test in (ROOT/'SRVR_GitHub_v26.11.16.02'/'tools'/'test_backend_logic.py',
+    for test in (ROOT/'SRVR_GitHub_v26.11.16.04'/'tools'/'test_backend_logic.py',
                  ROOT/'tools'/'test_pdm_qt_runtime.py', ROOT/'tools'/'test_srvr_startup_ui.py',
                  ROOT/'tools'/'test_srvr_web_runtime.py'):
         cmd=['python3',str(test)]

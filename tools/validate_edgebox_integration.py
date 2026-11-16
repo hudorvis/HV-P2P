@@ -4,14 +4,14 @@ from pathlib import Path
 import hashlib, re, struct, sys
 
 ROOT = Path(__file__).resolve().parents[1]
-VER = '26.11.16.02'
+VER = '26.11.16.04'
 CTRL = ROOT / f'HV_P2P_CTRL_EDGEBOX_v{VER}' / f'HV_P2P_CTRL_EDGEBOX_v{VER}.ino'
 W1P = ROOT / f'HV_P2P_W1P_EDGEBOX_v{VER}' / f'HV_P2P_W1P_EDGEBOX_v{VER}.ino'
 TS = ROOT / f'HV_P2P_CTRL_TS_v{VER}' / f'HV_P2P_CTRL_TS_v{VER}.ino'
 FRAME_CTRL = ROOT / f'HV_P2P_CTRL_EDGEBOX_v{VER}' / 'HV_P2P_RS485_Frame.h'
 FRAME_TS = ROOT / f'HV_P2P_CTRL_TS_v{VER}' / 'HV_P2P_RS485_Frame.h'
 IMG_HDR = ROOT / f'HV_P2P_CTRL_EDGEBOX_v{VER}' / 'HV_P2P_CTRL_TS_Firmware_Image.h'
-SRVR_DIR = ROOT / 'SRVR_GitHub_v26.11.16.02'
+SRVR_DIR = ROOT / 'SRVR_GitHub_v26.11.16.04'
 SRVR = SRVR_DIR / 'backend.py'
 MAIN = SRVR_DIR / 'main.py'
 SETUP_QML = SRVR_DIR / 'qml' / 'pages' / 'SetupPage.qml'
@@ -128,10 +128,10 @@ must('SGM_CONFIG_AI0_CONT_800SPS_6V144 = 0x40E3' in c and 'sampleCtrlEstopAI0' i
 must('CTRL_ESTOP_HEALTHY_MIN_V = 3.5f' in c and 'g_ctrlEstopActive = true' in c, 'CTRL AI0 E-stop has healthy threshold and fail-unsafe default')
 must('CTRL_ESTOP_HEALTHY_CONFIRM_SAMPLES = 3' in c and 'E-stop assertion is immediate' in c, 'CTRL AI0 E-stop clears only after consecutive healthy samples')
 must('AI0 carries the CTRL E-stop status' in c and 'AI1 carries the APEM 0-5 V joystick signal' in c, 'CTRL final AI0 E-stop / AI1 joystick mapping')
-must('W1P_AI_ADC_ADDR = 0x48' in w and 'W1P_SGM_CONFIG_AI0_CONT_800SPS_6V144 = 0x40E3' in w, 'W1P E-stop uses onboard SGM58031 AI0 voltage input')
-must('W1P_ESTOP_HEALTHY_MIN_V = 3.5f' in w and 'W1P_ESTOP_HEALTHY_MAX_V = 6.0f' in w, 'W1P AI0 E-stop healthy voltage window is explicit')
-must('W1P_ESTOP_HEALTHY_CONFIRM_SAMPLES = 3' in w and 'bool local_estop = true' in w, 'W1P AI0 E-stop is fail-closed and needs consecutive healthy samples')
-must('PIN_LOCAL_ESTOP' not in w and 'LOCAL_ESTOP_HEALTHY_LEVEL' not in w, 'W1P legacy DI0 E-stop path is removed')
+must('PIN_W1P_ESTOP_DI0 = 4' in w and 'pinMode(PIN_W1P_ESTOP_DI0, INPUT)' in w,
+     'W1P E-stop uses isolated EdgeBox DI0 on GPIO4')
+must('W1P_ESTOP_HEALTHY_CONFIRM_SAMPLES = 3' in w and 'bool local_estop = true' in w,
+     'W1P DI0 E-stop is fail-closed and needs consecutive healthy samples')
 
 # CTRL analog path: direct EdgeBox SGM58031, correct 0-10V divider scaling.
 for tok in ['SDA_PIN 20','SCL_PIN 19','ADS_ADDR = 0x48','SGM_REG_CONVERSION = 0x00','SGM_REG_CONFIG     = 0x01','SGM_REG_CONFIG1    = 0x04','SGM_CONFIG_AI0_CONT_800SPS_6V144 = 0x40E3','SGM_CONFIG_AI1_CONT_800SPS_6V144 = 0x50E3']:
@@ -236,7 +236,7 @@ expected_w1p={
 'servicePeerTimeout':'81d5f57232771f48dbe5edd46161f75a8f5adf2aee370e9bc6180d64d61a48ff',
 'preserveDisplayedPositionForMotorDirectionChange':'43dc038634f473df40ac2d6ca8e3d2f69be093170c20fcd71af652da695914e6',
 }
-for fn,h in expected_w1p.items(): must(normalized_func_hash(w,fn)==h, f'W1P reviewed v26.11.16.02 safety-critical logic preserved: {fn}')
+for fn,h in expected_w1p.items(): must(normalized_func_hash(w,fn)==h, f'W1P reviewed v26.11.16.04 safety-critical logic preserved: {fn}')
 
 expected_w1p_v07_safety={
 'driveAutoEnableReady':'ce2cd73df1636f1ba2dd7ba23da9eca4f983ba3ee6a179dd9b5398ad831dc78f',
@@ -246,7 +246,7 @@ expected_w1p_v07_safety={
 'recordDrivePositionSample':'3b67f3742005a459caff07f45cd41dba581c28da1ef8be43d757014b4cc44bea',
 'hvPrepareSafeServiceState':'80e78d9f3c6141761822da7fdbe172177e6ac99bad445cc8f3dc71edc247b777',
 }
-for fn,h in expected_w1p_v07_safety.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.11.16.02 reviewed safety extension hash locked: {fn}')
+for fn,h in expected_w1p_v07_safety.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.11.16.04 reviewed safety extension hash locked: {fn}')
 
 # v26.10.19.01 direct EdgeBox DO0 brake switching. These functions are kept
 # separately hash-locked because they are the only new physical brake authority.
@@ -257,19 +257,11 @@ expected_w1p_edgebox_brake={
 'serviceLeadshineBrakeTransitionStatus':'dad21a5c702d092e57324b24525bbcaa2fa1d6cd1fe6effcc91d969a80a9d53b',
 'serviceEdgeboxBrakeOutput':'d5df450c7d6bed5681096f4730ffe044f674498ddb13ccfec3ebd1c70585116d',
 }
-for fn,h in expected_w1p_edgebox_brake.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.11.16.02 reviewed EdgeBox brake logic hash locked: {fn}')
+for fn,h in expected_w1p_edgebox_brake.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.11.16.04 reviewed EdgeBox brake logic hash locked: {fn}')
 
-# Local W1P E-stop is intentionally migrated from DI0/24 V to AI0/5 V in
-# v26.10.19.01. Hash-lock the complete ADC acquisition + fail-unsafe decision
-# path so this isolated hardware migration cannot silently weaken stop authority.
-expected_w1p_estop={
-'initW1pEstopAI0':'49922e80de21d3c0466d06815801ef057eb773abb815e8e33142542e4458bc97',
-'w1pSgmWriteRegister':'deb19f2d8564afb29dd1a06bd5005583918458b04871a13a0e4a90b0b0e7e640',
-'w1pSgmReadRegister':'c10c7093503172c1af56986eb70abf141ba8fd9a5591ab5b4fbdee4107dcaeaf',
-'w1pSgmReadConversion':'c0e9172471166ff01727bdcce358f1b35648acd2db094e5e53a5fd88b3265602',
-'updateLocalInputs':'c41b07af290d5d9e080c3e3f724665f626c558fc85de76085f7c7944edd0587f',
-}
-for fn,h in expected_w1p_estop.items(): must(normalized_func_hash(w,fn)==h, f'W1P v26.11.16.02 local AI0 E-stop path hash locked: {fn}')
+# Lock the W1P DI0 acquisition and its stop and servo-inhibit actions.
+must(normalized_func_hash(w, 'updateLocalInputs') == '2dc1e9837f45c667f13add12e1b3f3f8de708a88d83ccc6f9b9d1cffa48d593c',
+     'W1P local DI0 E-stop path hash locked')
 
 # Leadshine contract.
 for tok in ['RS485_BAUD = 115200','DRIVE_MODBUS_ID = 1','SERIAL_8N1','MODBUS_REPLY_TIMEOUT_MS = 50','MODBUS_READ_RETRIES = 3','MODBUS_INTERFRAME_GAP_US = 2000','W1P_PEER_TIMEOUT_MS = 750']:
@@ -431,7 +423,7 @@ must('text:backend.bannerText' in main_qml and '♢' not in main_qml and '◇' n
 must('def _legacy_firmware_push_worker' in s and 'HTTPConnection' in s and '"/update/app"' in s and 'multipart/form-data' in s and 'daemon=True' in s and 'def _firmware_version_is_older' in s, 'SRVR has asynchronous backwards-compatible OTA push for older pre-beacon .01 field nodes without downgrading newer firmware')
 must('ctrl_present = bool(self._ctrl_connected() or self._ctrl_authority_fresh())' in s, 'legacy CTRL firmware bridge accepts either fresh control telemetry or fresh authority/HMI status presence')
 must('firmware_bundle=authority.bundle' in m, 'SRVR backend receives the already validated immutable firmware bundle for legacy OTA bridging')
-must('ctrl_version=v26.11.16.02' in c and 'FW=" + String(FW_VERSION)' in w, 'CTRL and W1P publish actual firmware identity for Setup')
+must('ctrl_version=v26.11.16.04' in c and 'FW=" + String(FW_VERSION)' in w, 'CTRL and W1P publish actual firmware identity for Setup')
 must('ctrlFirmwareVersion' in s and 'w1pFirmwareVersion' in s and 'ctrlEStopActive' in s and 'w1pEStopActive' in s, 'SRVR exposes locked CTRL/W1P Setup diagnostics')
 must('text:"Link"' in q and 'backend.ctrlTsRs485Active?"Active":"Disconnected"' in q, 'CTRL-TS Link uses physical RS485 Active/Disconnected semantics')
 must('anchors.rightMargin:root.f(15)' in q and 'anchors.leftMargin:root.f(15)' in q and q.count('width:(parent.width-root.f(1))/2') >= 2, 'Motion Profiles centre divider has even Mode 1/Mode 2 spacing')

@@ -1,3 +1,15 @@
+# v26.11.16.04 — 2026-11-16
+
+- Latch accepted CTRL-ES and W1P-ES assertions through the SRVR motion tick so a short pulse cancels motion and requires joystick-neutral re-arm. Report DI0 transitions from W1P immediately after its local safety handling.
+- Preserve the reported firmware result when verification fails after transfer reaches 100%. Correct the CTRL serial format for the CTRL-TS reset reason.
+- Dispose of SRVR's Qt views before their context objects are released on application exit.
+
+# v26.11.16.03 — 2026-11-16
+
+- Move the W1P-ES loop to the isolated EdgeBox DI0 24 V input with S/S at rack 0 V.
+- Route DI0 into the W1P stop and servo-inhibit logic and exercise the production sampler in the host test.
+- Document the shared POS and GND buses and the Leadshine brake release on DO0.
+
 # v26.11.16.02 — 2026-11-16
 
 - Log E-Stop activation and clearance from CTRL-ES, W1P-ES and SRVR. Identify the joystick as CTRL-JS in diagnostics.

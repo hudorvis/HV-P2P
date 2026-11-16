@@ -14,8 +14,8 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-BACKEND_DIR = ROOT / 'SRVR_GitHub_v26.11.16.02'
-W1P = ROOT / 'HV_P2P_W1P_EDGEBOX_v26.11.16.02' / 'HV_P2P_W1P_EDGEBOX_v26.11.16.02.ino'
+BACKEND_DIR = ROOT / 'SRVR_GitHub_v26.11.16.04'
+W1P = ROOT / 'HV_P2P_W1P_EDGEBOX_v26.11.16.04' / 'HV_P2P_W1P_EDGEBOX_v26.11.16.04.ino'
 sys.path.insert(0, str(BACKEND_DIR))
 sys.dont_write_bytecode = True
 import position_feedback as pf
